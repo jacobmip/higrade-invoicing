@@ -204,8 +204,9 @@ function AIChatPanel({ onAddItems }) {
 
       let parsed = null;
       try {
-        const clean = reply.replace(/```json|```/g, "").trim();
-        if (clean.startsWith("{")) parsed = JSON.parse(clean);
+        // Extract JSON from anywhere in the response — handles markdown fences and mixed text
+        const jsonMatch = reply.match(/\{[\s\S]*"action"\s*:\s*"estimate"[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       } catch {}
 
       if (parsed?.action === "estimate" && parsed.items?.length) {
