@@ -173,7 +173,11 @@ function AIChatPanel({ onAddItems }) {
   const [listening, setListening] = useState(false);
   const endRef = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
+  useEffect(() => {
+    if (endRef.current) {
+      endRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [msgs, loading]);
 
   const startListening = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -349,10 +353,16 @@ function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete 
     if (!client?.email) { alert("No email on file for this client."); return; }
     setEmailStatus("Sending…");
     try {
-      await sendInvoiceEmail(form, client);
-      setEmailStatus("✓ Sent!");
-    } catch { setEmailStatus("Failed to send"); }
-    setTimeout(() => setEmailStatus(""), 3000);
+      const result = await sendInvoiceEmail(form, client);
+      if (result.error) {
+        setEmailStatus("Failed: " + result.error);
+      } else {
+        setEmailStatus("✓ Sent!");
+      }
+    } catch (e) {
+      setEmailStatus("Failed: " + e.message);
+    }
+    setTimeout(() => setEmailStatus(""), 4000);
   };
 
   const categories = [...new Set(savedItems.map(i => i.category))];
