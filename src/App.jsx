@@ -65,8 +65,13 @@ function calcTotals(inv) {
 }
 function fmt(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function today() { return new Date().toISOString().slice(0, 10); }
+function fmtDate(d) {
+  if (!d) return "—";
+  const [y, m, day] = d.split("-");
+  return `${m}/${day}/${y}`;
+}
 
-// ─── AI Call (via secure backend) ────────────────────────────────────────────
+// ─── AI Call ─────────────────────────────────────────────────────────────────
 async function callAI(messages) {
   const res = await fetch("/api/ai", {
     method: "POST",
@@ -101,13 +106,7 @@ async function sendInvoiceEmail(invoice, client) {
   const res = await fetch("/api/send-email", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      to: client.email,
-      clientName: client.name,
-      invoiceId: invoice.id,
-      total: t.total.toFixed(2),
-      invoiceHtml,
-    }),
+    body: JSON.stringify({ to: client.email, clientName: client.name, invoiceId: invoice.id, total: t.total.toFixed(2), invoiceHtml }),
   });
   return res.json();
 }
@@ -116,18 +115,22 @@ async function sendInvoiceEmail(invoice, client) {
 const Icon = ({ name, size = 20, color = "currentColor" }) => {
   const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2 };
   const icons = {
-    invoice: <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>,
-    clients: <svg {...p}><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>,
-    items: <svg {...p}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
-    ai: <svg {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>,
-    plus: <svg {...p} strokeWidth={2.5}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
-    mic: <svg {...p}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>,
-    send: <svg {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
-    trash: <svg {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>,
-    back: <svg {...p}><polyline points="15 18 9 12 15 6"/></svg>,
-    mail: <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
-    payment: <svg {...p}><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
-    check: <svg {...p} strokeWidth={2.5}><polyline points="20 6 9 17 4 12"/></svg>,
+    invoice:  <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>,
+    clients:  <svg {...p}><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>,
+    items:    <svg {...p}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
+    ai:       <svg {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>,
+    plus:     <svg {...p} strokeWidth={2.5}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+    mic:      <svg {...p}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>,
+    send:     <svg {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+    trash:    <svg {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>,
+    back:     <svg {...p}><polyline points="15 18 9 12 15 6"/></svg>,
+    mail:     <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+    payment:  <svg {...p}><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
+    check:    <svg {...p} strokeWidth={2.5}><polyline points="20 6 9 17 4 12"/></svg>,
+    eye:      <svg {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+    clock:    <svg {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+    pencil:   <svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    chevron:  <svg {...p}><polyline points="9 18 15 12 9 6"/></svg>,
   };
   return icons[name] || null;
 };
@@ -137,8 +140,7 @@ const S = {
   btn: (v = "primary") => ({
     background: v === "primary" ? ORANGE : v === "navy" ? NAVY : v === "green" ? "#27ae60" : "#e8ecf4",
     color: v === "ghost" ? "#444" : "#fff",
-    border: "none", borderRadius: 8,
-    padding: "10px 18px",
+    border: "none", borderRadius: 8, padding: "10px 18px",
     fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1,
     cursor: "pointer",
   }),
@@ -174,9 +176,7 @@ function AIChatPanel({ onAddItems }) {
   const endRef = useRef(null);
 
   useEffect(() => {
-    if (endRef.current) {
-      endRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
+    if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [msgs, loading]);
 
   const startListening = () => {
@@ -203,16 +203,12 @@ function AIChatPanel({ onAddItems }) {
         .map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
       const firstUser = history.findIndex(m => m.role === "user");
       const apiHistory = firstUser >= 0 ? history.slice(firstUser) : history;
-
       const reply = await callAI(apiHistory);
-
       let parsed = null;
       try {
-        // Extract JSON from anywhere in the response — handles markdown fences and mixed text
         const jsonMatch = reply.match(/\{[\s\S]*"action"\s*:\s*"estimate"[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       } catch {}
-
       if (parsed?.action === "estimate" && parsed.items?.length) {
         setMsgs(prev => [...prev, { role: "assistant", text: parsed.summary || "Here's your estimate:", estimate: parsed }]);
       } else {
@@ -326,6 +322,200 @@ function PaymentModal({ invoice, onClose, onSave }) {
   );
 }
 
+// ─── Item Modal ───────────────────────────────────────────────────────────────
+function ItemModal({ item, onSave, onClose, onDelete }) {
+  const [form, setForm] = useState({ ...item });
+  const [improving, setImproving] = useState(false);
+
+  const aiImprove = async () => {
+    if (!form.desc.trim()) return;
+    setImproving(true);
+    try {
+      const reply = await callAI([{
+        role: "user",
+        content: `Rewrite this plumbing invoice line item as a professional, concise description (10 words max). Return ONLY the rewritten text, no quotes.\n\nOriginal: ${form.desc}`,
+      }]);
+      setForm(f => ({ ...f, desc: reply.trim().replace(/^["']|["']$/g, "") }));
+    } catch {}
+    setImproving(false);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "18px 18px 0 0", padding: "22px 20px 32px", maxWidth: 480, margin: "0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, color: NAVY }}>Edit Item</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+            <label style={S.label}>Description</label>
+            <button
+              onClick={aiImprove}
+              disabled={improving}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                background: improving ? "#f4f6fa" : NAVY,
+                color: improving ? "#aaa" : "#fff",
+                border: "none", borderRadius: 6, padding: "4px 10px",
+                fontSize: 11, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.8,
+                cursor: improving ? "default" : "pointer",
+              }}
+            >
+              <Icon name="ai" size={12} color={improving ? "#aaa" : "#fff"} />
+              {improving ? "Improving…" : "AI Improve"}
+            </button>
+          </div>
+          <textarea
+            style={{ ...S.input, height: 80, resize: "none" }}
+            value={form.desc}
+            onChange={e => setForm(f => ({ ...f, desc: e.target.value }))}
+            placeholder="Item description…"
+            autoFocus
+          />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={S.label}>Qty</label>
+            <input type="number" style={S.input} value={form.qty} onChange={e => setForm(f => ({ ...f, qty: parseFloat(e.target.value) || 1 }))} min={1} />
+          </div>
+          <div>
+            <label style={S.label}>Unit Price</label>
+            <input type="number" style={S.input} value={form.price} onChange={e => setForm(f => ({ ...f, price: parseFloat(e.target.value) || 0 }))} step={0.01} />
+          </div>
+        </div>
+
+        <div style={{ background: "#f8f9fc", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 13, color: "#888" }}>Line Total</span>
+          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: ORANGE }}>{fmt(form.qty * form.price)}</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onDelete}
+            style={{ width: 44, height: 44, background: "#fff0ee", border: "1.5px solid #ffd5cc", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+          >
+            <Icon name="trash" size={17} color="#cc4444" />
+          </button>
+          <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+          <button onClick={() => { onSave(form); onClose(); }} style={{ ...S.btn("primary"), flex: 2 }}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PDF Preview ──────────────────────────────────────────────────────────────
+function PDFPreview({ form, clients }) {
+  const t = calcTotals(form);
+  const client = clients.find(c => c.name === form.client) || {};
+
+  return (
+    <div style={{ padding: "16px 12px 40px" }}>
+      <div style={{ background: "#fff", borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,0.12)", maxWidth: 440, margin: "0 auto" }}>
+
+        {/* Company header */}
+        <div style={{ background: NAVY, padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
+            <div style={{ color: ORANGE, fontSize: 10, letterSpacing: 2.5, fontWeight: 700, marginTop: 2, fontFamily: "'Barlow Condensed', sans-serif" }}>LLC · HONOLULU, HI</div>
+            <div style={{ color: "#6677aa", fontSize: 11, marginTop: 6 }}>License #C-39547</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 26, letterSpacing: 1, lineHeight: 1 }}>INVOICE</div>
+            <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, marginTop: 4 }}>{form.id || "DRAFT"}</div>
+          </div>
+        </div>
+
+        {/* Dates bar */}
+        <div style={{ background: NAVY2, padding: "10px 24px", display: "flex", alignItems: "center", gap: 28 }}>
+          {[["Date", form.date], ["Due", form.dueDate]].map(([label, val]) => (
+            <div key={label}>
+              <div style={{ color: "#6677aa", fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{label}</div>
+              <div style={{ color: "#dde2ee", fontSize: 13, fontWeight: 600 }}>{fmtDate(val)}</div>
+            </div>
+          ))}
+          <div style={{ marginLeft: "auto" }}>
+            <span style={S.pill(form.status === "paid" ? "#4ecb71" : ORANGE)}>{form.status || "outstanding"}</span>
+          </div>
+        </div>
+
+        {/* Bill To */}
+        <div style={{ padding: "16px 24px 14px", borderBottom: "1px solid #f0f2f8" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 7 }}>Bill To</div>
+          {form.client ? (
+            <>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 3 }}>{form.client}</div>
+              {client.address && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{client.address}</div>}
+              <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
+                {client.phone && <div style={{ fontSize: 12, color: "#777" }}>{client.phone}</div>}
+                {client.email && <div style={{ fontSize: 12, color: "#999" }}>{client.email}</div>}
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 13, color: "#bbb", fontStyle: "italic" }}>No client selected</div>
+          )}
+        </div>
+
+        {/* Line items table */}
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 36px 84px", background: "#f8f9fc", padding: "7px 24px", borderBottom: "1px solid #eaecf0" }}>
+            {[["Description", "left"], ["Qty", "center"], ["Amount", "right"]].map(([h, align]) => (
+              <div key={h} style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", textAlign: align }}>{h}</div>
+            ))}
+          </div>
+          {form.items.map((item, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 36px 84px", padding: "11px 24px", borderBottom: "1px solid #f4f6fa" }}>
+              <div style={{ fontSize: 13, color: "#222", paddingRight: 8 }}>{item.desc || <span style={{ color: "#ccc" }}>—</span>}</div>
+              <div style={{ fontSize: 13, color: "#666", textAlign: "center" }}>{item.qty}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#222", textAlign: "right" }}>{fmt(item.qty * item.price)}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Totals */}
+        <div style={{ padding: "14px 24px 16px", background: "#f8f9fc", borderTop: "1px solid #eaecf0" }}>
+          {[
+            ["Subtotal", fmt(t.sub)],
+            ...(t.disc > 0 ? [["Discount", "−" + fmt(t.disc)]] : []),
+            [`GET (${form.tax}%)`, fmt(t.taxAmt)],
+          ].map(([label, val]) => (
+            <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#666", marginBottom: 6 }}>
+              <span>{label}</span><span>{val}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", borderTop: "2px solid #dde2ee", paddingTop: 10, marginTop: 6 }}>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: "#111" }}>TOTAL DUE</span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, color: ORANGE }}>{fmt(t.total)}</span>
+          </div>
+          {t.paid > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid #eee" }}>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: "#27ae60" }}>BALANCE DUE</span>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: "#27ae60" }}>{fmt(Math.max(0, t.balance))}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Notes */}
+        {form.notes && (
+          <div style={{ padding: "13px 24px", borderTop: "1px solid #f0f2f8" }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Notes</div>
+            <div style={{ fontSize: 12, color: "#555", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{form.notes}</div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div style={{ background: NAVY, padding: "13px 24px", textAlign: "center" }}>
+          <div style={{ color: "#8899bb", fontSize: 11 }}>Thank you for your business!</div>
+          <div style={{ color: "#6677aa", fontSize: 10, marginTop: 3 }}>higradeplumbing.com · (808) 555-0100</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Invoice Form ─────────────────────────────────────────────────────────────
 function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete }) {
   const [form, setForm] = useState(invoice || {
@@ -333,20 +523,29 @@ function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete 
     status: "outstanding", items: [{ desc: "", qty: 1, price: 0 }],
     tax: TAX_RATE, discount: 0, notes: "", payments: [],
   });
-  const [showItems, setShowItems] = useState(false);
+  const [activeTab, setActiveTab] = useState("edit");
+  const [showSaved, setShowSaved] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const [emailStatus, setEmailStatus] = useState("");
 
   const t = calcTotals(form);
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setItem = (i, k, v) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? { ...it, [k]: v } : it) }));
+  const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
   const addItem = (desc = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { desc, qty: 1, price }] }));
   const removeItem = (i) => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }));
   const handleAddFromAI = (items, notes) => {
-    setForm(f => ({ ...f, items: [...f.items.filter(it => it.desc || it.price), ...items], notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes }));
+    setForm(f => ({
+      ...f,
+      items: [...f.items.filter(it => it.desc || it.price), ...items],
+      notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes,
+    }));
     setShowAI(false);
   };
+
+  const selectedClient = clients.find(c => c.name === form.client);
+  const categories = [...new Set(savedItems.map(i => i.category))];
 
   const handleEmail = async () => {
     const client = clients.find(c => c.name === form.client);
@@ -354,25 +553,39 @@ function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete 
     setEmailStatus("Sending…");
     try {
       const result = await sendInvoiceEmail(form, client);
-      if (result.error) {
-        setEmailStatus("Failed: " + result.error);
-      } else {
-        setEmailStatus("✓ Sent!");
-      }
-    } catch (e) {
-      setEmailStatus("Failed: " + e.message);
-    }
+      setEmailStatus(result.error ? "Failed" : "✓ Sent!");
+    } catch { setEmailStatus("Failed"); }
     setTimeout(() => setEmailStatus(""), 4000);
   };
 
-  const categories = [...new Set(savedItems.map(i => i.category))];
+  // Build chronological activity log from existing invoice data
+  const historyEvents = [
+    { date: form.date, label: "Invoice created", type: "created", amount: null },
+    ...(form.payments || []).map(p => ({ date: p.date, label: `${p.method} payment received`, type: "payment", amount: p.amount })),
+  ].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  const TABS = [
+    { id: "edit",    label: "Edit",    icon: "pencil" },
+    { id: "preview", label: "Preview", icon: "eye"    },
+    { id: "history", label: "History", icon: "clock"  },
+  ];
 
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
-      {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); }} />}
+      {showPayment && (
+        <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => setForm(updated)} />
+      )}
+      {editingItem !== null && (
+        <ItemModal
+          item={form.items[editingItem]}
+          onSave={(updated) => updateItem(editingItem, updated)}
+          onClose={() => setEditingItem(null)}
+          onDelete={() => { removeItem(editingItem); setEditingItem(null); }}
+        />
+      )}
 
       {/* Header */}
-      <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100 }}>
+      <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}>
           <Icon name="back" size={22} color="#fff" />
         </button>
@@ -380,156 +593,253 @@ function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete 
           {invoice ? invoice.id : "New Invoice"}
         </span>
         {invoice && onDelete && (
-          <button onClick={() => { if (confirm("Delete this invoice?")) onDelete(invoice.id); }} style={{ background: "none", border: "none", color: "#cc4444", cursor: "pointer", padding: 4 }}>
+          <button onClick={() => { if (confirm("Delete this invoice?")) onDelete(invoice.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
             <Icon name="trash" size={20} color="#cc4444" />
           </button>
         )}
         <button onClick={() => onSave(form)} style={S.btn("primary")}>Save</button>
       </div>
 
-      {/* AI Button */}
-      <div style={{ padding: "14px 16px 0" }}>
-        <button onClick={() => setShowAI(!showAI)} style={{ ...S.btn("navy"), width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 15 }}>
-          <Icon name="ai" size={18} color="#fff" />
-          {showAI ? "Close AI Assistant" : "AI Estimate Assistant"}
-        </button>
+      {/* Tab Bar */}
+      <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0", position: "sticky", top: 54, zIndex: 90 }}>
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              flex: 1, padding: "10px 4px 9px", background: "none", border: "none",
+              borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent",
+              color: activeTab === tab.id ? ORANGE : "#999",
+              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12,
+              letterSpacing: 1, textTransform: "uppercase", cursor: "pointer",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+            }}
+          >
+            <Icon name={tab.icon} size={15} color={activeTab === tab.id ? ORANGE : "#bbb"} />
+            {tab.label}
+          </button>
+        ))}
       </div>
-      {showAI && <div style={{ margin: "12px 16px 0" }}><AIChatPanel onAddItems={handleAddFromAI} /></div>}
 
-      {/* Client */}
-      <div style={{ padding: "16px 16px 0" }}>
-        <label style={S.label}>Client</label>
-        <select style={S.input} value={form.client} onChange={e => setField("client", e.target.value)}>
-          <option value="">Select client…</option>
-          {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-        </select>
-      </div>
-
-      {/* Dates */}
-      <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      {/* ── EDIT TAB ── */}
+      {activeTab === "edit" && (
         <div>
-          <label style={S.label}>Date</label>
-          <input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} />
-        </div>
-        <div>
-          <label style={S.label}>Due Date</label>
-          <input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} />
-        </div>
-      </div>
-
-      {/* Line Items */}
-      <div style={{ padding: "16px 16px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Line Items</span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setShowItems(!showItems)} style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 12px" }}>Saved Items</button>
-            <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px" }}><Icon name="plus" size={16} color="#fff" /></button>
+          {/* Bill To */}
+          <div style={{ padding: "16px 16px 0" }}>
+            <label style={S.label}>Bill To</label>
+            <select style={S.input} value={form.client} onChange={e => setField("client", e.target.value)}>
+              <option value="">Select client…</option>
+              {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+            </select>
+            {selectedClient && (
+              <div style={{ background: "#fff", borderRadius: 8, padding: "10px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
+                {selectedClient.address && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{selectedClient.address}</div>}
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  {selectedClient.phone && <span style={{ fontSize: 12, color: "#777" }}>{selectedClient.phone}</span>}
+                  {selectedClient.email && <span style={{ fontSize: 12, color: "#999" }}>{selectedClient.email}</span>}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
 
-        {showItems && (
-          <div style={{ background: "#fff", borderRadius: 10, marginBottom: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxHeight: 280, overflowY: "auto" }}>
-            {categories.map(cat => (
-              <div key={cat}>
-                <div style={{ background: "#f4f6fa", padding: "6px 14px", fontSize: 11, fontWeight: 700, color: ORANGE, letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{cat}</div>
-                {savedItems.filter(i => i.category === cat).map(item => (
-                  <div key={item.id} onClick={() => { addItem(item.name, item.price); setShowItems(false); }} style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f0f2f8", cursor: "pointer" }}>
-                    <span style={{ fontSize: 14 }}>{item.name}</span>
-                    <span style={{ color: ORANGE, fontWeight: 700, fontSize: 14 }}>{fmt(item.price)}</span>
+          {/* Dates */}
+          <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div><label style={S.label}>Invoice Date</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>
+            <div><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
+          </div>
+
+          {/* Line Items */}
+          <div style={{ padding: "16px 16px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Line Items</span>
+              <div style={{ display: "flex", gap: 7 }}>
+                <button
+                  onClick={() => { setShowAI(!showAI); setShowSaved(false); }}
+                  style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5 }}
+                >
+                  <Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI
+                </button>
+                <button
+                  onClick={() => { setShowSaved(!showSaved); setShowAI(false); }}
+                  style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}
+                >Saved</button>
+                <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px" }}>
+                  <Icon name="plus" size={16} color="#fff" />
+                </button>
+              </div>
+            </div>
+
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel onAddItems={handleAddFromAI} /></div>}
+
+            {showSaved && (
+              <div style={{ background: "#fff", borderRadius: 10, marginBottom: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxHeight: 280, overflowY: "auto" }}>
+                {categories.map(cat => (
+                  <div key={cat}>
+                    <div style={{ background: "#f4f6fa", padding: "6px 14px", fontSize: 11, fontWeight: 700, color: ORANGE, letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{cat}</div>
+                    {savedItems.filter(i => i.category === cat).map(item => (
+                      <div key={item.id} onClick={() => { addItem(item.name, item.price); setShowSaved(false); }} style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f0f2f8", cursor: "pointer" }}>
+                        <span style={{ fontSize: 14 }}>{item.name}</span>
+                        <span style={{ color: ORANGE, fontWeight: 700, fontSize: 14 }}>{fmt(item.price)}</span>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* Tappable item rows → ItemModal */}
+            {form.items.map((item, i) => (
+              <div
+                key={i}
+                onClick={() => setEditingItem(i)}
+                style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", marginBottom: 8, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: item.desc ? "#1a1a1a" : "#bbb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.desc || "Tap to add description…"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>
+                    {item.qty > 1 ? `${item.qty} × ${fmt(item.price)}` : fmt(item.price)}
+                  </div>
+                </div>
+                <div style={{ flexShrink: 0, textAlign: "right" }}>
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: NAVY }}>{fmt(item.qty * item.price)}</div>
+                </div>
+                <Icon name="chevron" size={16} color="#ccc" />
+              </div>
             ))}
           </div>
-        )}
 
-        {form.items.map((item, i) => (
-          <div key={i} style={{ background: "#fff", borderRadius: 10, padding: 12, marginBottom: 8, boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <input style={{ ...S.input, flex: 1 }} placeholder="Description" value={item.desc} onChange={e => setItem(i, "desc", e.target.value)} />
-              <button onClick={() => removeItem(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#cc4444", padding: 4 }}><Icon name="trash" size={18} color="#cc4444" /></button>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: 8 }}>
-              <div>
-                <label style={S.label}>Qty</label>
-                <input type="number" style={S.input} value={item.qty} onChange={e => setItem(i, "qty", parseFloat(e.target.value) || 1)} min={1} />
-              </div>
-              <div>
-                <label style={S.label}>Unit Price</label>
-                <input type="number" style={S.input} value={item.price} onChange={e => setItem(i, "price", parseFloat(e.target.value) || 0)} min={0} step={0.01} />
-              </div>
-            </div>
-            <div style={{ textAlign: "right", marginTop: 6, fontSize: 13, color: "#888" }}>
-              Line total: <strong style={{ color: "#222" }}>{fmt(item.qty * item.price)}</strong>
+          {/* Tax & Discount */}
+          <div style={{ padding: "4px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div><label style={S.label}>Tax %</label><input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} step={0.001} /></div>
+            <div><label style={S.label}>Discount $</label><input type="number" style={S.input} value={form.discount} onChange={e => setField("discount", parseFloat(e.target.value) || 0)} min={0} /></div>
+          </div>
+
+          {/* Notes */}
+          <div style={{ padding: "12px 16px 0" }}>
+            <label style={S.label}>Notes</label>
+            <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions…" />
+          </div>
+
+          {/* Status */}
+          <div style={{ padding: "12px 16px 0" }}>
+            <label style={S.label}>Status</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["outstanding", "paid"].map(s => (
+                <button key={s} onClick={() => setField("status", s)} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
 
-      {/* Tax & Discount */}
-      <div style={{ padding: "4px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <div><label style={S.label}>Tax %</label><input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} step={0.001} /></div>
-        <div><label style={S.label}>Discount $</label><input type="number" style={S.input} value={form.discount} onChange={e => setField("discount", parseFloat(e.target.value) || 0)} min={0} /></div>
-      </div>
+          {/* Totals */}
+          <div style={{ margin: "16px 16px 0", background: "#fff", borderRadius: 12, padding: 16, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+            {[
+              ["Subtotal", fmt(t.sub)],
+              ...(t.disc > 0 ? [["Discount", "−" + fmt(t.disc)]] : []),
+              ["GET (" + form.tax + "%)", fmt(t.taxAmt)],
+            ].map(([label, val]) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 14, color: "#666" }}>
+                <span>{label}</span><span>{val}</span>
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "2px solid #eee", paddingTop: 10, marginTop: 4 }}>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>Total</span>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: ORANGE }}>{fmt(t.total)}</span>
+            </div>
+            {(form.payments || []).length > 0 && (
+              <div>
+                <div style={{ marginTop: 10, borderTop: "1px solid #eee", paddingTop: 8 }}>
+                  {(form.payments || []).map((p, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#27ae60", marginBottom: 3 }}>
+                      <span>{p.method} · {p.date}</span><span>−{fmt(p.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, borderTop: "2px solid #eee", paddingTop: 8 }}>
+                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16 }}>Balance Due</span>
+                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: t.balance <= 0 ? "#27ae60" : ORANGE }}>{fmt(Math.max(0, t.balance))}</span>
+                </div>
+              </div>
+            )}
+          </div>
 
-      {/* Notes */}
-      <div style={{ padding: "12px 16px 0" }}>
-        <label style={S.label}>Notes</label>
-        <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions…" />
-      </div>
+          {/* Actions */}
+          <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            <button onClick={() => onSave(form)} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>Save Invoice</button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Icon name="payment" size={16} color="#fff" /> Record Payment
+              </button>
+              <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Status */}
-      <div style={{ padding: "12px 16px 0" }}>
-        <label style={S.label}>Status</label>
-        <div style={{ display: "flex", gap: 8 }}>
-          {["outstanding", "paid"].map(s => (
-            <button key={s} onClick={() => setField("status", s)} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+      {/* ── PREVIEW TAB ── */}
+      {activeTab === "preview" && <PDFPreview form={form} clients={clients} />}
+
+      {/* ── HISTORY TAB ── */}
+      {activeTab === "history" && (
+        <div style={{ padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Activity Log</span>
+            <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="payment" size={14} color="#fff" /> Record Payment
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Totals */}
-      <div style={{ margin: "16px 16px 0", background: "#fff", borderRadius: 12, padding: 16, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
-        {[["Subtotal", fmt(t.sub)], t.disc > 0 && ["Discount", "−" + fmt(t.disc)], ["GET (" + form.tax + "%)", fmt(t.taxAmt)]].filter(Boolean).map(([label, val]) => (
-          <div key={label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 14, color: "#666" }}>
-            <span>{label}</span><span>{val}</span>
           </div>
-        ))}
-        <div style={{ display: "flex", justifyContent: "space-between", borderTop: "2px solid #eee", paddingTop: 10, marginTop: 4 }}>
-          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>Total</span>
-          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: ORANGE }}>{fmt(t.total)}</span>
-        </div>
-        {(form.payments || []).length > 0 && (
-          <div>
-            <div style={{ marginTop: 10, borderTop: "1px solid #eee", paddingTop: 8 }}>
-              {(form.payments || []).map((p, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#27ae60", marginBottom: 3 }}>
-                  <span>{p.method} · {p.date}</span><span>−{fmt(p.amount)}</span>
+
+          <div style={{ position: "relative" }}>
+            {historyEvents.length > 1 && (
+              <div style={{ position: "absolute", left: 17, top: 18, bottom: 18, width: 2, background: "#e8ecf4" }} />
+            )}
+            {historyEvents.map((ev, i) => (
+              <div key={i} style={{ display: "flex", gap: 14, marginBottom: 14, position: "relative" }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
+                  background: ev.type === "payment" ? "#e8f8ef" : "#eef0fa",
+                  border: `2px solid ${ev.type === "payment" ? "#27ae60" : "#8899bb"}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  position: "relative", zIndex: 1,
+                }}>
+                  <Icon name={ev.type === "payment" ? "payment" : "invoice"} size={15} color={ev.type === "payment" ? "#27ae60" : "#8899bb"} />
+                </div>
+                <div style={{ flex: 1, background: "#fff", borderRadius: 10, padding: "11px 14px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 }}>{ev.label}</div>
+                      <div style={{ fontSize: 12, color: "#aaa" }}>{fmtDate(ev.date)}</div>
+                    </div>
+                    {ev.amount != null && (
+                      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: "#27ae60" }}>{fmt(ev.amount)}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {(form.payments || []).length > 0 && (
+            <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginTop: 8, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+              {[
+                ["Invoice Total", fmt(t.total), "#222"],
+                ["Total Paid",    fmt(t.paid),  "#27ae60"],
+                ["Balance Due",   fmt(Math.max(0, t.balance)), t.balance <= 0 ? "#27ae60" : ORANGE],
+              ].map(([label, val, color]) => (
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f4f6fa" }}>
+                  <span style={{ fontSize: 13, color: "#777" }}>{label}</span>
+                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color }}>{val}</span>
                 </div>
               ))}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, borderTop: "2px solid #eee", paddingTop: 8 }}>
-              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16 }}>Balance Due</span>
-              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: t.balance <= 0 ? "#27ae60" : ORANGE }}>{fmt(Math.max(0, t.balance))}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Action Buttons */}
-      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-        <button onClick={() => onSave(form)} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>Save Invoice</button>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <Icon name="payment" size={16} color="#fff" /> Record Payment
-          </button>
-          <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}
-          </button>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -696,9 +1006,9 @@ export default function App() {
 
   const navItems = [
     { id: "invoices", label: "Invoices", icon: "invoice" },
-    { id: "clients", label: "Clients", icon: "clients" },
-    { id: "items", label: "Items", icon: "items" },
-    { id: "ai", label: "AI", icon: "ai" },
+    { id: "clients",  label: "Clients",  icon: "clients" },
+    { id: "items",    label: "Items",    icon: "items"   },
+    { id: "ai",       label: "AI",       icon: "ai"      },
   ];
 
   return (
