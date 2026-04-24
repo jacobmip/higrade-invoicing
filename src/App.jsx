@@ -109,17 +109,17 @@ ACTIONS — when taking an action respond with ONLY a JSON object, no markdown f
 Create a new invoice:
 {"action":"create_invoice","invoice":{"client":"exact name from CLIENTS","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
 
+Create a new estimate (use this when user says estimate, quote, or bid):
+{"action":"create_estimate","invoice":{"client":"exact name from CLIENTS","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
+
 Add items to an existing invoice:
 {"action":"add_items","invoiceId":"INV0000","items":[{"name":"Short Title","desc":"step1\\nstep2","qty":1,"price":000}],"summary":"one sentence"}
 
 Send invoice email (requires confirmation):
 {"action":"send_email","invoiceId":"INV0000","summary":"one sentence"}
 
-Build an estimate without saving:
-{"action":"estimate","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","summary":"one sentence"}
-
 RULES:
-- Match client names exactly as they appear in CLIENTS above.
+- Match client names exactly as they appear in CLIENTS above. Always include the client field.
 - One flat-rate line item per job. Never add a separate service call.
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
 - For plain questions or conversation, reply in plain text without JSON.`;
@@ -324,7 +324,7 @@ function PaymentModal({ invoice, onClose, onSave }) {
 }
 
 // ─── Global AI Modal ──────────────────────────────────────────────────────────
-function GlobalAIModal({ data, onClose, onAction }) {
+function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
   const [msgs, setMsgs] = useState([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -351,9 +351,10 @@ function GlobalAIModal({ data, onClose, onAction }) {
       const reply = await callAI(first >= 0 ? history.slice(first) : history, buildGlobalSystemPrompt(data));
       let parsed = null;
       try { const m = reply.match(/\{[\s\S]*"action"\s*:\s*"[\w_]+"[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch {}
-      if (parsed?.action === "create_invoice") {
+      if (parsed?.action === "create_invoice" || parsed?.action === "create_estimate") {
         const newInv = onAction(parsed);
-        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Invoice created.", card: { type: "created", invoice: newInv } }]);
+        const label = parsed.action === "create_estimate" ? "Estimate created." : "Invoice created.";
+        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || label, card: { type: "created", invoice: newInv } }]);
       } else if (parsed?.action === "add_items") {
         onAction(parsed);
         setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Items added.", card: { type: "added", invoiceId: parsed.invoiceId, count: parsed.items?.length || 0 } }]);
@@ -421,7 +422,7 @@ function GlobalAIModal({ data, onClose, onAction }) {
                   <button onClick={() => createFromEstimate(m.estimate)} style={{ ...S.btn("primary"), width: "100%", marginTop: 10, fontSize: 13 }}>+ Create Invoice</button>
                 </div>
               )}
-              {m.card?.type === "created" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}><Icon name="check" size={16} color="#27ae60" /><div><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#27ae60" }}>{m.card.invoice?.id} Created</div>{m.card.invoice && <div style={{ fontSize: 13, fontWeight: 700, color: "#27ae60" }}>{fmt(calcTotals(m.card.invoice).total)}</div>}</div></div>}
+              {m.card?.type === "created" && <div onClick={() => onOpenDoc?.(m.card.invoice)} style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", border: "1.5px solid #b8f0d0" }}><Icon name="check" size={16} color="#27ae60" /><div style={{ flex: 1 }}><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#27ae60" }}>{m.card.invoice?.id} Created</div>{m.card.invoice?.client && <div style={{ fontSize: 12, color: "#555" }}>{m.card.invoice.client}</div>}{m.card.invoice && <div style={{ fontSize: 13, fontWeight: 700, color: "#27ae60" }}>{fmt(calcTotals(m.card.invoice).total)}</div>}</div><div style={{ fontSize: 11, color: "#27ae60", fontWeight: 600 }}>Open →</div></div>}
               {m.card?.type === "added" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}><Icon name="check" size={16} color="#27ae60" /><div style={{ fontSize: 13, fontWeight: 600, color: "#27ae60" }}>{m.card.count} item{m.card.count !== 1 ? "s" : ""} added to {m.card.invoiceId}</div></div>}
               {m.card?.type === "confirm_email" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{m.card.invoiceId} · {fmt(m.card.total)}</div><div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Send to: {m.card.email}</div><div style={{ display: "flex", gap: 8 }}><button onClick={() => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, type: "email_cancelled" } } : x))} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "7px 0" }}>Cancel</button><button onClick={() => confirmEmail(i)} style={{ ...S.btn("navy"), flex: 2, fontSize: 12, padding: "7px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="mail" size={13} color="#fff" /> Confirm Send</button></div></div>}
               {m.card?.type === "email_sending" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>{[0,1,2].map(k => <span key={k} style={{ width: 7, height: 7, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}<span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>Sending…</span></div>}
@@ -1144,11 +1145,12 @@ export default function App() {
   useEffect(() => { saveData(data); }, [data]);
 
   const handleGlobalAIAction = (parsed) => {
-    if (parsed.action === "create_invoice") {
+    if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
       const year = new Date(inv.date || today()).getFullYear();
       const id = `INV${String(data.nextNum).padStart(4, "0")}`;
-      const newInvoice = { id, year, type: "invoice", client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, notes: inv.notes || "", payments: [] };
+      const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, notes: inv.notes || "", payments: [] };
       setData(d => ({ ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 }));
       return newInvoice;
     }
@@ -1193,7 +1195,7 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
-      {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} />}
+      {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} />}
 
       {view === "list" && (
         <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
