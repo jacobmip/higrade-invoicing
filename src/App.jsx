@@ -90,6 +90,8 @@ function buildGlobalSystemPrompt(data) {
   const clientLines = data.clients.map(c =>
     `  ${c.name}${c.email ? " | " + c.email : ""}${c.phone ? " | " + c.phone : ""}`
   ).join("\n");
+  const savedItemLines = (data.savedItems || []).map(i => `  ${i.name}: $${i.price}`).join("\n");
+
   return `You are Jake's AI assistant for HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You have full control over the app.
 
 CURRENT INVOICES (ID | Client | Total | Status | Date):
@@ -98,7 +100,10 @@ ${invoiceLines || "  (none)"}
 CLIENTS (Name | Email | Phone):
 ${clientLines || "  (none)"}
 
-HONOLULU PRICING — GET tax 4.712% applied automatically, never add to price:
+JAKE'S SAVED PRICES — always use these exact prices when generating estimates or invoices for matching jobs:
+${savedItemLines || "  (none saved yet)"}
+
+FALLBACK HONOLULU PRICING (only use if no saved price matches):
 Drain snake $300–$450 | Hydro-jet $550–$950 | Toilet repair $220–$380 | Toilet replace $550–$950
 Faucet repair $195–$350 | Faucet replace $450–$750 | Water heater elec 40gal $1,400–$2,200
 Water heater gas 40gal $1,800–$2,800 | Tankless $3,200–$5,500 | Sewer camera $350–$550
@@ -118,10 +123,15 @@ Add items to an existing invoice:
 Send invoice email (requires confirmation):
 {"action":"send_email","invoiceId":"INV0000","summary":"one sentence"}
 
+Save or update a price in Jake's memory (use when Jake says "save", "remember", "set price", "my price for X is Y"):
+{"action":"save_item","item":{"name":"Item Name","category":"Category","price":000},"summary":"one sentence"}
+
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
+- When generating an estimate or invoice, check JAKE'S SAVED PRICES first — if a match exists, use that exact price.
 - One flat-rate line item per job. Never add a separate service call.
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
+- Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
 - For plain questions or conversation, reply in plain text without JSON.`;
 }
 
@@ -355,6 +365,9 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
         const newInv = onAction(parsed);
         const label = parsed.action === "create_estimate" ? "Estimate created." : "Invoice created.";
         setMsgs(p => [...p, { role: "assistant", text: parsed.summary || label, card: { type: "created", invoice: newInv } }]);
+      } else if (parsed?.action === "save_item") {
+        onAction(parsed);
+        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Price saved.", card: { type: "saved_item", item: parsed.item } }]);
       } else if (parsed?.action === "add_items") {
         onAction(parsed);
         setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Items added.", card: { type: "added", invoiceId: parsed.invoiceId, count: parsed.items?.length || 0 } }]);
@@ -424,6 +437,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
               )}
               {m.card?.type === "created" && <div onClick={() => onOpenDoc?.(m.card.invoice)} style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", border: "1.5px solid #b8f0d0" }}><Icon name="check" size={16} color="#27ae60" /><div style={{ flex: 1 }}><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#27ae60" }}>{m.card.invoice?.id} Created</div>{m.card.invoice?.client && <div style={{ fontSize: 12, color: "#555" }}>{m.card.invoice.client}</div>}{m.card.invoice && <div style={{ fontSize: 13, fontWeight: 700, color: "#27ae60" }}>{fmt(calcTotals(m.card.invoice).total)}</div>}</div><div style={{ fontSize: 11, color: "#27ae60", fontWeight: 600 }}>Open →</div></div>}
               {m.card?.type === "added" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}><Icon name="check" size={16} color="#27ae60" /><div style={{ fontSize: 13, fontWeight: 600, color: "#27ae60" }}>{m.card.count} item{m.card.count !== 1 ? "s" : ""} added to {m.card.invoiceId}</div></div>}
+              {m.card?.type === "saved_item" && <div style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff" }}><Icon name="items" size={15} color="#2980b9" /><div><div style={{ fontSize: 13, fontWeight: 700, color: "#2980b9" }}>{m.card.item?.name}</div><div style={{ fontSize: 12, color: "#555" }}>{fmt(m.card.item?.price)} saved to My Items</div></div></div>}
               {m.card?.type === "confirm_email" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{m.card.invoiceId} · {fmt(m.card.total)}</div><div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Send to: {m.card.email}</div><div style={{ display: "flex", gap: 8 }}><button onClick={() => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, type: "email_cancelled" } } : x))} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "7px 0" }}>Cancel</button><button onClick={() => confirmEmail(i)} style={{ ...S.btn("navy"), flex: 2, fontSize: 12, padding: "7px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="mail" size={13} color="#fff" /> Confirm Send</button></div></div>}
               {m.card?.type === "email_sending" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>{[0,1,2].map(k => <span key={k} style={{ width: 7, height: 7, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}<span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>Sending…</span></div>}
               {m.card?.type === "email_sent" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}><Icon name="check" size={15} color="#27ae60" /><span style={{ fontSize: 12, fontWeight: 600, color: "#27ae60" }}>Sent!</span></div>}
@@ -1156,6 +1170,16 @@ export default function App() {
     }
     if (parsed.action === "add_items") {
       setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === parsed.invoiceId ? { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] } : inv) }));
+    }
+    if (parsed.action === "save_item") {
+      const item = parsed.item || {};
+      setData(d => {
+        const existing = d.savedItems.find(i => i.name.toLowerCase() === item.name.toLowerCase());
+        if (existing) {
+          return { ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? { ...i, price: item.price, category: item.category || i.category } : i) };
+        }
+        return { ...d, savedItems: [...d.savedItems, { id: Date.now(), category: item.category || "Custom", name: item.name, price: item.price }] };
+      });
     }
   };
 
