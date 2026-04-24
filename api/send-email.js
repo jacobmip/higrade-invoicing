@@ -29,7 +29,7 @@ export default async function handler(req) {
             <strong style="font-size: 20px;">Total Due: $${total}</strong>
           </div>
           <div style="text-align: center; margin-top: 20px;">
-            <a href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${total}&currency_code=USD&item_name=Invoice%20${invoiceId}%20-%20HI%20Grade%20Plumbing&no_note=1&no_shipping=1" target="_blank" style="display: inline-block; background: #0070ba; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: bold; padding: 14px 36px; border-radius: 6px;">
+            <a href="https://www.paypal.me/higradeplumbing/${total}" target="_blank" style="display: inline-block; background: #0070ba; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: bold; padding: 14px 36px; border-radius: 6px;">
               Pay $${total} Online
             </a>
             <p style="color: #999; font-size: 12px; margin: 8px 0 0;">Pay securely with credit card or PayPal — no account required</p>
