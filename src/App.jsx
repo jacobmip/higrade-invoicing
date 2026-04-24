@@ -34,10 +34,10 @@ const DEFAULT_CLIENTS = [
 ];
 
 const DEFAULT_INVOICES = [
-  { id: "INV0748", type: "invoice", client: "Ace of Spades Management LLC", date: "2026-04-09", dueDate: "2026-04-09", status: "outstanding", items: [{ desc: "Backflow prevention repair", qty: 1, price: 628.27 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [] },
-  { id: "INV0747", type: "invoice", client: "Greg Morata", date: "2026-04-09", dueDate: "2026-04-09", status: "paid", items: [{ desc: "Drain clean – snake main line", qty: 1, price: 350 }, { desc: "Service call", qty: 1, price: 225 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 575, method: "Cash", date: "2026-04-09" }] },
-  { id: "INV0746", type: "invoice", client: "Reid Tatsugucho", date: "2026-04-06", dueDate: "2026-04-06", status: "paid", items: [{ desc: "Water heater replacement – electric", qty: 1, price: 1800 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 1884.82, method: "Check", date: "2026-04-06" }] },
-  { id: "INV0745", type: "invoice", client: "Crystal Knysh", date: "2026-04-13", dueDate: "2026-04-13", status: "paid", items: [{ desc: "Bathroom remodel – rough in plumbing", qty: 1, price: 2800 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 2931.94, method: "Venmo", date: "2026-04-13" }] },
+  { id: "INV0748", type: "invoice", client: "Ace of Spades Management LLC", date: "2026-04-09", dueDate: "2026-04-09", status: "outstanding", items: [{ name: "Backflow prevention repair", desc: "", qty: 1, price: 628.27 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [] },
+  { id: "INV0747", type: "invoice", client: "Greg Morata", date: "2026-04-09", dueDate: "2026-04-09", status: "paid", items: [{ name: "Drain clean – snake main line", desc: "", qty: 1, price: 350 }, { name: "Service call", desc: "", qty: 1, price: 225 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 575, method: "Cash", date: "2026-04-09" }] },
+  { id: "INV0746", type: "invoice", client: "Reid Tatsugucho", date: "2026-04-06", dueDate: "2026-04-06", status: "paid", items: [{ name: "Water heater replacement – electric", desc: "", qty: 1, price: 1800 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 1884.82, method: "Check", date: "2026-04-06" }] },
+  { id: "INV0745", type: "invoice", client: "Crystal Knysh", date: "2026-04-13", dueDate: "2026-04-13", status: "paid", items: [{ name: "Bathroom remodel – rough in plumbing", desc: "", qty: 1, price: 2800 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 2931.94, method: "Venmo", date: "2026-04-13" }] },
 ];
 
 // ─── Storage ─────────────────────────────────────────────────────────────────
@@ -86,9 +86,11 @@ async function callAI(messages) {
 // ─── Send Email ───────────────────────────────────────────────────────────────
 async function sendInvoiceEmail(invoice, client) {
   const t = calcTotals(invoice);
-  const itemsHtml = invoice.items.map(it =>
-    `<tr><td style="padding:8px;border-bottom:1px solid #eee;">${it.desc}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${it.qty}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${fmt(it.price * it.qty)}</td></tr>`
-  ).join("");
+  const itemsHtml = invoice.items.map(it => {
+    const title = it.name || it.desc || "";
+    const detail = it.name && it.desc ? `<br><span style="color:#888;font-size:12px;">${it.desc}</span>` : "";
+    return `<tr><td style="padding:8px;border-bottom:1px solid #eee;">${title}${detail}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${it.qty}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${fmt(it.price * it.qty)}</td></tr>`;
+  }).join("");
   const invoiceHtml = `
     <table style="width:100%;border-collapse:collapse;margin-top:16px;">
       <thead><tr style="background:#0a1628;color:#fff;">
@@ -324,18 +326,19 @@ function PaymentModal({ invoice, onClose, onSave }) {
 
 // ─── Item Modal ───────────────────────────────────────────────────────────────
 function ItemModal({ item, onSave, onClose, onDelete }) {
-  const [form, setForm] = useState({ ...item });
+  const [form, setForm] = useState({ name: "", desc: "", ...item });
   const [improving, setImproving] = useState(false);
 
   const aiImprove = async () => {
-    if (!form.desc.trim()) return;
+    const target = form.name || form.desc;
+    if (!target.trim()) return;
     setImproving(true);
     try {
       const reply = await callAI([{
         role: "user",
-        content: `Rewrite this plumbing invoice line item as a professional, concise description (10 words max). Return ONLY the rewritten text, no quotes.\n\nOriginal: ${form.desc}`,
+        content: `Rewrite this plumbing invoice item name as a professional, concise title (6 words max). Return ONLY the rewritten text, no quotes.\n\nOriginal: ${target}`,
       }]);
-      setForm(f => ({ ...f, desc: reply.trim().replace(/^["']|["']$/g, "") }));
+      setForm(f => ({ ...f, name: reply.trim().replace(/^["']|["']$/g, "") }));
     } catch {}
     setImproving(false);
   };
@@ -348,9 +351,10 @@ function ItemModal({ item, onSave, onClose, onDelete }) {
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
         </div>
 
-        <div style={{ marginBottom: 12 }}>
+        {/* Item Name */}
+        <div style={{ marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-            <label style={S.label}>Description</label>
+            <label style={S.label}>Item Name</label>
             <button
               onClick={aiImprove}
               disabled={improving}
@@ -367,12 +371,23 @@ function ItemModal({ item, onSave, onClose, onDelete }) {
               {improving ? "Improving…" : "AI Improve"}
             </button>
           </div>
+          <input
+            style={{ ...S.input, fontWeight: 600 }}
+            value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            placeholder="e.g. Drain Clean – Snake"
+            autoFocus
+          />
+        </div>
+
+        {/* Description */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={S.label}>Description <span style={{ fontWeight: 400, color: "#aaa", textTransform: "none", letterSpacing: 0 }}>(optional)</span></label>
           <textarea
-            style={{ ...S.input, height: 80, resize: "none" }}
+            style={{ ...S.input, height: 64, resize: "none", color: "#555" }}
             value={form.desc}
             onChange={e => setForm(f => ({ ...f, desc: e.target.value }))}
-            placeholder="Item description…"
-            autoFocus
+            placeholder="Notes about the work done…"
           />
         </div>
 
@@ -468,7 +483,10 @@ function PDFPreview({ form, clients }) {
           </div>
           {form.items.map((item, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 36px 84px", padding: "11px 24px", borderBottom: "1px solid #f4f6fa" }}>
-              <div style={{ fontSize: 13, color: "#222", paddingRight: 8 }}>{item.desc || <span style={{ color: "#ccc" }}>—</span>}</div>
+              <div style={{ paddingRight: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#222" }}>{item.name || item.desc || <span style={{ color: "#ccc" }}>—</span>}</div>
+                {item.name && item.desc ? <div style={{ fontSize: 11, color: "#999", marginTop: 2, lineHeight: 1.4 }}>{item.desc}</div> : null}
+              </div>
               <div style={{ fontSize: 13, color: "#666", textAlign: "center" }}>{item.qty}</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#222", textAlign: "right" }}>{fmt(item.qty * item.price)}</div>
             </div>
@@ -520,7 +538,7 @@ function PDFPreview({ form, clients }) {
 function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete }) {
   const [form, setForm] = useState(invoice || {
     type: "invoice", client: "", date: today(), dueDate: today(),
-    status: "outstanding", items: [{ desc: "", qty: 1, price: 0 }],
+    status: "outstanding", items: [{ name: "", desc: "", qty: 1, price: 0 }],
     tax: TAX_RATE, discount: 0, notes: "", payments: [],
   });
   const [activeTab, setActiveTab] = useState("edit");
@@ -533,12 +551,12 @@ function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete 
   const t = calcTotals(form);
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
-  const addItem = (desc = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { desc, qty: 1, price }] }));
+  const addItem = (name = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { name, desc: "", qty: 1, price }] }));
   const removeItem = (i) => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }));
   const handleAddFromAI = (items, notes) => {
     setForm(f => ({
       ...f,
-      items: [...f.items.filter(it => it.desc || it.price), ...items],
+      items: [...f.items.filter(it => it.name || it.desc || it.price), ...items.map(it => ({ name: it.desc || "", desc: "", qty: it.qty, price: it.price }))],
       notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes,
     }));
     setShowAI(false);
@@ -695,9 +713,12 @@ function InvoiceForm({ invoice, clients, savedItems, onSave, onCancel, onDelete 
                 style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", marginBottom: 8, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: item.desc ? "#1a1a1a" : "#bbb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {item.desc || "Tap to add description…"}
+                  <div style={{ fontSize: 14, fontWeight: 600, color: (item.name || item.desc) ? "#1a1a1a" : "#bbb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.name || item.desc || "Tap to add item…"}
                   </div>
+                  {item.name && item.desc && (
+                    <div style={{ fontSize: 12, color: "#888", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.desc}</div>
+                  )}
                   <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>
                     {item.qty > 1 ? `${item.qty} × ${fmt(item.price)}` : fmt(item.price)}
                   </div>
