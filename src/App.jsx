@@ -27,27 +27,65 @@ const SAVED_ITEMS = [
 ];
 
 const DEFAULT_CLIENTS = [
-  { id: 1, name: "Ace of Spades Management LLC", email: "aosm@gmail.com", phone: "808-555-0101", address: "1234 Kapiolani Blvd, Honolulu HI 96814" },
-  { id: 2, name: "Greg Morata", email: "gmorata@gmail.com", phone: "808-555-0192", address: "456 Nuuanu Ave, Honolulu HI 96817" },
-  { id: 3, name: "Reid Tatsugucho", email: "", phone: "808-555-0144", address: "" },
-  { id: 4, name: "Crystal Knysh", email: "crystal@gmail.com", phone: "808-555-0177", address: "789 Ala Moana Blvd, Honolulu HI 96813" },
+  { id: 1, name: "Jacob Petersen", email: "jacobmip@gmail.com", phone: "", address: "" },
 ];
 
 const DEFAULT_INVOICES = [
-  { id: "INV0748", type: "invoice", client: "Ace of Spades Management LLC", date: "2026-04-09", dueDate: "2026-04-09", status: "outstanding", items: [{ name: "Backflow prevention repair", desc: "", qty: 1, price: 628.27 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [] },
-  { id: "INV0747", type: "invoice", client: "Greg Morata", date: "2026-04-09", dueDate: "2026-04-09", status: "paid", items: [{ name: "Drain clean – snake main line", desc: "", qty: 1, price: 350 }, { name: "Service call", desc: "", qty: 1, price: 225 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 575, method: "Cash", date: "2026-04-09" }] },
-  { id: "INV0746", type: "invoice", client: "Reid Tatsugucho", date: "2026-04-06", dueDate: "2026-04-06", status: "paid", items: [{ name: "Water heater replacement – electric", desc: "", qty: 1, price: 1800 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 1884.82, method: "Check", date: "2026-04-06" }] },
-  { id: "INV0745", type: "invoice", client: "Crystal Knysh", date: "2026-04-13", dueDate: "2026-04-13", status: "paid", items: [{ name: "Bathroom remodel – rough in plumbing", desc: "", qty: 1, price: 2800 }], tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 2931.94, method: "Venmo", date: "2026-04-13" }] },
+  {
+    id: "INV0005", type: "invoice", client: "Jacob Petersen", date: "2026-04-22", dueDate: "2026-04-22",
+    status: "outstanding", tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [],
+    items: [{
+      name: "Sewer Camera Inspection",
+      desc: "Locate cleanout access and set up camera equipment\nRun camera through main sewer line from cleanout to street\nInspect for root intrusion, cracks, and blockages\nDocument findings with photos and footage\nProvide verbal report of pipe condition and recommendations",
+      qty: 1, price: 450,
+    }],
+  },
+  {
+    id: "INV0004", type: "invoice", client: "Jacob Petersen", date: "2026-04-18", dueDate: "2026-04-18",
+    status: "outstanding", tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [],
+    items: [{
+      name: "Kitchen Faucet Replacement",
+      desc: "Shut off hot and cold supply valves under sink\nDisconnect supply lines and remove old faucet\nClean mounting surface and inspect for corrosion\nInstall new customer-supplied faucet with new supply lines\nReconnect drain and check garbage disposal connection\nRestore water and test for leaks at all connections\nVerify hot and cold operation and proper flow rate",
+      qty: 1, price: 575,
+    }],
+  },
+  {
+    id: "INV0003", type: "invoice", client: "Jacob Petersen", date: "2026-04-14", dueDate: "2026-04-14",
+    status: "paid", tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 1884.82, method: "Check", date: "2026-04-14" }],
+    items: [{
+      name: "Water Heater Replacement – Electric 40gal",
+      desc: "Shut off power at breaker and cold water supply to unit\nDrain existing water heater and disconnect supply lines\nDisconnect electrical connections and remove old unit\nPosition and secure new 40-gallon electric water heater\nReconnect cold supply, hot outlet, and pressure relief valve\nReconnect electrical wiring and verify proper grounding\nRestore power and water, purge air from lines\nTest thermostat settings and check all connections for leaks",
+      qty: 1, price: 1800,
+    }],
+  },
+  {
+    id: "INV0002", type: "invoice", client: "Jacob Petersen", date: "2026-04-10", dueDate: "2026-04-10",
+    status: "paid", tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 790.35, method: "Cash", date: "2026-04-10" }],
+    items: [{
+      name: "Drain Cleaning – Hydro Jet",
+      desc: "Locate and access main line cleanout\nSet up hydro-jet equipment and safety barriers\nInsert jetting hose and clear grease buildup and debris\nFlush line at 3,500 PSI from cleanout to street connection\nBackflush to clear any remaining obstruction\nRun camera to confirm line is fully clear\nRestore cleanout cap and clean work area",
+      qty: 1, price: 750,
+    }],
+  },
+  {
+    id: "INV0001", type: "invoice", client: "Jacob Petersen", date: "2026-04-07", dueDate: "2026-04-07",
+    status: "paid", tax: TAX_RATE, discount: 0, notes: "", year: 2026, payments: [{ amount: 403.13, method: "Venmo", date: "2026-04-07" }],
+    items: [{
+      name: "Wax Seal Replacement – Rear Outlet Toilet",
+      desc: "Shut off water supply to toilet and flush to empty tank and bowl\nDisconnect water supply line and remove toilet from floor\nRemove old wax ring and inspect floor flange for damage\nInstall new wax ring and new closet bolts\nReset toilet and secure evenly to floor\nReconnect water supply line and restore water\nTest fill valve operation and inspect all connections for leaks\nVerify proper flush and drainage",
+      qty: 1, price: 385,
+    }],
+  },
 ];
 
 // ─── Storage ─────────────────────────────────────────────────────────────────
-const KEY = "higrade_v3";
+const KEY = "higrade_v4";
 function loadData() {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return { invoices: DEFAULT_INVOICES, clients: DEFAULT_CLIENTS, savedItems: SAVED_ITEMS, nextNum: 749 };
+  return { invoices: DEFAULT_INVOICES, clients: DEFAULT_CLIENTS, savedItems: SAVED_ITEMS, nextNum: 6 };
 }
 function saveData(d) {
   try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {}
