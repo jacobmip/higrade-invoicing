@@ -71,12 +71,58 @@ function fmtDate(d) {
   return `${m}/${day}/${y}`;
 }
 
+// ─── Global AI System Prompt ──────────────────────────────────────────────────
+function buildGlobalSystemPrompt(data) {
+  const invoiceLines = data.invoices.slice(0, 20).map(inv => {
+    const t = calcTotals(inv);
+    return `  ${inv.id} | ${inv.client} | ${fmt(t.total)} | ${inv.status} | ${inv.date}`;
+  }).join("\n");
+
+  const clientLines = data.clients.map(c =>
+    `  ${c.name}${c.email ? " | " + c.email : ""}${c.phone ? " | " + c.phone : ""}`
+  ).join("\n");
+
+  return `You are Jake's AI assistant for HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You have full control over the app.
+
+CURRENT INVOICES (ID | Client | Total | Status | Date):
+${invoiceLines || "  (none)"}
+
+CLIENTS (Name | Email | Phone):
+${clientLines || "  (none)"}
+
+HONOLULU PRICING — GET tax 4.712% applied automatically, never add to price:
+Drain snake $300–$450 | Hydro-jet $550–$950 | Toilet repair $220–$380 | Toilet replace $550–$950
+Faucet repair $195–$350 | Faucet replace $450–$750 | Water heater elec 40gal $1,400–$2,200
+Water heater gas 40gal $1,800–$2,800 | Tankless $3,200–$5,500 | Sewer camera $350–$550
+Sewer spot repair $1,800–$4,500 | Gas line repair $800–$2,500 | Bathroom remodel $4,500–$12,000
+
+ACTIONS — when taking an action respond with ONLY a JSON object, no markdown fences, no extra text:
+
+Create a new invoice:
+{"action":"create_invoice","invoice":{"client":"exact name from CLIENTS","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
+
+Add items to an existing invoice:
+{"action":"add_items","invoiceId":"INV0000","items":[{"name":"Short Title","desc":"step1\\nstep2","qty":1,"price":000}],"summary":"one sentence"}
+
+Send invoice email (requires confirmation):
+{"action":"send_email","invoiceId":"INV0000","summary":"one sentence"}
+
+Build an estimate without saving:
+{"action":"estimate","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","summary":"one sentence"}
+
+RULES:
+- Match client names exactly as they appear in CLIENTS above.
+- One flat-rate line item per job. Never add a separate service call.
+- Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
+- For plain questions or conversation, reply in plain text without JSON.`;
+}
+
 // ─── AI Call ─────────────────────────────────────────────────────────────────
-async function callAI(messages) {
+async function callAI(messages, systemPrompt = null) {
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, ...(systemPrompt ? { systemPrompt } : {}) }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || data.error);
@@ -319,6 +365,265 @@ function PaymentModal({ invoice, onClose, onSave }) {
           <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
           <button onClick={save} style={{ ...S.btn("green"), flex: 2 }}>Save Payment</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Global AI Modal ──────────────────────────────────────────────────────────
+function GlobalAIModal({ data, onClose, onAction }) {
+  const [msgs, setMsgs] = useState([{
+    role: "assistant",
+    text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items to existing ones, send emails, or build estimates. What do you need?`,
+  }]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [listening, setListening] = useState(false);
+  const endRef = useRef(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [msgs, loading]);
+
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert("Voice not supported in this browser."); return; }
+    const r = new SR();
+    r.lang = "en-US";
+    r.onresult = e => { setInput(prev => (prev + " " + e.results[0][0].transcript).trim()); setListening(false); };
+    r.onerror = () => setListening(false);
+    r.onend = () => setListening(false);
+    r.start(); setListening(true);
+  };
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput("");
+    const userMsg = { role: "user", text };
+    setMsgs(prev => [...prev, userMsg]);
+    setLoading(true);
+
+    try {
+      const history = [...msgs, userMsg]
+        .filter(m => m.text?.trim())
+        .map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+      const firstUser = history.findIndex(m => m.role === "user");
+      const apiHistory = firstUser >= 0 ? history.slice(firstUser) : history;
+
+      const reply = await callAI(apiHistory, buildGlobalSystemPrompt(data));
+
+      let parsed = null;
+      try {
+        const jsonMatch = reply.match(/\{[\s\S]*"action"\s*:\s*"[\w_]+"[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {}
+
+      if (parsed?.action === "create_invoice") {
+        const newInv = onAction(parsed);
+        setMsgs(prev => [...prev, {
+          role: "assistant", text: parsed.summary || "Invoice created.",
+          card: { type: "created", invoice: newInv },
+        }]);
+      } else if (parsed?.action === "add_items") {
+        onAction(parsed);
+        setMsgs(prev => [...prev, {
+          role: "assistant", text: parsed.summary || "Items added.",
+          card: { type: "added", invoiceId: parsed.invoiceId, count: parsed.items?.length || 0 },
+        }]);
+      } else if (parsed?.action === "send_email") {
+        const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+        const client = data.clients.find(c => c.name === inv?.client);
+        if (!inv || !client?.email) {
+          setMsgs(prev => [...prev, { role: "assistant", text: `Couldn't find ${parsed.invoiceId} or no email on file for that client.` }]);
+        } else {
+          setMsgs(prev => [...prev, {
+            role: "assistant", text: parsed.summary || `Ready to send ${parsed.invoiceId}.`,
+            card: { type: "confirm_email", invoiceId: parsed.invoiceId, email: client.email, total: calcTotals(inv).total },
+          }]);
+        }
+      } else if (parsed?.action === "estimate") {
+        setMsgs(prev => [...prev, {
+          role: "assistant", text: parsed.summary || "Here's the estimate:",
+          estimate: parsed,
+        }]);
+      } else {
+        setMsgs(prev => [...prev, { role: "assistant", text: reply }]);
+      }
+    } catch (e) {
+      setMsgs(prev => [...prev, { role: "assistant", text: "Error: " + e.message }]);
+    }
+    setLoading(false);
+  };
+
+  const confirmEmail = async (msgIdx) => {
+    const { invoiceId } = msgs[msgIdx].card;
+    setMsgs(prev => prev.map((m, i) => i === msgIdx ? { ...m, card: { ...m.card, type: "email_sending" } } : m));
+    try {
+      const inv = data.invoices.find(i => i.id === invoiceId);
+      const client = data.clients.find(c => c.name === inv?.client);
+      await sendInvoiceEmail(inv, client);
+      setMsgs(prev => prev.map((m, i) => i === msgIdx ? { ...m, card: { ...m.card, type: "email_sent" } } : m));
+    } catch (e) {
+      setMsgs(prev => prev.map((m, i) => i === msgIdx ? { ...m, card: { ...m.card, type: "email_failed", error: e.message } } : m));
+    }
+  };
+
+  const cancelEmail = (msgIdx) =>
+    setMsgs(prev => prev.map((m, i) => i === msgIdx ? { ...m, card: { ...m.card, type: "email_cancelled" } } : m));
+
+  const createFromEstimate = (estimate) => {
+    const newInv = onAction({
+      action: "create_invoice",
+      invoice: { client: "", date: today(), dueDate: today(), items: estimate.items, notes: estimate.notes || "", tax: TAX_RATE, discount: 0 },
+      summary: "Invoice created from estimate",
+    });
+    setMsgs(prev => [...prev, {
+      role: "assistant", text: `Created ${newInv.id} — open it from the invoice list to assign a client.`,
+      card: { type: "created", invoice: newInv },
+    }]);
+  };
+
+  const bubbleBase = (isUser) => ({
+    maxWidth: "88%",
+    background: isUser ? NAVY : "#fff",
+    color: isUser ? "#fff" : "#1a1a1a",
+    borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+    padding: "11px 14px", fontSize: 13, lineHeight: 1.55,
+    boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto" }}>
+      <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
+
+      {/* Header */}
+      <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+        <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon name="ai" size={20} color="#fff" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, letterSpacing: 1 }}>AI ASSISTANT</div>
+          <div style={{ color: "#8899bb", fontSize: 11 }}>{data.invoices.length} invoices · {data.clients.length} clients</div>
+        </div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
+      </div>
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 0" }}>
+        {msgs.map((m, i) => (
+          <div key={i} style={{ marginBottom: 12, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+            <div style={bubbleBase(m.role === "user")}>
+              {m.text}
+
+              {/* Estimate card */}
+              {m.estimate && (
+                <div style={{ marginTop: 10, borderTop: "1px solid #f0f2f8", paddingTop: 10 }}>
+                  {m.estimate.items.map((it, j) => (
+                    <div key={j} style={{ marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <span style={{ fontWeight: 600, flex: 1, fontSize: 13 }}>{it.name || it.desc}</span>
+                        <strong style={{ color: ORANGE, marginLeft: 10, flexShrink: 0 }}>{fmt(it.price * it.qty)}</strong>
+                      </div>
+                      {it.name && it.desc && <div style={{ fontSize: 11, color: "#aaa", marginTop: 3, lineHeight: 1.5, whiteSpace: "pre-line" }}>{it.desc}</div>}
+                    </div>
+                  ))}
+                  {m.estimate.notes && <div style={{ fontSize: 11, color: "#aab", marginTop: 4 }}>{m.estimate.notes}</div>}
+                  <button onClick={() => createFromEstimate(m.estimate)} style={{ ...S.btn("primary"), width: "100%", marginTop: 10, fontSize: 13 }}>
+                    + Create Invoice
+                  </button>
+                </div>
+              )}
+
+              {/* Created invoice card */}
+              {m.card?.type === "created" && (
+                <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <Icon name="check" size={16} color="#27ae60" />
+                  <div>
+                    <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#27ae60" }}>{m.card.invoice?.id} Created</div>
+                    {m.card.invoice?.client && <div style={{ fontSize: 12, color: "#555" }}>{m.card.invoice.client || "No client set"}</div>}
+                    {m.card.invoice && <div style={{ fontSize: 13, fontWeight: 700, color: "#27ae60" }}>{fmt(calcTotals(m.card.invoice).total)}</div>}
+                  </div>
+                </div>
+              )}
+
+              {/* Items added card */}
+              {m.card?.type === "added" && (
+                <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <Icon name="check" size={16} color="#27ae60" />
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#27ae60" }}>
+                    {m.card.count} item{m.card.count !== 1 ? "s" : ""} added to {m.card.invoiceId}
+                  </div>
+                </div>
+              )}
+
+              {/* Email confirmation */}
+              {m.card?.type === "confirm_email" && (
+                <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 }}>{m.card.invoiceId} · {fmt(m.card.total)}</div>
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Send to: {m.card.email}</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => cancelEmail(i)} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "7px 0" }}>Cancel</button>
+                    <button onClick={() => confirmEmail(i)} style={{ ...S.btn("navy"), flex: 2, fontSize: 12, padding: "7px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                      <Icon name="mail" size={13} color="#fff" /> Confirm Send
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {m.card?.type === "email_sending" && (
+                <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                  {[0,1,2].map(k => <span key={k} style={{ width: 7, height: 7, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}
+                  <span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>Sending…</span>
+                </div>
+              )}
+
+              {m.card?.type === "email_sent" && (
+                <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <Icon name="check" size={15} color="#27ae60" />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#27ae60" }}>Sent to {m.card.email}</span>
+                </div>
+              )}
+
+              {m.card?.type === "email_cancelled" && (
+                <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px" }}>
+                  <span style={{ fontSize: 12, color: "#aaa" }}>Email cancelled</span>
+                </div>
+              )}
+
+              {m.card?.type === "email_failed" && (
+                <div style={{ marginTop: 10, background: "#fff0ee", borderRadius: 8, padding: "10px 12px" }}>
+                  <span style={{ fontSize: 12, color: "#cc4444" }}>Failed: {m.card.error}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 12 }}>
+            <div style={{ background: "#fff", borderRadius: "16px 16px 16px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>
+              {[0,1,2].map(k => <span key={k} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}
+            </div>
+          </div>
+        )}
+        <div ref={endRef} style={{ height: 14 }} />
+      </div>
+
+      {/* Input */}
+      <div style={{ background: "#fff", borderTop: "1px solid #dde2ee", padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon name="mic" size={18} color={listening ? "#fff" : "#666"} />
+        </button>
+        <input
+          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc" }}
+          value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && send()}
+          placeholder={listening ? "Listening…" : "Create invoice, add items, send email…"}
+        />
+        <button onClick={send} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: NAVY, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon name="send" size={17} color="#fff" />
+        </button>
       </div>
     </div>
   );
@@ -921,8 +1226,8 @@ function InvoiceList({ invoices, onNew, onSelect }) {
         ))}
       </div>
 
-      <button onClick={onNew} style={{ position: "fixed", bottom: 90, right: 20, width: 56, height: 56, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.5)", zIndex: 150 }}>
-        <Icon name="plus" size={26} color="#fff" />
+      <button onClick={onNew} style={{ position: "fixed", bottom: 158, right: 20, width: 52, height: 52, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.45)", zIndex: 150 }}>
+        <Icon name="plus" size={24} color="#fff" />
       </button>
     </div>
   );
@@ -998,8 +1303,39 @@ export default function App() {
   const [tab, setTab] = useState("invoices");
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
+  const [showGlobalAI, setShowGlobalAI] = useState(false);
 
   useEffect(() => { saveData(data); }, [data]);
+
+  const handleGlobalAIAction = (parsed) => {
+    if (parsed.action === "create_invoice") {
+      const inv = parsed.invoice || {};
+      const year = new Date(inv.date || today()).getFullYear();
+      const id = `INV${String(data.nextNum).padStart(4, "0")}`;
+      const newInvoice = {
+        id, year, type: "invoice",
+        client: inv.client || "",
+        date: inv.date || today(),
+        dueDate: inv.dueDate || today(),
+        status: "outstanding",
+        items: inv.items || [],
+        tax: inv.tax ?? TAX_RATE,
+        discount: inv.discount || 0,
+        notes: inv.notes || "",
+        payments: [],
+      };
+      setData(d => ({ ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 }));
+      return newInvoice;
+    }
+    if (parsed.action === "add_items") {
+      setData(d => ({
+        ...d,
+        invoices: d.invoices.map(inv =>
+          inv.id === parsed.invoiceId ? { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] } : inv
+        ),
+      }));
+    }
+  };
 
   const updateInvoice = (form) => {
     const year = new Date(form.date || today()).getFullYear();
@@ -1029,11 +1365,19 @@ export default function App() {
     { id: "invoices", label: "Invoices", icon: "invoice" },
     { id: "clients",  label: "Clients",  icon: "clients" },
     { id: "items",    label: "Items",    icon: "items"   },
-    { id: "ai",       label: "AI",       icon: "ai"      },
   ];
 
   return (
     <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
+      {/* Global AI Modal */}
+      {showGlobalAI && (
+        <GlobalAIModal
+          data={data}
+          onClose={() => setShowGlobalAI(false)}
+          onAction={handleGlobalAIAction}
+        />
+      )}
+
       {/* Header */}
       {view === "list" && (
         <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
@@ -1062,13 +1406,29 @@ export default function App() {
           {tab === "invoices" && <InvoiceList invoices={data.invoices} onNew={() => { setSelected(null); setView("form"); }} onSelect={(inv) => { setSelected(inv); setView("form"); }} />}
           {tab === "clients" && <ClientsTab clients={data.clients} onSave={saveClient} />}
           {tab === "items" && <ItemsTab savedItems={data.savedItems} />}
-          {tab === "ai" && (
-            <div style={{ padding: 16 }}>
-              <p style={{ fontSize: 13, color: "#666", marginBottom: 14 }}>Use AI to build estimates. Open an invoice to add items directly.</p>
-              <AIChatPanel onAddItems={() => {}} />
-            </div>
-          )}
         </>
+      )}
+
+      {/* Floating AI button — always visible */}
+      {!showGlobalAI && (
+        <button
+          onClick={() => setShowGlobalAI(true)}
+          style={{
+            position: "fixed",
+            bottom: view === "form" ? 24 : 90,
+            right: 20,
+            width: 52, height: 52,
+            borderRadius: "50%",
+            background: NAVY,
+            border: `2.5px solid ${ORANGE}`,
+            cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 4px 20px rgba(10,22,40,0.45)",
+            zIndex: 150,
+          }}
+        >
+          <Icon name="ai" size={22} color={ORANGE} />
+        </button>
       )}
 
       {/* Bottom Nav */}

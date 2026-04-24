@@ -73,7 +73,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { messages } = await req.json();
+    const { messages, systemPrompt } = await req.json();
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -84,8 +84,8 @@ export default async function handler(req) {
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1000,
-        system: AI_SYSTEM,
+        max_tokens: 1500,
+        system: systemPrompt || AI_SYSTEM,
         messages,
       }),
     });
