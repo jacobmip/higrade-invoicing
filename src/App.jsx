@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import * as GCal from './googleCalendar.js';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -200,6 +201,8 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     grip:      <svg {...p}><line x1="6" y1="9" x2="18" y2="9"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="6" y1="15" x2="18" y2="15"/></svg>,
     arrowUp:   <svg {...p}><polyline points="18 15 12 9 6 15"/></svg>,
     arrowDown: <svg {...p}><polyline points="6 9 12 15 18 9"/></svg>,
+    calendar:  <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+    bell:      <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
   };
   return icons[name] || null;
 };
@@ -327,6 +330,121 @@ function PaymentModal({ invoice, onClose, onSave }) {
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
           <button onClick={save} style={{ ...S.btn("green"), flex: 2 }}>Save Payment</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Schedule Job Modal ───────────────────────────────────────────────────────
+function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
+  const [date, setDate] = useState(invoice.gcalDate?.slice(0, 10) || today());
+  const [time, setTime] = useState(invoice.gcalDate?.slice(11, 16) || "09:00");
+  const [duration, setDuration] = useState("2");
+  const [saving, setSaving] = useState(false);
+  const jobTitle = invoice.items?.[0]?.name || "Plumbing Service";
+  const desc = invoice.items?.[0]?.desc || "";
+
+  const handleSave = async () => {
+    setSaving(true);
+    let gcalEventId = invoice.gcalEventId || null;
+    if (gcalAuthed && GCal.isConfigured()) {
+      const startDt = new Date(`${date}T${time}:00`);
+      const endDt = new Date(startDt.getTime() + parseInt(duration) * 3600000);
+      const event = {
+        summary: `${invoice.client || "Client"} – ${jobTitle}`,
+        description: desc,
+        start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
+        end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
+      };
+      try {
+        if (gcalEventId) await GCal.deleteEvent(gcalEventId).catch(() => {});
+        const resp = await GCal.createEvent(event);
+        gcalEventId = resp?.id || gcalEventId;
+      } catch {}
+    }
+    onSave({ gcalDate: `${date}T${time}`, gcalEventId });
+    setSaving(false);
+    onClose();
+  };
+
+  const handleRemove = async () => {
+    if (invoice.gcalEventId && gcalAuthed) await GCal.deleteEvent(invoice.gcalEventId).catch(() => {});
+    onSave({ gcalDate: null, gcalEventId: null });
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto" }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4, color: NAVY }}>Schedule Job</div>
+        <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.client || "No client"} · {jobTitle}</div>
+        <div style={{ marginBottom: 12 }}><label style={S.label}>Date</label><input type="date" style={S.input} value={date} onChange={e => setDate(e.target.value)} /></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+          <div><label style={S.label}>Start Time</label><input type="time" style={S.input} value={time} onChange={e => setTime(e.target.value)} /></div>
+          <div><label style={S.label}>Duration</label>
+            <select style={S.input} value={duration} onChange={e => setDuration(e.target.value)}>
+              {["1","2","3","4","6","8"].map(h => <option key={h} value={h}>{h} hr{h !== "1" ? "s" : ""}</option>)}
+            </select>
+          </div>
+        </div>
+        {!gcalAuthed && GCal.isConfigured() && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12, background: "#f8f9fc", borderRadius: 6, padding: "7px 10px" }}>Connect Google Calendar in the Calendar tab to sync this event.</div>}
+        <div style={{ display: "flex", gap: 8 }}>
+          {invoice.gcalDate && <button onClick={handleRemove} style={{ ...S.btn("ghost"), fontSize: 12, padding: "10px 12px", color: "#cc4444" }}>Remove</button>}
+          <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ ...S.btn("primary"), flex: 2 }}>{saving ? "Saving…" : "Schedule"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Follow Up Modal ──────────────────────────────────────────────────────────
+function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
+  const [date, setDate] = useState(() => {
+    if (invoice.followUpDate) return invoice.followUpDate;
+    const d = new Date(); d.setDate(d.getDate() + 3); return d.toISOString().slice(0, 10);
+  });
+  const [saving, setSaving] = useState(false);
+  const preset = (days) => { const d = new Date(); d.setDate(d.getDate() + days); setDate(d.toISOString().slice(0, 10)); };
+
+  const handleSave = async () => {
+    setSaving(true);
+    let followUpEventId = invoice.followUpEventId || null;
+    if (gcalAuthed && GCal.isConfigured()) {
+      const event = { summary: `Follow up: ${invoice.id} – ${invoice.client || "Client"}`, start: { date }, end: { date } };
+      try {
+        if (followUpEventId) await GCal.deleteEvent(followUpEventId).catch(() => {});
+        const resp = await GCal.createEvent(event);
+        followUpEventId = resp?.id || followUpEventId;
+      } catch {}
+    }
+    onSave({ followUpDate: date, followUpEventId });
+    setSaving(false);
+    onClose();
+  };
+
+  const handleRemove = async () => {
+    if (invoice.followUpEventId && gcalAuthed) await GCal.deleteEvent(invoice.followUpEventId).catch(() => {});
+    onSave({ followUpDate: null, followUpEventId: null });
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto" }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 16, color: NAVY }}>Set Follow-Up Reminder</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          {[["Tomorrow", 1], ["3 Days", 3], ["1 Week", 7]].map(([label, days]) => (
+            <button key={label} onClick={() => preset(days)} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "8px 4px" }}>{label}</button>
+          ))}
+        </div>
+        <div style={{ marginBottom: 20 }}><label style={S.label}>Custom Date</label><input type="date" style={S.input} value={date} onChange={e => setDate(e.target.value)} /></div>
+        {!gcalAuthed && GCal.isConfigured() && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12, background: "#f8f9fc", borderRadius: 6, padding: "7px 10px" }}>Connect Google Calendar in the Calendar tab to sync reminders.</div>}
+        <div style={{ display: "flex", gap: 8 }}>
+          {invoice.followUpDate && <button onClick={handleRemove} style={{ ...S.btn("ghost"), fontSize: 12, padding: "10px 12px", color: "#cc4444" }}>Remove</button>}
+          <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ ...S.btn("primary"), flex: 2 }}>{saving ? "Saving…" : "Set Reminder"}</button>
         </div>
       </div>
     </div>
@@ -671,7 +789,7 @@ function PDFPreview({ form, clients }) {
 }
 
 // ─── Invoice Form ─────────────────────────────────────────────────────────────
-function InvoiceForm({ invoice, defaultType, clients, savedItems, onSave, onCancel, onDelete, onSaveItem }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onCancel, onDelete, onSaveItem }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice || { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -682,6 +800,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, onSave, onCanc
   const [reordering, setReordering] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
   const [emailStatus, setEmailStatus] = useState("");
+  const [showScheduleJob, setShowScheduleJob] = useState(false);
+  const [showFollowUp, setShowFollowUp] = useState(false);
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -720,6 +840,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, onSave, onCanc
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => setForm(updated)} />}
+      {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => setForm(f => ({ ...f, ...fields }))} />}
+      {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => setForm(f => ({ ...f, ...fields }))} />}
       {editingItem !== null && (
         <ItemModal
           item={form.items[editingItem]}
@@ -859,6 +981,33 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, onSave, onCanc
           <div style={{ padding: "12px 16px 0" }}>
             <label style={S.label}>Notes</label>
             <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions…" />
+          </div>
+
+          {/* Schedule & Reminders */}
+          <div style={{ padding: "12px 16px 0" }}>
+            <label style={S.label}>Schedule &amp; Reminders</label>
+            <div style={{ background: "#fff", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid #f0f2f8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Icon name="calendar" size={16} color={form.gcalDate ? ORANGE : "#ccc"} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "#333" }}>Schedule Job</div>
+                    {form.gcalDate && <div style={{ fontSize: 12, color: ORANGE, marginTop: 1 }}>{fmtDate(form.gcalDate.slice(0, 10))} {form.gcalDate.slice(11, 16)}</div>}
+                  </div>
+                </div>
+                <button onClick={() => setShowScheduleJob(true)} style={{ ...S.btn(form.gcalDate ? "primary" : "ghost"), fontSize: 12, padding: "6px 12px" }}>{form.gcalDate ? "Edit" : "Set Date"}</button>
+              </div>
+              <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Icon name="bell" size={16} color={form.followUpDate ? "#2980b9" : "#ccc"} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "#333" }}>Follow-Up Reminder</div>
+                    {form.followUpDate && <div style={{ fontSize: 12, color: "#2980b9", marginTop: 1 }}>{fmtDate(form.followUpDate)}</div>}
+                  </div>
+                </div>
+                <button onClick={() => setShowFollowUp(true)} style={{ ...S.btn(form.followUpDate ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}>{form.followUpDate ? "Edit" : "Remind"}</button>
+              </div>
+            </div>
           </div>
 
           {/* Status */}
@@ -1147,6 +1296,146 @@ function PaymentsTab({ invoices }) {
   );
 }
 
+// ─── Calendar Tab ─────────────────────────────────────────────────────────────
+function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
+  const [currentDate, setCurrentDate] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const [selectedDay, setSelectedDay] = useState(today());
+  const [gcalEvents, setGcalEvents] = useState([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+  useEffect(() => {
+    if (!gcalAuthed || !GCal.isConfigured()) return;
+    setLoadingEvents(true);
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0, 23, 59, 59);
+    GCal.listEvents(start, end)
+      .then(evs => { setGcalEvents(evs); setLoadingEvents(false); })
+      .catch(() => setLoadingEvents(false));
+  }, [gcalAuthed, year, month]);
+
+  const handleSignIn = async () => {
+    setAuthError("");
+    try { await GCal.requestToken('consent'); onAuthChange(true); }
+    catch (e) { setAuthError(e.message || "Sign-in failed"); }
+  };
+  const handleSignOut = () => { GCal.signOut(); onAuthChange(false); setGcalEvents([]); };
+
+  // Build event map by date
+  const dayEvents = {};
+  invoices.forEach(inv => {
+    if (inv.gcalDate) {
+      const d = inv.gcalDate.slice(0, 10);
+      if (!dayEvents[d]) dayEvents[d] = [];
+      dayEvents[d].push({ type: "job", label: inv.client || inv.id, invoiceId: inv.id, time: inv.gcalDate.slice(11, 16), color: ORANGE });
+    }
+    if (inv.followUpDate) {
+      if (!dayEvents[inv.followUpDate]) dayEvents[inv.followUpDate] = [];
+      dayEvents[inv.followUpDate].push({ type: "followup", label: `Follow-up: ${inv.id}`, invoiceId: inv.id, color: "#2980b9" });
+    }
+  });
+  gcalEvents.forEach(ev => {
+    const d = (ev.start?.dateTime || ev.start?.date || "").slice(0, 10);
+    if (d) {
+      if (!dayEvents[d]) dayEvents[d] = [];
+      dayEvents[d].push({ type: "gcal", label: ev.summary || "Event", color: "#27ae60", time: ev.start?.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: GCal.TZ }) : "" });
+    }
+  });
+
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  const cells = [];
+  for (let i = 0; i < firstDayOfMonth; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const prevMonth = () => setCurrentDate(d => { const n = new Date(d); n.setMonth(d.getMonth() - 1); return n; });
+  const nextMonth = () => setCurrentDate(d => { const n = new Date(d); n.setMonth(d.getMonth() + 1); return n; });
+
+  const selectedEvents = dayEvents[selectedDay] || [];
+
+  return (
+    <div style={{ paddingBottom: 20 }}>
+      <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Calendar</div>
+          <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{MONTHS[month]} {year}</div>
+        </div>
+        {GCal.isConfigured() && (gcalAuthed ? (
+          <button onClick={handleSignOut} style={{ ...S.btn("ghost"), fontSize: 11, padding: "6px 10px" }}>Disconnect</button>
+        ) : (
+          <button onClick={handleSignIn} style={{ background: "#4285f4", color: "#fff", border: "none", borderRadius: 8, padding: "8px 12px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, cursor: "pointer", letterSpacing: 0.5 }}>+ Google Calendar</button>
+        ))}
+      </div>
+      {authError && <div style={{ background: "#fff0ee", padding: "8px 16px", fontSize: 12, color: "#cc4444" }}>{authError}</div>}
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 6px" }}>
+        <button onClick={prevMonth} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}><Icon name="back" size={18} /></button>
+        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: NAVY }}>{MONTHS[month]} {year}</span>
+        <button onClick={nextMonth} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, transform: "rotate(180deg)" }}><Icon name="back" size={18} /></button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "0 8px" }}>
+        {DAYS.map(d => <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", padding: "4px 0", textTransform: "uppercase" }}>{d}</div>)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, padding: "0 8px" }}>
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />;
+          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const evs = dayEvents[dateStr] || [];
+          const isToday = dateStr === today();
+          const isSel = dateStr === selectedDay;
+          return (
+            <div key={i} onClick={() => setSelectedDay(dateStr)} style={{ background: isSel ? NAVY : isToday ? "#fff3ee" : "#fff", borderRadius: 8, padding: "5px 3px", minHeight: 46, cursor: "pointer", border: isToday && !isSel ? `1.5px solid ${ORANGE}` : "1.5px solid transparent", display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: isToday ? 700 : 400, color: isSel ? "#fff" : isToday ? ORANGE : "#333", marginBottom: 2 }}>{day}</div>
+              <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "center" }}>
+                {evs.slice(0, 3).map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? "#fff" : ev.color }} />)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ margin: "12px 12px 0" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 8, padding: "0 4px" }}>{fmtDate(selectedDay)}</div>
+        {selectedEvents.length === 0 ? (
+          <div style={{ padding: "20px 16px", textAlign: "center" }}>
+            {loadingEvents ? <div style={{ fontSize: 12, color: "#aaa" }}>Loading events…</div> : <div style={{ fontSize: 13, color: "#bbb" }}>No events</div>}
+          </div>
+        ) : selectedEvents.map((ev, i) => (
+          <div key={i} style={{ background: "#fff", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: `3px solid ${ev.color}` }}>
+            <Icon name={ev.type === "job" ? "calendar" : ev.type === "followup" ? "bell" : "clock"} size={15} color={ev.color} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>{ev.label}</div>
+              <div style={{ fontSize: 11, color: "#aaa", marginTop: 1 }}>
+                {ev.time && <span>{ev.time} · </span>}
+                {ev.type === "job" ? "Scheduled Job" : ev.type === "followup" ? "Follow-Up Reminder" : "Google Calendar"}
+              </div>
+            </div>
+          </div>
+        ))}
+        {!GCal.isConfigured() && (
+          <div style={{ background: "#f8f9fc", borderRadius: 10, padding: "14px 16px", marginTop: 8, fontSize: 12, color: "#888", textAlign: "center" }}>
+            Add <strong>VITE_GOOGLE_CLIENT_ID</strong> to your .env to enable Google Calendar sync
+          </div>
+        )}
+        {GCal.isConfigured() && !gcalAuthed && (
+          <div style={{ background: "#f0f7ff", borderRadius: 10, padding: "14px 16px", marginTop: 8, textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "#555", marginBottom: 10 }}>Connect Google Calendar to see all your events and sync scheduled jobs</div>
+            <button onClick={handleSignIn} style={{ background: "#4285f4", color: "#fff", border: "none", borderRadius: 8, padding: "9px 22px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Connect Google Calendar</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [data, setData] = useState(loadData);
@@ -1155,6 +1444,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [newDocType, setNewDocType] = useState("invoice");
   const [showGlobalAI, setShowGlobalAI] = useState(false);
+  const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
 
   useEffect(() => { saveData(data); }, [data]);
 
@@ -1215,6 +1505,7 @@ export default function App() {
     { id: "clients",   label: "Clients",   icon: "clients"   },
     { id: "items",     label: "Items",     icon: "items"     },
     { id: "payments",  label: "Payments",  icon: "dollar"    },
+    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
   ];
 
   return (
@@ -1239,6 +1530,7 @@ export default function App() {
           defaultType={newDocType}
           clients={data.clients}
           savedItems={data.savedItems}
+          gcalAuthed={gcalAuthed}
           onSave={updateInvoice}
           onCancel={() => { setView("list"); setSelected(null); }}
           onDelete={deleteInvoice}
@@ -1251,6 +1543,7 @@ export default function App() {
           {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
+          {tab === "calendar"  && <CalendarTab invoices={data.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
         </>
       )}
 
