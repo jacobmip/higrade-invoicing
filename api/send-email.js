@@ -34,7 +34,15 @@ export default async function handler(req) {
             </a>
             <p style="color: #999; font-size: 12px; margin: 8px 0 0;">Credit card accepted — no PayPal account required</p>
           </div>
-          <p style="color: #666; margin-top: 24px; font-size: 13px;">
+          <div style="margin-top: 20px; padding: 14px; background: #fff; border-radius: 8px; border: 1px solid #e8ecf4;">
+            <p style="color: #666; font-size: 13px; font-weight: bold; margin: 0 0 6px;">Payment Options</p>
+            <p style="color: #444; font-size: 13px; margin: 0; line-height: 1.7;">
+              💚 <strong>Venmo:</strong> @HIGP808<br>
+              💙 <strong>Zelle / PayPal:</strong> higradeplumbing@gmail.com<br>
+              💵 Cash or Check accepted
+            </p>
+          </div>
+          <p style="color: #666; margin-top: 20px; font-size: 13px;">
             Questions? Call or text us at <strong>808-393-0015</strong><br>
             Email: higradeplumbing@gmail.com
           </p>

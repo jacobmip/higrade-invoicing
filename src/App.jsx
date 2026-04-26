@@ -31,6 +31,19 @@ const DEFAULT_CLIENTS = [
   { id: 1, name: "Jacob Petersen", email: "jacobmip@gmail.com", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "" },
 ];
 
+const EXPENSE_CATEGORIES = [
+  "Supplies & Materials",
+  "Tools & Equipment",
+  "Vehicle & Transportation",
+  "Meals & Entertainment",
+  "Office & Admin",
+  "Insurance",
+  "Subcontractors",
+  "Permits & Licenses",
+  "Marketing & Advertising",
+  "Other",
+];
+
 const DEFAULT_INVOICES = [
   {
     id: "INV0005", type: "invoice", client: "Jacob Petersen", date: "2026-04-22", dueDate: "2026-04-22",
@@ -60,8 +73,16 @@ const DEFAULT_INVOICES = [
 ];
 
 function loadData() {
-  try { const raw = localStorage.getItem(KEY); if (raw) return JSON.parse(raw); } catch {}
-  return { invoices: DEFAULT_INVOICES, clients: DEFAULT_CLIENTS, savedItems: SAVED_ITEMS, nextNum: 6 };
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if ((d.nextNum || 0) < 753) d.nextNum = 753;
+      if (!d.expenses) d.expenses = [];
+      return d;
+    }
+  } catch {}
+  return { invoices: DEFAULT_INVOICES, clients: DEFAULT_CLIENTS, savedItems: SAVED_ITEMS, nextNum: 753, expenses: [] };
 }
 function saveData(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} }
 
@@ -204,6 +225,9 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     calendar:  <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
     bell:      <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
     chart:     <svg {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+    pen:       <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
+    receipt:   <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
+    camera:    <svg {...p}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
   };
   return icons[name] || null;
 };
@@ -794,6 +818,7 @@ function PDFPreview({ form, clients }) {
         <div style={{ background: NAVY, padding: "13px 24px", textAlign: "center" }}>
           <div style={{ color: "#8899bb", fontSize: 11 }}>Thank you for your business!</div>
           <div style={{ color: "#6677aa", fontSize: 10, marginTop: 3 }}>higradeplumbing.com · (808) 393-0015</div>
+          <div style={{ color: "#6677aa", fontSize: 10, marginTop: 2 }}>Pay via Venmo: @HIGP808 · PayPal · Cash · Check</div>
         </div>
       </div>
     </div>
@@ -814,6 +839,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [emailStatus, setEmailStatus] = useState("");
   const [showScheduleJob, setShowScheduleJob] = useState(false);
   const [showFollowUp, setShowFollowUp] = useState(false);
+  const [showSignature, setShowSignature] = useState(false);
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -842,6 +868,20 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     setTimeout(() => setEmailStatus(""), 4000);
   };
 
+  const handleSendEstimate = async () => {
+    const client = clients.find(c => c.name === form.client);
+    if (!client?.email) { alert("No email on file for this client."); return; }
+    const t2 = calcTotals(form);
+    const job = form.items[0]?.name || "Plumbing Work";
+    const params = new URLSearchParams({ id: form.id || "EST0000", client: form.client || "", total: t2.total.toFixed(2), job });
+    const signingLink = `${window.location.origin}/sign?${params.toString()}`;
+    const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
+    try {
+      await fetch("/api/send-estimate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: client.email, clientName: client.name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
+      alert("Estimate sent! Client will receive signing link by email.");
+    } catch (e) { alert("Failed to send: " + e.message); }
+  };
+
   const historyEvents = [
     { date: form.date, label: isEstimate ? "Estimate created" : "Invoice created", type: "created", amount: null },
     ...(form.payments || []).map(p => ({ date: p.date, label: `${p.method} payment received`, type: "payment", amount: p.amount })),
@@ -854,6 +894,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => setForm(updated)} />}
       {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => setForm(f => ({ ...f, ...fields }))} />}
       {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => setForm(f => ({ ...f, ...fields }))} />}
+      {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { setField("signatureData", sigData); setField("signedAt", new Date().toISOString()); setField("status", "approved"); setShowSignature(false); }} />}
       {editingItem !== null && (
         <ItemModal
           item={form.items[editingItem]}
@@ -1067,6 +1108,34 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             )}
           </div>
 
+          {/* Signature Section (estimates only) */}
+          {isEstimate && (
+            <div style={{ padding: "12px 16px 0" }}>
+              <label style={S.label}>Client Signature</label>
+              {form.signatureData ? (
+                <div style={{ background: "#fff", borderRadius: 10, padding: 14, boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={S.pill("#27ae60")}>✓ Approved</span>
+                      {form.signedAt && <span style={{ fontSize: 11, color: "#aaa" }}>{new Date(form.signedAt).toLocaleDateString()}</span>}
+                    </div>
+                    <button onClick={() => { if (confirm("Void this signature? This cannot be undone.")) { setField("signatureData", null); setField("signedAt", null); setField("status", "outstanding"); }}} style={{ background: "none", border: "1px solid #e74c3c", color: "#e74c3c", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5 }}>Void</button>
+                  </div>
+                  <img src={form.signatureData} style={{ maxWidth: "100%", border: "1px solid #eee", borderRadius: 6, background: "#fafafa" }} alt="Signature" />
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setShowSignature(true)} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Icon name="pen" size={15} color="#fff" /> Get Signature
+                  </button>
+                  <button onClick={handleSendEstimate} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Icon name="mail" size={15} color="#444" /> Send for Sig
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Actions */}
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <button onClick={() => onSave(form)} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Save Estimate" : "Save Invoice"}</button>
@@ -1199,7 +1268,7 @@ function EstimatesTab({ invoices, onNew, onSelect }) {
               <div><div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client || "No client"}</div><div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div></div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE }}>{fmt(t.total)}</div>
-                <span style={S.pill("#8899bb")}>estimate</span>
+                <span style={inv.status === "approved" ? S.pill("#27ae60") : S.pill("#8899bb")}>{inv.status === "approved" ? "✓ Approved" : "estimate"}</span>
               </div>
             </div>
           );
@@ -1473,71 +1542,423 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
   );
 }
 
-// ─── Reports Tab ──────────────────────────────────────────────────────────────
-function ReportsTab({ invoices }) {
-  const [rangeMode, setRangeMode] = useState("year");
-  const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`);
-  const [customEnd, setCustomEnd] = useState(today());
+// ─── In-Person Signature Modal ────────────────────────────────────────────────
+function InPersonSignatureModal({ estimate, onClose, onSave }) {
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [isEmpty, setIsEmpty] = useState(true);
+  const t = calcTotals(estimate);
 
-  const todayStr = today();
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth();
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#0a1628";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  }, []);
 
-  const getRange = () => {
-    const y = currentYear, m = currentMonth;
-    if (rangeMode === "month") return { start: `${y}-${String(m+1).padStart(2,"0")}-01`, end: todayStr };
-    if (rangeMode === "quarter") { const qs = Math.floor(m/3)*3; return { start: `${y}-${String(qs+1).padStart(2,"0")}-01`, end: todayStr }; }
-    if (rangeMode === "year") return { start: `${y}-01-01`, end: todayStr };
-    if (rangeMode === "all") return { start: "2000-01-01", end: todayStr };
-    return { start: customStart || `${y}-01-01`, end: customEnd || todayStr };
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const src = e.touches?.[0] || e;
+    return {
+      x: (src.clientX - rect.left) * (canvas.width / rect.width),
+      y: (src.clientY - rect.top) * (canvas.height / rect.height),
+    };
   };
-  const { start, end } = getRange();
 
-  // Payments in range (invoices only, not estimates)
-  const rangePayments = [];
-  invoices.forEach(inv => {
-    if (inv.type === "estimate") return;
-    (inv.payments || []).forEach(p => { if (p.date >= start && p.date <= end) rangePayments.push({ ...p, inv }); });
-  });
-  const totalCollected = rangePayments.reduce((s, p) => s + p.amount, 0);
+  const startDraw = (e) => { e.preventDefault(); const ctx = canvasRef.current.getContext("2d"); const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); setDrawing(true); setIsEmpty(false); };
+  const draw = (e) => { if (!drawing) return; e.preventDefault(); const ctx = canvasRef.current.getContext("2d"); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const endDraw = (e) => { e.preventDefault(); setDrawing(false); };
 
-  // Invoices created in range
-  const rangeInvoices = invoices.filter(i => i.type !== "estimate" && i.date >= start && i.date <= end);
-  const paidInRange = rangeInvoices.filter(i => i.status === "paid");
-  const avgJobValue = paidInRange.length > 0 ? paidInRange.reduce((s, i) => s + calcTotals(i).total, 0) / paidInRange.length : 0;
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    setIsEmpty(true);
+  };
 
-  // Current-state KPIs (not filtered)
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 9999, display: "flex", flexDirection: "column", fontFamily: "'Barlow', sans-serif" }}>
+      <div style={{ background: NAVY, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div>
+          <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17 }}>{estimate.client || "Client"}</div>
+          <div style={{ color: ORANGE, fontSize: 12 }}>{estimate.id || "Estimate"} · {fmt(t.total)}</div>
+        </div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 26, lineHeight: 1 }}>✕</button>
+      </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: 20, gap: 12, overflow: "hidden" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>Sign to Approve Estimate</div>
+          <div style={{ fontSize: 12, color: "#888", marginTop: 3 }}>Draw your signature in the box below</div>
+        </div>
+        <canvas
+          ref={canvasRef}
+          width={600}
+          height={240}
+          style={{ width: "100%", flex: 1, border: "2px solid #dde2ee", borderRadius: 10, touchAction: "none", background: "#fff", cursor: "crosshair", maxHeight: 300 }}
+          onMouseDown={startDraw}
+          onMouseMove={draw}
+          onMouseUp={endDraw}
+          onMouseLeave={endDraw}
+          onTouchStart={startDraw}
+          onTouchMove={draw}
+          onTouchEnd={endDraw}
+        />
+        <div style={{ textAlign: "center", color: "#bbb", fontSize: 12, marginTop: -6 }}>× Sign above the line</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={clear} style={{ ...S.btn("ghost"), flex: 1, fontSize: 14 }}>Clear</button>
+          <button onClick={() => onSave(canvasRef.current.toDataURL("image/png"))} disabled={isEmpty} style={{ ...S.btn(isEmpty ? "ghost" : "primary"), flex: 2, fontSize: 15, opacity: isEmpty ? 0.5 : 1 }}>
+            ✓ Approve Estimate
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sign Page (remote signing) ───────────────────────────────────────────────
+function SignaturePage() {
+  const params = new URLSearchParams(window.location.search);
+  const estimateId = params.get("id") || "EST";
+  const clientName = params.get("client") || "Client";
+  const total = params.get("total") || "0.00";
+  const job = params.get("job") || "Plumbing Work";
+
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [isEmpty, setIsEmpty] = useState(true);
+  const [status, setStatus] = useState("idle");
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#0a1628";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  }, []);
+
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const src = e.touches?.[0] || e;
+    return { x: (src.clientX - rect.left) * (canvas.width / rect.width), y: (src.clientY - rect.top) * (canvas.height / rect.height) };
+  };
+
+  const startDraw = (e) => { e.preventDefault(); const ctx = canvasRef.current.getContext("2d"); const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); setDrawing(true); setIsEmpty(false); };
+  const draw = (e) => { if (!drawing) return; e.preventDefault(); const ctx = canvasRef.current.getContext("2d"); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const endDraw = (e) => { e.preventDefault(); setDrawing(false); };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    setIsEmpty(true);
+  };
+
+  const submit = async () => {
+    if (isEmpty) return;
+    setStatus("submitting");
+    try {
+      const sig = canvasRef.current.toDataURL("image/png");
+      const res = await fetch("/api/submit-signature", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estimateId, clientName, total, job, signatureData: sig, signedAt: new Date().toISOString() }),
+      });
+      const d = await res.json();
+      if (d.ok) setStatus("done");
+      else throw new Error("server error");
+    } catch { setStatus("error"); }
+  };
+
+  if (status === "done") return (
+    <div style={{ fontFamily: "'Barlow', sans-serif", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: LIGHT, textAlign: "center", padding: 24 }}>
+      <div>
+        <div style={{ width: 72, height: 72, background: "#e8f8ef", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 32 }}>✓</div>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 26, color: NAVY, marginBottom: 8 }}>Estimate Approved!</div>
+        <div style={{ color: "#888", fontSize: 14 }}>Thank you, {clientName}. Jake will be in touch to schedule your job.</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ fontFamily: "'Barlow', sans-serif", background: "#fff", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <div style={{ background: NAVY, padding: "16px 20px" }}>
+        <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1.5 }}>HI GRADE PLUMBING LLC</div>
+        <div style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>Estimate Approval</div>
+      </div>
+      <div style={{ padding: 20, flex: 1, display: "flex", flexDirection: "column", gap: 16, maxWidth: 480, margin: "0 auto", width: "100%" }}>
+        <div style={{ background: LIGHT, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 11, color: "#8899bb", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Estimate Details</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {[["Estimate #", estimateId], ["Client", clientName], ["Job", job], ["Total", "$" + total]].map(([l, v]) => (
+              <div key={l}>
+                <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 0.5 }}>{l}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: l === "Total" ? ORANGE : "#222" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#333", marginBottom: 8 }}>Your Signature</div>
+          <canvas
+            ref={canvasRef}
+            width={600}
+            height={200}
+            style={{ width: "100%", height: 180, border: "2px solid #dde2ee", borderRadius: 10, touchAction: "none", background: "#fff", cursor: "crosshair", display: "block" }}
+            onMouseDown={startDraw}
+            onMouseMove={draw}
+            onMouseUp={endDraw}
+            onMouseLeave={endDraw}
+            onTouchStart={startDraw}
+            onTouchMove={draw}
+            onTouchEnd={endDraw}
+          />
+          <div style={{ textAlign: "center", color: "#bbb", fontSize: 11, marginTop: 4 }}>× Sign above</div>
+        </div>
+        {status === "error" && <div style={{ background: "#fff0f0", color: "#cc4444", padding: 10, borderRadius: 8, fontSize: 13, textAlign: "center" }}>Something went wrong. Please try again.</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={clear} style={{ ...S.btn("ghost"), flex: 1 }}>Clear</button>
+          <button onClick={submit} disabled={isEmpty || status === "submitting"} style={{ ...S.btn(isEmpty || status === "submitting" ? "ghost" : "primary"), flex: 2, opacity: isEmpty ? 0.5 : 1 }}>
+            {status === "submitting" ? "Submitting…" : "Approve Estimate"}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: "#bbb", textAlign: "center" }}>By approving, you agree to the scope of work described in estimate {estimateId}.</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Expense Modal ────────────────────────────────────────────────────────────
+function ExpenseModal({ expense, onClose, onSave }) {
+  const [form, setForm] = useState(expense || { date: today(), merchant: "", amount: "", category: "Supplies & Materials", description: "", receiptData: null });
+  const [scanning, setScanning] = useState(false);
+  const fileRef = useRef(null);
+
+  const handleFile = (file) => {
+    if (!file) return;
+    setScanning(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64 = e.target.result.split(",")[1];
+      try {
+        const res = await fetch("/api/extract-receipt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageData: base64, mediaType: file.type || "image/jpeg" }),
+        });
+        const data = await res.json();
+        setForm(f => ({
+          ...f,
+          merchant: data.merchant || f.merchant,
+          date: data.date || f.date,
+          amount: data.total != null ? String(data.total) : f.amount,
+          category: data.category || f.category,
+          description: data.description || f.description,
+          receiptData: e.target.result,
+        }));
+      } catch {}
+      setScanning(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const save = () => {
+    if (!form.amount || !form.merchant) { alert("Enter merchant and amount."); return; }
+    onSave({ ...form, amount: parseFloat(form.amount) || 0, id: form.id || Date.now() });
+  };
+
+  const isHalf = form.category === "Meals & Entertainment";
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: "#fff", borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", paddingBottom: 40 }}>
+        <div style={{ background: NAVY, padding: "14px 16px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0 }}>
+          <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16 }}>{expense ? "Edit Expense" : "New Expense"}</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 22, lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ padding: 16 }}>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
+            <button onClick={() => fileRef.current?.click()} disabled={scanning} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+              <Icon name="camera" size={16} color="#fff" />{scanning ? "Scanning AI…" : "Scan Receipt"}
+            </button>
+            {form.receiptData && <img src={form.receiptData} style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 8, border: "1px solid #eee", flexShrink: 0 }} alt="Receipt" />}
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={S.label}>Merchant / Store</label>
+            <input style={S.input} value={form.merchant} onChange={e => setForm(f => ({ ...f, merchant: e.target.value }))} placeholder="Store or vendor name" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <div><label style={S.label}>Date</label><input type="date" style={S.input} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></div>
+            <div><label style={S.label}>Amount $</label><input type="number" style={S.input} value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} step="0.01" min="0" placeholder="0.00" /></div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={S.label}>Category</label>
+            <select style={S.input} value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+              {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}{c === "Meals & Entertainment" ? " (50% deductible)" : ""}</option>)}
+            </select>
+            {isHalf && <div style={{ fontSize: 11, color: "#f39c12", marginTop: 4 }}>⚠ Meals & Entertainment: only 50% is tax deductible</div>}
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={S.label}>Description</label>
+            <input style={S.input} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="What was this for?" />
+          </div>
+          <button onClick={save} style={{ ...S.btn("primary"), width: "100%", fontSize: 16, padding: 14 }}>Save Expense</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Expenses Tab ─────────────────────────────────────────────────────────────
+function ExpensesTab({ expenses, onSave, onDelete }) {
+  const [showModal, setShowModal] = useState(false);
+  const [editExp, setEditExp] = useState(null);
+
+  const sorted = [...expenses].sort((a, b) => (b.date > a.date ? 1 : -1));
+  const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  const deductible = expenses.reduce((s, e) => s + (e.category === "Meals & Entertainment" ? (e.amount || 0) * 0.5 : (e.amount || 0)), 0);
+
+  const exportCSV = () => {
+    const rows = [["Date", "Merchant", "Amount", "Category", "Description", "Deductible"]];
+    expenses.forEach(e => {
+      const ded = e.category === "Meals & Entertainment" ? (e.amount * 0.5).toFixed(2) : (e.amount || 0).toFixed(2);
+      rows.push([e.date, e.merchant, (e.amount || 0).toFixed(2), e.category, e.description || "", ded]);
+    });
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "higrade-expenses.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div>
+      {showModal && (
+        <ExpenseModal
+          expense={editExp}
+          onClose={() => { setShowModal(false); setEditExp(null); }}
+          onSave={exp => { onSave(exp); setShowModal(false); setEditExp(null); }}
+        />
+      )}
+      <div style={{ background: NAVY2, padding: "12px 16px" }}>
+        <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Business Expenses</div>
+        <div style={{ color: "#cc4444", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 24 }}>{fmt(total)}</div>
+        <div style={{ color: "#8899bb", fontSize: 11, marginTop: 1 }}>{fmt(deductible)} deductible · {expenses.length} receipt{expenses.length !== 1 ? "s" : ""}</div>
+      </div>
+      {expenses.length > 0 && (
+        <div style={{ padding: "10px 12px 0", display: "flex", justifyContent: "flex-end" }}>
+          <button onClick={exportCSV} style={{ ...S.btn("ghost"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 5 }}>
+            <Icon name="arrowDown" size={13} color="#444" /> Export CSV
+          </button>
+        </div>
+      )}
+      <div style={{ padding: "8px 12px 0" }}>
+        {sorted.length === 0 ? (
+          <div style={{ padding: "48px 24px", textAlign: "center" }}>
+            <Icon name="receipt" size={48} color="#dde2ee" />
+            <div style={{ fontSize: 16, fontWeight: 600, color: "#888", marginTop: 16, marginBottom: 8 }}>No Expenses Yet</div>
+            <div style={{ fontSize: 13, color: "#aaa", marginBottom: 24 }}>Tap + to add or scan a receipt with AI</div>
+          </div>
+        ) : sorted.map(exp => {
+          const isHalf = exp.category === "Meals & Entertainment";
+          return (
+            <div key={exp.id} onClick={() => { setEditExp(exp); setShowModal(true); }} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+              {exp.receiptData
+                ? <img src={exp.receiptData} style={{ width: 42, height: 42, objectFit: "cover", borderRadius: 8, border: "1px solid #eee", flexShrink: 0 }} alt="" />
+                : <div style={{ width: 42, height: 42, borderRadius: 8, background: "#f4f6fa", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="receipt" size={18} color="#ccc" /></div>}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{exp.merchant || "Unknown"}</div>
+                <div style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{exp.date} · {exp.category}</div>
+                {isHalf && <div style={{ fontSize: 10, color: "#f39c12", marginTop: 1 }}>50% deductible</div>}
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: "#cc4444" }}>{fmt(exp.amount || 0)}</div>
+                <button onClick={e => { e.stopPropagation(); if (confirm("Delete this expense?")) onDelete(exp.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "3px 0", marginTop: 2 }}>
+                  <Icon name="trash" size={13} color="#cc4444" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={() => { setEditExp(null); setShowModal(true); }} style={{ position: "fixed", bottom: 158, right: 20, width: 52, height: 52, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.45)", zIndex: 150 }}>
+        <Icon name="plus" size={24} color="#fff" />
+      </button>
+    </div>
+  );
+}
+
+// ─── Reports Tab ──────────────────────────────────────────────────────────────
+function ReportsTab({ invoices, expenses }) {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const [selYear, setSelYear] = useState(currentYear);
+  const todayStr = today();
+  const YEARS = [2024, 2025, 2026, 2027];
+  const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const yearStart = `${selYear}-01-01`;
+  const yearEnd = selYear === currentYear ? todayStr : `${selYear}-12-31`;
+  const mtdStart = `${selYear}-${String(currentMonth+1).padStart(2,"0")}-01`;
+  const mtdEnd = selYear === currentYear ? todayStr : `${selYear}-${String(currentMonth+1).padStart(2,"0")}-${String(new Date(selYear, currentMonth+1, 0).getDate()).padStart(2,"0")}`;
+
+  const sumPayments = (filterFn) => invoices.reduce((s, inv) => {
+    if (inv.type === "estimate") return s;
+    return s + (inv.payments||[]).filter(filterFn).reduce((x, p) => x + p.amount, 0);
+  }, 0);
+
+  const mtdCollected = sumPayments(p => p.date >= mtdStart && p.date <= mtdEnd);
+  const ytdCollected = sumPayments(p => p.date >= yearStart && p.date <= yearEnd);
+
   const outstanding = invoices.filter(i => i.type !== "estimate" && (i.status === "outstanding" || i.status === "partial"))
     .reduce((s, i) => s + Math.max(0, calcTotals(i).balance), 0);
   const overdue = invoices.filter(i => i.type !== "estimate" && (i.status === "outstanding" || i.status === "partial") && i.dueDate < todayStr)
     .reduce((s, i) => s + Math.max(0, calcTotals(i).balance), 0);
 
-  // GET owed this quarter (always current quarter)
+  const paidInYear = invoices.filter(i => i.type !== "estimate" && i.status === "paid" && i.date >= yearStart && i.date <= yearEnd);
+  const avgJobValue = paidInYear.length > 0 ? paidInYear.reduce((s, i) => s + calcTotals(i).total, 0) / paidInYear.length : 0;
+
+  const monthInvoiceCount = invoices.filter(i => i.type !== "estimate" && i.date >= mtdStart && i.date <= mtdEnd).length;
+
   const qStartMonth = Math.floor(currentMonth / 3) * 3;
-  const qStartStr = `${currentYear}-${String(qStartMonth + 1).padStart(2, "0")}-01`;
   const currentQuarter = Math.floor(currentMonth / 3) + 1;
-  const getOwed = invoices.filter(i => i.type !== "estimate" && i.status === "paid" && i.date >= qStartStr && i.date <= todayStr)
+  const qStart = `${selYear}-${String(qStartMonth+1).padStart(2,"0")}-01`;
+  const qEnd = selYear === currentYear ? todayStr : `${selYear}-${String(qStartMonth+3).padStart(2,"0")}-${String(new Date(selYear, qStartMonth+3, 0).getDate()).padStart(2,"0")}`;
+  const getOwed = invoices.filter(i => i.type !== "estimate" && i.status === "paid" && i.date >= qStart && i.date <= qEnd)
     .reduce((s, i) => s + calcTotals(i).taxAmt, 0);
 
-  // Monthly revenue chart (current year, bucketed by payment.date)
   const monthlyRevenue = Array(12).fill(0);
   invoices.forEach(inv => {
     if (inv.type === "estimate") return;
-    (inv.payments || []).forEach(p => {
-      if (p.date?.startsWith(String(currentYear))) {
-        const m = parseInt(p.date.slice(5, 7)) - 1;
+    (inv.payments||[]).forEach(p => {
+      if (p.date?.startsWith(String(selYear))) {
+        const m = parseInt(p.date.slice(5,7)) - 1;
         if (m >= 0 && m < 12) monthlyRevenue[m] += p.amount;
       }
     });
   });
   const maxMonthly = Math.max(...monthlyRevenue, 1);
 
-  // Top clients by revenue in range
   const clientData = {};
   invoices.forEach(inv => {
     if (inv.type === "estimate") return;
-    (inv.payments || []).forEach(p => {
-      if (p.date >= start && p.date <= end) {
+    (inv.payments||[]).forEach(p => {
+      if (p.date >= yearStart && p.date <= yearEnd) {
         const c = inv.client || "Unknown";
         if (!clientData[c]) clientData[c] = { jobs: new Set(), total: 0 };
         clientData[c].jobs.add(inv.id);
@@ -1545,138 +1966,143 @@ function ReportsTab({ invoices }) {
       }
     });
   });
-  const topClients = Object.entries(clientData)
-    .map(([name, d]) => ({ name, jobs: d.jobs.size, total: d.total }))
-    .sort((a, b) => b.total - a.total).slice(0, 10);
+  const topClients = Object.entries(clientData).map(([n,d]) => ({ name: n, jobs: d.jobs.size, total: d.total })).sort((a,b) => b.total-a.total).slice(0, 5);
 
-  // Payment method breakdown
   const methodColors = { Cash: "#27ae60", Check: "#2980b9", Venmo: "#3D95CE", Zelle: "#6B39A8", PayPal: "#0070ba", "Credit Card": ORANGE, "Bank Transfer": "#16a085", Other: "#888" };
   const methodTotals = {};
-  rangePayments.forEach(p => { const m = p.method || "Other"; methodTotals[m] = (methodTotals[m] || 0) + p.amount; });
-  const methodEntries = Object.entries(methodTotals).sort((a, b) => b[1] - a[1]);
+  invoices.forEach(inv => {
+    if (inv.type === "estimate") return;
+    (inv.payments||[]).forEach(p => {
+      if (p.date >= yearStart && p.date <= yearEnd) { const m = p.method || "Other"; methodTotals[m] = (methodTotals[m]||0) + p.amount; }
+    });
+  });
+  const methodEntries = Object.entries(methodTotals).sort((a,b) => b[1]-a[1]);
 
-  const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const RANGE_OPTS = [["month","Month"],["quarter","Quarter"],["year","Year"],["all","All Time"],["custom","Custom"]];
+  const yearExpenses = (expenses||[]).filter(e => e.date >= yearStart && e.date <= yearEnd);
+  const totalExpenses = yearExpenses.reduce((s, e) => s + (e.amount||0), 0);
+  const totalDeductible = yearExpenses.reduce((s, e) => s + (e.category === "Meals & Entertainment" ? (e.amount||0)*0.5 : (e.amount||0)), 0);
+  const expByCategory = {};
+  yearExpenses.forEach(e => {
+    const cat = e.category || "Other";
+    if (!expByCategory[cat]) expByCategory[cat] = { total: 0, deductible: 0 };
+    expByCategory[cat].total += e.amount || 0;
+    expByCategory[cat].deductible += cat === "Meals & Entertainment" ? (e.amount||0)*0.5 : (e.amount||0);
+  });
 
   const kpi = (label, value, color = ORANGE, note = null) => (
-    <div style={{ background: "#fff", borderRadius: 12, padding: "12px 13px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)", flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 9, fontWeight: 700, color: "#8899bb", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 4, lineHeight: 1.3 }}>{label}</div>
-      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, color, lineHeight: 1 }}>{value}</div>
-      {note && <div style={{ fontSize: 9, color: "#aaa", marginTop: 3 }}>{note}</div>}
+    <div style={{ background: "#fff", borderRadius: 12, padding: "10px 8px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)", flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 8, fontWeight: 700, color: "#8899bb", letterSpacing: 0.7, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 3, lineHeight: 1.2 }}>{label}</div>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color, lineHeight: 1 }}>{value}</div>
+      {note && <div style={{ fontSize: 8, color: "#aaa", marginTop: 2, lineHeight: 1.2 }}>{note}</div>}
     </div>
   );
-
-  const rangePeriod = rangeMode === "month" ? "this month" : rangeMode === "quarter" ? "this quarter" : rangeMode === "year" ? "this year" : rangeMode === "all" ? "all time" : `${customStart} – ${customEnd}`;
 
   return (
     <div style={{ paddingBottom: 20 }}>
       <div style={{ background: NAVY2, padding: "12px 16px" }}>
         <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Financial Reports</div>
-        <div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 24 }}>{fmt(totalCollected)}</div>
-        <div style={{ color: "#8899bb", fontSize: 11, marginTop: 1 }}>collected · {rangePeriod}</div>
+        <div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 24 }}>{fmt(ytdCollected)}</div>
+        <div style={{ color: "#8899bb", fontSize: 11, marginTop: 1 }}>collected YTD · {selYear}</div>
       </div>
-
-      {/* Date Range Filter */}
       <div style={{ padding: "12px 12px 0" }}>
         <div style={{ display: "flex", background: "#fff", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.07)" }}>
-          {RANGE_OPTS.map(([id, label]) => (
-            <button key={id} onClick={() => setRangeMode(id)} style={{ flex: 1, padding: "9px 2px", background: rangeMode === id ? NAVY : "transparent", color: rangeMode === id ? "#fff" : "#888", border: "none", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 10, cursor: "pointer", letterSpacing: 0.3, transition: "background 0.15s" }}>{label}</button>
+          {YEARS.map(yr => (
+            <button key={yr} onClick={() => setSelYear(yr)} style={{ flex: 1, padding: "11px 0", background: selYear === yr ? NAVY : "transparent", color: selYear === yr ? "#fff" : "#888", border: "none", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", transition: "background 0.15s" }}>{yr}</button>
           ))}
         </div>
-        {rangeMode === "custom" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-            <div><label style={S.label}>From</label><input type="date" style={S.input} value={customStart} onChange={e => setCustomStart(e.target.value)} /></div>
-            <div><label style={S.label}>To</label><input type="date" style={S.input} value={customEnd} onChange={e => setCustomEnd(e.target.value)} /></div>
-          </div>
-        )}
       </div>
-
-      {/* KPI Cards — 3 rows of 2 */}
-      <div style={{ padding: "12px 12px 0", display: "flex", gap: 8 }}>
-        {kpi("Collected", fmt(totalCollected), "#4ecb71", rangePeriod)}
-        {kpi("Outstanding", fmt(outstanding), ORANGE, "all unpaid")}
+      <div style={{ padding: "12px 12px 0", display: "flex", gap: 6 }}>
+        {kpi("MTD", fmt(mtdCollected), "#4ecb71", MONTHS_SHORT[currentMonth])}
+        {kpi("YTD", fmt(ytdCollected), ORANGE, String(selYear))}
+        {kpi("Outstanding", fmt(outstanding), "#e67e22", "unpaid")}
+        {kpi("Overdue", fmt(overdue), "#cc4444", "past due")}
       </div>
-      <div style={{ padding: "8px 12px 0", display: "flex", gap: 8 }}>
-        {kpi("Overdue", fmt(overdue), "#cc4444", "past due date")}
-        {kpi("Avg Job Value", fmt(avgJobValue), "#2980b9", `${paidInRange.length} paid job${paidInRange.length !== 1 ? "s" : ""}`)}
+      <div style={{ padding: "6px 12px 0", display: "flex", gap: 6 }}>
+        {kpi("Avg Job", fmt(avgJobValue), "#2980b9", `${paidInYear.length} paid`)}
+        {kpi(`Inv ${MONTHS_SHORT[currentMonth]}`, String(monthInvoiceCount), NAVY, "this month")}
+        {kpi(`GET Q${currentQuarter}`, fmt(getOwed), "#6B39A8", "owed")}
       </div>
-      <div style={{ padding: "8px 12px 0", display: "flex", gap: 8 }}>
-        {kpi("Invoices", String(rangeInvoices.length), NAVY, "created in period")}
-        {kpi(`GET Owed Q${currentQuarter}`, fmt(getOwed), "#6B39A8", "current quarter")}
-      </div>
-
-      {/* Monthly Revenue Bar Chart */}
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
-        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {currentYear}</div>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
         <svg viewBox="0 0 340 115" style={{ width: "100%", height: 115, display: "block" }}>
           {monthlyRevenue.map((val, i) => {
-            const bw = 20, gap = 8.5, x = i * (bw + gap) + 2;
-            const maxH = 76;
+            const bw = 20, gap = 8.5, x = i * (bw + gap) + 2, maxH = 76, baseY = 88;
             const bh = val > 0 ? Math.max(5, (val / maxMonthly) * maxH) : 0;
-            const baseY = 88;
             const y = baseY - bh;
-            const labelY = bh > 18 ? y + 12 : y - 2;
-            const labelFill = bh > 18 ? "#fff" : NAVY;
+            const isCurrent = i === currentMonth && selYear === currentYear;
             return (
               <g key={i}>
-                {bh > 0
-                  ? <rect x={x} y={y} width={bw} height={bh} rx={2} fill={ORANGE} />
-                  : <rect x={x} y={baseY - 2} width={bw} height={2} rx={1} fill="#f0f2f8" />}
-                <text x={x + bw/2} y={102} textAnchor="middle" fontSize="7" fill="#8899bb" fontFamily="Barlow Condensed, sans-serif">{MONTHS_SHORT[i]}</text>
-                {val > 0 && (
-                  <text x={x + bw/2} y={labelY} textAnchor="middle" fontSize="6" fill={labelFill} fontFamily="Barlow Condensed, sans-serif" fontWeight="bold">
-                    {val >= 1000 ? `$${(val/1000).toFixed(1)}k` : `$${Math.round(val)}`}
-                  </text>
-                )}
+                {bh > 0 ? <rect x={x} y={y} width={bw} height={bh} rx={2} fill={isCurrent ? ORANGE : "#3D95CE"} />
+                         : <rect x={x} y={baseY-2} width={bw} height={2} rx={1} fill="#f0f2f8" />}
+                <text x={x+bw/2} y={102} textAnchor="middle" fontSize="7" fill={isCurrent ? ORANGE : "#8899bb"} fontFamily="Barlow Condensed,sans-serif" fontWeight={isCurrent ? "bold" : "normal"}>{MONTHS_SHORT[i]}</text>
+                {val > 0 && bh > 12 && <text x={x+bw/2} y={y+10} textAnchor="middle" fontSize="6" fill="#fff" fontFamily="Barlow Condensed,sans-serif" fontWeight="bold">{val>=1000?`$${(val/1000).toFixed(1)}k`:`$${Math.round(val)}`}</text>}
               </g>
             );
           })}
         </svg>
       </div>
-
-      {/* Top Clients */}
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
-        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Top Clients by Revenue</div>
-        {topClients.length === 0 ? (
-          <div style={{ fontSize: 13, color: "#bbb", textAlign: "center", padding: "14px 0" }}>No data for this period</div>
-        ) : topClients.map((c, i) => (
-          <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < topClients.length - 1 ? "1px solid #f4f6fa" : "none" }}>
-            <div style={{ width: 22, height: 22, borderRadius: "50%", background: i === 0 ? ORANGE : NAVY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <span style={{ color: "#fff", fontSize: 10, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700 }}>{i+1}</span>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Top Clients — {selYear}</div>
+        {topClients.length === 0 ? <div style={{ fontSize: 13, color: "#bbb", textAlign: "center", padding: "14px 0" }}>No data for {selYear}</div>
+          : topClients.map((c, i) => (
+            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < topClients.length-1 ? "1px solid #f4f6fa" : "none" }}>
+              <div style={{ width: 22, height: 22, borderRadius: "50%", background: i === 0 ? ORANGE : NAVY, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ color: "#fff", fontSize: 10, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700 }}>{i+1}</span>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                <div style={{ fontSize: 11, color: "#aaa" }}>{c.jobs} job{c.jobs !== 1 ? "s" : ""}</div>
+              </div>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: ORANGE, flexShrink: 0 }}>{fmt(c.total)}</div>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-              <div style={{ fontSize: 11, color: "#aaa" }}>{c.jobs} job{c.jobs !== 1 ? "s" : ""}</div>
-            </div>
-            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: ORANGE, flexShrink: 0 }}>{fmt(c.total)}</div>
-          </div>
-        ))}
+          ))}
       </div>
-
-      {/* Revenue by Payment Method */}
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
-        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Revenue by Payment Method</div>
-        {methodEntries.length === 0 ? (
-          <div style={{ fontSize: 13, color: "#bbb", textAlign: "center", padding: "14px 0" }}>No payments in this period</div>
-        ) : methodEntries.map(([method, amount]) => {
-          const pct = totalCollected > 0 ? amount / totalCollected * 100 : 0;
-          const color = methodColors[method] || "#888";
-          return (
-            <div key={method} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{method}</span>
-                <div>
-                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color }}>{fmt(amount)}</span>
-                  <span style={{ fontSize: 11, color: "#aaa", marginLeft: 5 }}>{pct.toFixed(0)}%</span>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Revenue by Method — {selYear}</div>
+        {methodEntries.length === 0 ? <div style={{ fontSize: 13, color: "#bbb", textAlign: "center", padding: "14px 0" }}>No payments for {selYear}</div>
+          : methodEntries.map(([method, amount]) => {
+            const pct = ytdCollected > 0 ? amount / ytdCollected * 100 : 0;
+            const color = methodColors[method] || "#888";
+            return (
+              <div key={method} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{method}</span>
+                  <div>
+                    <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color }}>{fmt(amount)}</span>
+                    <span style={{ fontSize: 11, color: "#aaa", marginLeft: 5 }}>{pct.toFixed(0)}%</span>
+                  </div>
+                </div>
+                <div style={{ height: 7, background: "#f0f2f8", borderRadius: 4 }}>
+                  <div style={{ height: 7, background: color, borderRadius: 4, width: `${Math.max(pct,1)}%` }} />
                 </div>
               </div>
-              <div style={{ height: 7, background: "#f0f2f8", borderRadius: 4 }}>
-                <div style={{ height: 7, background: color, borderRadius: 4, width: `${Math.max(pct, 1)}%` }} />
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
+      {yearExpenses.length > 0 && (
+        <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Expenses — {selYear}</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <div style={{ flex: 1, background: "#fff0f0", borderRadius: 8, padding: "8px 10px", border: "1px solid #fdd" }}>
+              <div style={{ fontSize: 9, color: "#cc4444", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 2 }}>Total</div>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: "#cc4444" }}>{fmt(totalExpenses)}</div>
+            </div>
+            <div style={{ flex: 1, background: "#f0f8f4", borderRadius: 8, padding: "8px 10px", border: "1px solid #c8e8d8" }}>
+              <div style={{ fontSize: 9, color: "#27ae60", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 2 }}>Deductible</div>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: "#27ae60" }}>{fmt(totalDeductible)}</div>
+            </div>
+          </div>
+          {Object.entries(expByCategory).sort((a,b) => b[1].total-a[1].total).map(([cat, d]) => (
+            <div key={cat} style={{ padding: "7px 0", borderBottom: "1px solid #f4f6fa" }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{cat}</span>
+                <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: "#cc4444" }}>{fmt(d.total)}</span>
+              </div>
+              {cat === "Meals & Entertainment" && <div style={{ fontSize: 10, color: "#f39c12", marginTop: 2 }}>50% deductible: {fmt(d.deductible)}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1692,6 +2118,13 @@ export default function App() {
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
 
   useEffect(() => { saveData(data); }, [data]);
+
+  const addExpense = (exp) => setData(d => {
+    const idx = (d.expenses||[]).findIndex(e => e.id === exp.id);
+    if (idx >= 0) return { ...d, expenses: d.expenses.map(e => e.id === exp.id ? exp : e) };
+    return { ...d, expenses: [...(d.expenses||[]), { ...exp, id: exp.id || Date.now() }] };
+  });
+  const deleteExpense = (id) => setData(d => ({ ...d, expenses: (d.expenses||[]).filter(e => e.id !== id) }));
 
   const handleGlobalAIAction = (parsed) => {
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
@@ -1748,11 +2181,13 @@ export default function App() {
     { id: "invoices",  label: "Invoices",  icon: "invoice"   },
     { id: "estimates", label: "Estimates", icon: "estimates" },
     { id: "clients",   label: "Clients",   icon: "clients"   },
-    { id: "items",     label: "Items",     icon: "items"     },
     { id: "payments",  label: "Payments",  icon: "dollar"    },
-    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
+    { id: "expenses",  label: "Expenses",  icon: "receipt"   },
     { id: "reports",   label: "Reports",   icon: "chart"     },
+    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
   ];
+
+  if (window.location.pathname === "/sign") return <SignaturePage />;
 
   return (
     <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
@@ -1789,8 +2224,9 @@ export default function App() {
           {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
+          {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} />}
+          {tab === "reports"   && <ReportsTab invoices={data.invoices} expenses={data.expenses || []} />}
           {tab === "calendar"  && <CalendarTab invoices={data.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
-          {tab === "reports"   && <ReportsTab invoices={data.invoices} />}
         </>
       )}
 
