@@ -93,7 +93,8 @@ function calcItemTotal(it) {
 }
 function calcTotals(inv) {
   const sub = inv.items.reduce((s, it) => s + calcItemTotal(it), 0);
-  const disc = inv.discount || 0;
+  const discVal = inv.discount || 0;
+  const disc = inv.discountType === "%" ? sub * (discVal / 100) : discVal;
   const afterDisc = sub - disc;
   const taxAmt = afterDisc * (inv.tax / 100);
   const total = afterDisc + taxAmt;
@@ -795,7 +796,7 @@ function PDFPreview({ form, clients }) {
           ))}
         </div>
         <div style={{ padding: "14px 24px 16px", background: "#f8f9fc", borderTop: "1px solid #eaecf0" }}>
-          {[["Subtotal", fmt(t.sub)], ...(t.disc > 0 ? [["Discount", "−" + fmt(t.disc)]] : []), [`GET (${form.tax}%)`, fmt(t.taxAmt)]].map(([label, val]) => (
+          {[["Subtotal", fmt(t.sub)], ...(t.disc > 0 ? [[form.discountType === "%" ? `Discount (${form.discount}%)` : "Discount", "−" + fmt(t.disc)]] : []), [`GET (${form.tax}%)`, fmt(t.taxAmt)]].map(([label, val]) => (
             <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#666", marginBottom: 6 }}><span>{label}</span><span>{val}</span></div>
           ))}
           <div style={{ display: "flex", justifyContent: "space-between", borderTop: "2px solid #dde2ee", paddingTop: 10, marginTop: 6 }}>
@@ -828,7 +829,7 @@ function PDFPreview({ form, clients }) {
 // ─── Invoice Form ─────────────────────────────────────────────────────────────
 function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onCancel, onDelete, onSaveItem }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
-  const [form, setForm] = useState(invoice || { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, notes: "", payments: [] });
+  const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
   const [showSaved, setShowSaved] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -1027,7 +1028,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           {/* Tax & Discount */}
           <div style={{ padding: "4px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div><label style={S.label}>Tax %</label><input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} step={0.001} /></div>
-            <div><label style={S.label}>Discount $</label><input type="number" style={S.input} value={form.discount} onChange={e => setField("discount", parseFloat(e.target.value) || 0)} min={0} /></div>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <label style={S.label}>Discount</label>
+                <div style={{ display: "flex", background: "#f0f2f8", borderRadius: 6, padding: 2, gap: 2 }}>
+                  {["%", "$"].map(type => (
+                    <button key={type} onClick={() => setField("discountType", type)} style={{ padding: "3px 10px", borderRadius: 4, border: "none", background: (form.discountType || "$") === type ? "#fff" : "transparent", fontWeight: 700, fontSize: 12, cursor: "pointer", color: (form.discountType || "$") === type ? NAVY : "#aaa", boxShadow: (form.discountType || "$") === type ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>{type}</button>
+                  ))}
+                </div>
+              </div>
+              <input type="number" style={S.input} value={form.discount} onChange={e => setField("discount", parseFloat(e.target.value) || 0)} min={0} />
+            </div>
           </div>
 
           {/* Notes */}
@@ -1073,7 +1084,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
           {/* Totals */}
           <div style={{ margin: "16px 16px 0", background: "#fff", borderRadius: 12, padding: 16, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
-            {[["Subtotal", fmt(t.sub)], ...(t.disc > 0 ? [["Discount", "−" + fmt(t.disc)]] : []), ["GET (" + form.tax + "%)", fmt(t.taxAmt)]].map(([label, val]) => (
+            {[["Subtotal", fmt(t.sub)], ...(t.disc > 0 ? [[form.discountType === "%" ? `Discount (${form.discount}%)` : "Discount", "−" + fmt(t.disc)]] : []), ["GET (" + form.tax + "%)", fmt(t.taxAmt)]].map(([label, val]) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 14, color: "#666" }}><span>{label}</span><span>{val}</span></div>
             ))}
             <div style={{ display: "flex", justifyContent: "space-between", borderTop: "2px solid #eee", paddingTop: 10, marginTop: 4 }}>
@@ -2132,7 +2143,7 @@ export default function App() {
       const year = new Date(inv.date || today()).getFullYear();
       const id = `INV${String(data.nextNum).padStart(4, "0")}`;
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, notes: inv.notes || "", payments: [] };
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
       setData(d => ({ ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 }));
       return newInvoice;
     }
