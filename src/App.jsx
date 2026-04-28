@@ -2132,7 +2132,11 @@ export default function App() {
   useEffect(() => {
     db.loadAll()
       .then(d => { setData(d); setDbLoading(false); })
-      .catch(e => { console.error('Failed to load data:', e); setDbLoading(false); });
+      .catch(e => {
+        console.error('Failed to load data from Supabase:', e);
+        setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 });
+        setDbLoading(false);
+      });
   }, []);
 
   const addExpense = async (exp) => {
