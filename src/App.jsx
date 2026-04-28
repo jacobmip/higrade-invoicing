@@ -167,6 +167,25 @@ async function callAI(messages, systemPrompt = null) {
   return data.content?.[0]?.text || "";
 }
 
+function extractActionJSON(text) {
+  const stripped = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+  // Try direct parse first (AI returned only JSON)
+  try { const p = JSON.parse(stripped); if (p?.action) return p; } catch {}
+  // Scan for balanced braces to extract embedded JSON object
+  let depth = 0, start = -1;
+  for (let i = 0; i < stripped.length; i++) {
+    if (stripped[i] === '{') { if (depth === 0) start = i; depth++; }
+    else if (stripped[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try { const p = JSON.parse(stripped.slice(start, i + 1)); if (p?.action) return p; } catch {}
+        start = -1;
+      }
+    }
+  }
+  return null;
+}
+
 async function sendInvoiceEmail(invoice, client) {
   const t = calcTotals(invoice);
   const itemsHtml = invoice.items.map(it => {
@@ -286,8 +305,7 @@ function AIChatPanel({ onAddItems }) {
       const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history);
-      let parsed = null;
-      try { const m = reply.match(/\{[\s\S]*"action"\s*:\s*"estimate"[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch {}
+      const parsed = extractActionJSON(reply);
       if (parsed?.action === "estimate" && parsed.items?.length) {
         setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Here's your estimate:", estimate: parsed }]);
       } else {
@@ -512,8 +530,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
       const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history, buildGlobalSystemPrompt(data));
-      let parsed = null;
-      try { const m = reply.match(/\{[\s\S]*"action"\s*:\s*"[\w_]+"[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch {}
+      const parsed = extractActionJSON(reply);
       if (parsed?.action === "create_invoice" || parsed?.action === "create_estimate") {
         const newInv = onAction(parsed);
         const label = parsed.action === "create_estimate" ? "Estimate created." : "Invoice created.";
