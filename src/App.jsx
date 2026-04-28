@@ -103,6 +103,17 @@ function calcTotals(inv) {
 }
 function fmt(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function today() { return new Date().toISOString().slice(0, 10); }
+function statusDisplay(inv) {
+  if (inv.status === "paid") return { label: "Paid", color: "#4ecb71" };
+  if (inv.status === "partial") return { label: "Partial", color: "#f39c12" };
+  const t = today();
+  const isOverdue = inv.dueDate && inv.dueDate < t;
+  const isPending = inv.dueDate && inv.dueDate > t;
+  if (inv.status === "net30") return { label: isOverdue ? "Overdue" : "Net 30", color: isOverdue ? "#e74c3c" : "#2980b9" };
+  if (isOverdue) return { label: "Overdue", color: "#e74c3c" };
+  if (isPending) return { label: "Pending", color: "#2980b9" };
+  return { label: "Outstanding", color: ORANGE };
+}
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
 
 function buildGlobalSystemPrompt(data) {
@@ -347,7 +358,7 @@ function PaymentModal({ invoice, onClose, onSave }) {
     const payment = { id: Date.now(), amount: parsedAmt, method, date, note: note.trim() };
     const payments = [...(invoice.payments || []), payment];
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-    const newStatus = totalPaid >= t.total - 0.01 ? "paid" : totalPaid > 0 ? "partial" : "outstanding";
+    const newStatus = totalPaid >= t.total - 0.01 ? "paid" : totalPaid > 0 ? "partial" : (invoice.status === "net30" ? "net30" : "outstanding");
     onSave({ ...invoice, payments, status: newStatus });
     onClose();
   };
@@ -760,7 +771,7 @@ function PDFPreview({ form, clients }) {
               <div style={{ color: "#dde2ee", fontSize: 13, fontWeight: 600 }}>{fmtDate(val)}</div>
             </div>
           ))}
-          <div style={{ marginLeft: "auto" }}><span style={S.pill(form.status === "paid" ? "#4ecb71" : ORANGE)}>{form.status || "outstanding"}</span></div>
+          <div style={{ marginLeft: "auto" }}><span style={S.pill(statusDisplay(form).color)}>{statusDisplay(form).label}</span></div>
         </div>
         <div style={{ padding: "16px 24px 14px", borderBottom: "1px solid #f0f2f8" }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 7 }}>Bill To</div>
@@ -1078,7 +1089,9 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           <div style={{ padding: "12px 16px 0" }}>
             <label style={S.label}>Status</label>
             <div style={{ display: "flex", gap: 8 }}>
-              {["outstanding", "paid"].map(s => <button key={s} onClick={() => setField("status", s)} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>{s.charAt(0).toUpperCase() + s.slice(1)}</button>)}
+              {[["outstanding", "Outstanding"], ["net30", "Net 30"], ["paid", "Paid"]].map(([s, label]) => (
+                <button key={s} onClick={() => setField("status", s)} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>{label}</button>
+              ))}
             </div>
           </div>
 
@@ -1201,10 +1214,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 // ─── Invoice List ─────────────────────────────────────────────────────────────
 function InvoiceList({ invoices, onNew, onSelect }) {
   const [tab, setTab] = useState("all");
-  const filtered = invoices.filter(inv => tab === "all" ? true : inv.status === tab);
+  const filtered = invoices.filter(inv => tab === "all" ? true : tab === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === tab);
   const years = [...new Set(filtered.map(i => i.year || new Date(i.date).getFullYear()))].sort((a, b) => b - a);
   const yearTotal = yr => filtered.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).reduce((s, i) => s + calcTotals(i).total, 0);
-  const outstanding = invoices.filter(i => i.status === "outstanding").reduce((s, i) => s + calcTotals(i).balance, 0);
+  const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
   return (
@@ -1227,7 +1240,7 @@ function InvoiceList({ invoices, onNew, onSelect }) {
             </div>
             {filtered.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).map(inv => {
               const t = calcTotals(inv);
-              const pillColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
+              const { label: statusLabel, color: pillColor } = statusDisplay(inv);
               const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
               const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
               const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
@@ -1241,7 +1254,7 @@ function InvoiceList({ invoices, onNew, onSelect }) {
                     <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: amountColor }}>{displayAmt}</div>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", alignItems: "center", marginTop: 2 }}>
                       {lastMethod && <span style={{ fontSize: 9, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{lastMethod}</span>}
-                      <span style={S.pill(pillColor)}>{inv.status}</span>
+                      <span style={S.pill(pillColor)}>{statusLabel}</span>
                     </div>
                   </div>
                 </div>
