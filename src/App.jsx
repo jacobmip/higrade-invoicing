@@ -130,7 +130,8 @@ Faucet repair $195–$350 | Faucet replace $450–$750 | Water heater elec 40gal
 Water heater gas 40gal $1,800–$2,800 | Tankless $3,200–$5,500 | Sewer camera $350–$550
 Sewer spot repair $1,800–$4,500 | Gas line repair $800–$2,500 | Bathroom remodel $4,500–$12,000
 
-ACTIONS — when taking an action respond with ONLY a JSON object, no markdown fences, no extra text:
+ACTIONS — respond with ONLY JSON, no markdown fences, no extra text.
+For a SINGLE action use a JSON object. For MULTIPLE actions use a JSON array:
 
 Create a new invoice:
 {"action":"create_invoice","invoice":{"client":"exact name from CLIENTS","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
@@ -153,7 +154,8 @@ RULES:
 - One flat-rate line item per job. Never add a separate service call.
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
 - Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
-- For plain questions or conversation, reply in plain text without JSON.`;
+- For plain questions or conversation, reply in plain text without JSON.
+- When asked to create multiple invoices or estimates, return a JSON array containing one action object per document. Example: [{"action":"create_invoice",...},{"action":"create_invoice",...}]`;
 }
 
 async function callAI(messages, systemPrompt = null) {
@@ -167,24 +169,38 @@ async function callAI(messages, systemPrompt = null) {
   return data.content?.[0]?.text || "";
 }
 
-function extractActionJSON(text) {
+function extractActionsJSON(text) {
   const stripped = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-  // Try direct parse first (AI returned only JSON)
-  try { const p = JSON.parse(stripped); if (p?.action) return p; } catch {}
-  // Scan for balanced braces to extract embedded JSON object
+  // Try direct parse (array or object)
+  try {
+    const p = JSON.parse(stripped);
+    if (Array.isArray(p)) return p.filter(a => a?.action);
+    if (p?.action) return [p];
+  } catch {}
+  // Try extracting a JSON array from surrounding text
+  const arrMatch = stripped.match(/\[[\s\S]*\]/);
+  if (arrMatch) {
+    try {
+      const p = JSON.parse(arrMatch[0]);
+      if (Array.isArray(p)) return p.filter(a => a?.action);
+    } catch {}
+  }
+  // Scan for individual JSON objects with balanced braces
+  const actions = [];
   let depth = 0, start = -1;
   for (let i = 0; i < stripped.length; i++) {
     if (stripped[i] === '{') { if (depth === 0) start = i; depth++; }
     else if (stripped[i] === '}') {
       depth--;
       if (depth === 0 && start !== -1) {
-        try { const p = JSON.parse(stripped.slice(start, i + 1)); if (p?.action) return p; } catch {}
+        try { const p = JSON.parse(stripped.slice(start, i + 1)); if (p?.action) actions.push(p); } catch {}
         start = -1;
       }
     }
   }
-  return null;
+  return actions;
 }
+function extractActionJSON(text) { return extractActionsJSON(text)[0] || null; }
 
 async function sendInvoiceEmail(invoice, client) {
   const t = calcTotals(invoice);
@@ -530,29 +546,51 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
       const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history, buildGlobalSystemPrompt(data));
-      const parsed = extractActionJSON(reply);
-      if (parsed?.action === "create_invoice" || parsed?.action === "create_estimate") {
-        const newInv = onAction(parsed);
-        const label = parsed.action === "create_estimate" ? "Estimate created." : "Invoice created.";
-        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || label, card: { type: "created", invoice: newInv } }]);
-      } else if (parsed?.action === "save_item") {
-        onAction(parsed);
-        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Price saved.", card: { type: "saved_item", item: parsed.item } }]);
-      } else if (parsed?.action === "add_items") {
-        onAction(parsed);
-        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Items added.", card: { type: "added", invoiceId: parsed.invoiceId, count: parsed.items?.length || 0 } }]);
-      } else if (parsed?.action === "send_email") {
-        const inv = data.invoices.find(i => i.id === parsed.invoiceId);
-        const client = data.clients.find(c => c.name === inv?.client);
-        if (!inv || !client?.email) {
-          setMsgs(p => [...p, { role: "assistant", text: `Couldn't find ${parsed.invoiceId} or no email on file.` }]);
-        } else {
-          setMsgs(p => [...p, { role: "assistant", text: parsed.summary || `Ready to send ${parsed.invoiceId}.`, card: { type: "confirm_email", invoiceId: parsed.invoiceId, email: client.email, total: calcTotals(inv).total } }]);
-        }
-      } else if (parsed?.action === "estimate") {
-        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Here's the estimate:", estimate: parsed }]);
-      } else {
+      const actions = extractActionsJSON(reply);
+
+      if (actions.length === 0) {
         setMsgs(p => [...p, { role: "assistant", text: reply }]);
+        setLoading(false); return;
+      }
+
+      let invoicesCreated = 0, estimatesCreated = 0, itemsSaved = 0;
+      const createdDocs = [];
+
+      for (const action of actions) {
+        if (action.action === "create_invoice" || action.action === "create_estimate") {
+          const newInv = onAction(action);
+          if (newInv) { createdDocs.push(newInv); action.action === "create_estimate" ? estimatesCreated++ : invoicesCreated++; }
+        } else if (action.action === "save_item") {
+          onAction(action); itemsSaved++;
+        } else if (action.action === "add_items") {
+          onAction(action);
+          setMsgs(p => [...p, { role: "assistant", text: action.summary || "Items added.", card: { type: "added", invoiceId: action.invoiceId, count: action.items?.length || 0 } }]);
+        } else if (action.action === "send_email") {
+          const inv = data.invoices.find(i => i.id === action.invoiceId);
+          const client = data.clients.find(c => c.name === inv?.client);
+          if (!inv || !client?.email) {
+            setMsgs(p => [...p, { role: "assistant", text: `Couldn't find ${action.invoiceId} or no email on file.` }]);
+          } else {
+            setMsgs(p => [...p, { role: "assistant", text: action.summary || `Ready to send ${action.invoiceId}.`, card: { type: "confirm_email", invoiceId: action.invoiceId, email: client.email, total: calcTotals(inv).total } }]);
+          }
+        } else if (action.action === "estimate") {
+          setMsgs(p => [...p, { role: "assistant", text: action.summary || "Here's the estimate:", estimate: action }]);
+        }
+      }
+
+      if (invoicesCreated || estimatesCreated || itemsSaved) {
+        const parts = [];
+        if (invoicesCreated) parts.push(`${invoicesCreated} invoice${invoicesCreated !== 1 ? "s" : ""}`);
+        if (estimatesCreated) parts.push(`${estimatesCreated} estimate${estimatesCreated !== 1 ? "s" : ""}`);
+        if (itemsSaved) parts.push(`${itemsSaved} price${itemsSaved !== 1 ? "s" : ""} saved`);
+        const isSingle = actions.length === 1;
+        const summaryText = isSingle
+          ? (actions[0].summary || `${parts[0].charAt(0).toUpperCase() + parts[0].slice(1)} created.`)
+          : `Created ${parts.join(" and ")} successfully.`;
+        const card = createdDocs.length === 1
+          ? { type: "created", invoice: createdDocs[0] }
+          : createdDocs.length > 1 ? { type: "batch_created", invoices: createdDocs } : undefined;
+        setMsgs(p => [...p, { role: "assistant", text: summaryText, ...(card ? { card } : {}) }]);
       }
     } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Error: " + e.message }]); }
     setLoading(false);
@@ -606,6 +644,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
                 </div>
               )}
               {m.card?.type === "created" && <div onClick={() => onOpenDoc?.(m.card.invoice)} style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", border: "1.5px solid #b8f0d0" }}><Icon name="check" size={16} color="#27ae60" /><div style={{ flex: 1 }}><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#27ae60" }}>{m.card.invoice?.id} Created</div>{m.card.invoice?.client && <div style={{ fontSize: 12, color: "#555" }}>{m.card.invoice.client}</div>}{m.card.invoice && <div style={{ fontSize: 13, fontWeight: 700, color: "#27ae60" }}>{fmt(calcTotals(m.card.invoice).total)}</div>}</div><div style={{ fontSize: 11, color: "#27ae60", fontWeight: 600 }}>Open →</div></div>}
+              {m.card?.type === "batch_created" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", border: "1.5px solid #b8f0d0" }}>{m.card.invoices.map((inv, j) => <div key={j} onClick={() => onOpenDoc?.(inv)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", cursor: "pointer", borderBottom: j < m.card.invoices.length - 1 ? "1px solid #d4f5e4" : "none" }}><Icon name="check" size={13} color="#27ae60" /><span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#27ae60", flex: 1 }}>{inv.id} · {inv.type === "estimate" ? "Estimate" : "Invoice"}</span><span style={{ fontSize: 12, color: "#27ae60", fontWeight: 700 }}>{fmt(calcTotals(inv).total)}</span><span style={{ fontSize: 10, color: "#27ae60" }}>Open →</span></div>)}</div>}
               {m.card?.type === "added" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}><Icon name="check" size={16} color="#27ae60" /><div style={{ fontSize: 13, fontWeight: 600, color: "#27ae60" }}>{m.card.count} item{m.card.count !== 1 ? "s" : ""} added to {m.card.invoiceId}</div></div>}
               {m.card?.type === "saved_item" && <div style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff" }}><Icon name="items" size={15} color="#2980b9" /><div><div style={{ fontSize: 13, fontWeight: 700, color: "#2980b9" }}>{m.card.item?.name}</div><div style={{ fontSize: 12, color: "#555" }}>{fmt(m.card.item?.price)} saved to My Items</div></div></div>}
               {m.card?.type === "confirm_email" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{m.card.invoiceId} · {fmt(m.card.total)}</div><div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Send to: {m.card.email}</div><div style={{ display: "flex", gap: 8 }}><button onClick={() => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, type: "email_cancelled" } } : x))} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "7px 0" }}>Cancel</button><button onClick={() => confirmEmail(i)} style={{ ...S.btn("navy"), flex: 2, fontSize: 12, padding: "7px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="mail" size={13} color="#fff" /> Confirm Send</button></div></div>}
@@ -2174,10 +2213,13 @@ export default function App() {
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
       const year = new Date(inv.date || today()).getFullYear();
-      const id = `INV${String(data.nextNum).padStart(4, "0")}`;
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
-      setData(d => ({ ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 }));
+      let newInvoice;
+      setData(d => {
+        const id = `INV${String(d.nextNum).padStart(4, "0")}`;
+        newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
+        return { ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 };
+      });
       db.upsertInvoice(newInvoice, true).catch(console.error);
       return newInvoice;
     }
