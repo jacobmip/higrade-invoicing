@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import * as GCal from './googleCalendar.js';
+import * as db from './db.js';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
 const NAVY2 = "#0f2040";
 const LIGHT = "#f4f6fa";
 const TAX_RATE = 4.712;
-const KEY = "higrade_v5";
 
 const SAVED_ITEMS = [
   { id: 1, category: "Drain", name: "Drain Clean – Snake", price: 350 },
@@ -72,19 +72,6 @@ const DEFAULT_INVOICES = [
   },
 ];
 
-function loadData() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if ((d.nextNum || 0) < 753) d.nextNum = 753;
-      if (!d.expenses) d.expenses = [];
-      return d;
-    }
-  } catch {}
-  return { invoices: DEFAULT_INVOICES, clients: DEFAULT_CLIENTS, savedItems: SAVED_ITEMS, nextNum: 753, expenses: [] };
-}
-function saveData(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} }
 
 function calcItemTotal(it) {
   const gross = (it.qty || 1) * (it.price || 0);
@@ -2133,7 +2120,8 @@ function ReportsTab({ invoices, expenses }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [data, setData] = useState(loadData);
+  const [data, setData] = useState(null);
+  const [dbLoading, setDbLoading] = useState(true);
   const [tab, setTab] = useState("invoices");
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -2141,14 +2129,25 @@ export default function App() {
   const [showGlobalAI, setShowGlobalAI] = useState(false);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
 
-  useEffect(() => { saveData(data); }, [data]);
+  useEffect(() => {
+    db.loadAll()
+      .then(d => { setData(d); setDbLoading(false); })
+      .catch(e => { console.error('Failed to load data:', e); setDbLoading(false); });
+  }, []);
 
-  const addExpense = (exp) => setData(d => {
-    const idx = (d.expenses||[]).findIndex(e => e.id === exp.id);
-    if (idx >= 0) return { ...d, expenses: d.expenses.map(e => e.id === exp.id ? exp : e) };
-    return { ...d, expenses: [...(d.expenses||[]), { ...exp, id: exp.id || Date.now() }] };
-  });
-  const deleteExpense = (id) => setData(d => ({ ...d, expenses: (d.expenses||[]).filter(e => e.id !== id) }));
+  const addExpense = async (exp) => {
+    const id = await db.upsertExpense(exp);
+    const saved = { ...exp, id };
+    setData(d => {
+      const idx = (d.expenses||[]).findIndex(e => e.id === exp.id);
+      if (idx >= 0) return { ...d, expenses: d.expenses.map(e => e.id === exp.id ? saved : e) };
+      return { ...d, expenses: [saved, ...(d.expenses||[])] };
+    });
+  };
+  const deleteExpense = async (id) => {
+    await db.deleteExpense(id);
+    setData(d => ({ ...d, expenses: (d.expenses||[]).filter(e => e.id !== id) }));
+  };
 
   const handleGlobalAIAction = (parsed) => {
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
@@ -2158,44 +2157,66 @@ export default function App() {
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
       const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
       setData(d => ({ ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 }));
+      db.upsertInvoice(newInvoice, true).catch(console.error);
       return newInvoice;
     }
     if (parsed.action === "add_items") {
-      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === parsed.invoiceId ? { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] } : inv) }));
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      if (inv) {
+        const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
+        setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
+        db.upsertInvoice(updated, false).catch(console.error);
+      }
     }
     if (parsed.action === "save_item") {
       const item = parsed.item || {};
-      setData(d => {
-        const existing = d.savedItems.find(i => i.name.toLowerCase() === item.name.toLowerCase());
-        if (existing) {
-          return { ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? { ...i, price: item.price, category: item.category || i.category } : i) };
-        }
-        return { ...d, savedItems: [...d.savedItems, { id: Date.now(), category: item.category || "Custom", name: item.name, price: item.price }] };
-      });
+      const existing = data.savedItems.find(i => i.name.toLowerCase() === item.name.toLowerCase());
+      if (existing) {
+        const updated = { ...existing, price: item.price, category: item.category || existing.category };
+        setData(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
+        db.updateSavedItem(updated).catch(console.error);
+      } else {
+        db.insertSavedItem({ category: item.category || "Custom", name: item.name, price: item.price })
+          .then(id => setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] })))
+          .catch(console.error);
+      }
     }
   };
 
-  const updateInvoice = (form) => {
+  const updateInvoice = async (form) => {
     const year = new Date(form.date || today()).getFullYear();
     if (selected) {
-      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? { ...form, id: selected.id, year } : inv) }));
+      const updated = { ...form, id: selected.id, year };
+      await db.upsertInvoice(updated, false);
+      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? updated : inv) }));
     } else {
       const id = `INV${String(data.nextNum).padStart(4, "0")}`;
-      setData(d => ({ ...d, invoices: [{ ...form, id, year }, ...d.invoices], nextNum: d.nextNum + 1 }));
+      const newInv = { ...form, id, year };
+      await db.upsertInvoice(newInv, true);
+      setData(d => ({ ...d, invoices: [newInv, ...d.invoices], nextNum: d.nextNum + 1 }));
     }
     setView("list"); setSelected(null);
   };
 
-  const deleteInvoice = (id) => { setData(d => ({ ...d, invoices: d.invoices.filter(inv => inv.id !== id) })); setView("list"); setSelected(null); };
-
-  const saveClient = (form, editing) => {
-    if (editing === "new") setData(d => ({ ...d, clients: [...d.clients, { ...form, id: Date.now() }] }));
-    else setData(d => ({ ...d, clients: d.clients.map(c => c.id === editing ? { ...form, id: editing } : c) }));
+  const deleteInvoice = async (id) => {
+    await db.deleteInvoice(id);
+    setData(d => ({ ...d, invoices: d.invoices.filter(inv => inv.id !== id) }));
+    setView("list"); setSelected(null);
   };
 
-  const saveItemToLibrary = (item) => {
-    const newItem = { id: Date.now(), category: "Custom", name: item.name, price: item.price };
-    setData(d => ({ ...d, savedItems: [...d.savedItems, newItem] }));
+  const saveClient = async (form, editing) => {
+    if (editing === "new") {
+      const id = await db.insertClient(form);
+      setData(d => ({ ...d, clients: [...d.clients, { ...form, id }] }));
+    } else {
+      await db.updateClient({ ...form, id: editing });
+      setData(d => ({ ...d, clients: d.clients.map(c => c.id === editing ? { ...form, id: editing } : c) }));
+    }
+  };
+
+  const saveItemToLibrary = async (item) => {
+    const id = await db.insertSavedItem({ category: "Custom", name: item.name, price: item.price });
+    setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
   };
 
   const invoices = data.invoices.filter(i => i.type !== "estimate");
@@ -2210,6 +2231,13 @@ export default function App() {
     { id: "reports",   label: "Reports",   icon: "chart"     },
     { id: "calendar",  label: "Calendar",  icon: "calendar"  },
   ];
+
+  if (dbLoading || !data) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY, flexDirection: "column", gap: 16 }}>
+      <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
+      <div style={{ color: "#8899bb", fontSize: 13 }}>Loading…</div>
+    </div>
+  );
 
   if (window.location.pathname === "/sign") return <SignaturePage />;
 
