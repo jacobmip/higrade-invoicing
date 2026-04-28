@@ -2120,7 +2120,7 @@ function ReportsTab({ invoices, expenses }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 });
   const [dbLoading, setDbLoading] = useState(true);
   const [tab, setTab] = useState("invoices");
   const [view, setView] = useState("list");
@@ -2223,6 +2223,15 @@ export default function App() {
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
   };
 
+  if (dbLoading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY, flexDirection: "column", gap: 16 }}>
+      <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
+      <div style={{ color: "#8899bb", fontSize: 13 }}>Loading…</div>
+    </div>
+  );
+
+  if (window.location.pathname === "/sign") return <SignaturePage />;
+
   const invoices = data.invoices.filter(i => i.type !== "estimate");
   const estimates = data.invoices.filter(i => i.type === "estimate");
 
@@ -2235,15 +2244,6 @@ export default function App() {
     { id: "reports",   label: "Reports",   icon: "chart"     },
     { id: "calendar",  label: "Calendar",  icon: "calendar"  },
   ];
-
-  if (dbLoading || !data) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY, flexDirection: "column", gap: 16 }}>
-      <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
-      <div style={{ color: "#8899bb", fontSize: 13 }}>Loading…</div>
-    </div>
-  );
-
-  if (window.location.pathname === "/sign") return <SignaturePage />;
 
   return (
     <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
