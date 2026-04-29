@@ -1059,7 +1059,20 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         const c = a.changes || {};
         setForm(f => {
           const next = { ...f };
-          if (typeof c.client === "string") next.client = c.client;
+          if (typeof c.client === "string") {
+            // Fuzzy-match against existing clients (case-insensitive, partial)
+            const q = c.client.trim().toLowerCase();
+            const exact = clients.find(cl => cl.name.toLowerCase() === q);
+            const partial = !exact ? clients.find(cl => cl.name.toLowerCase().includes(q) || q.includes(cl.name.toLowerCase())) : null;
+            const matched = exact || partial;
+            if (matched) {
+              next.client = matched.name;
+              next.clientInfo = { name: matched.name, email: matched.email || "", phone: matched.phone || matched.mobile || "", address1: matched.address1 || "", address2: matched.address2 || "", address3: matched.address3 || "" };
+            } else {
+              next.client = c.client;
+              next.clientInfo = null;
+            }
+          }
           if (typeof c.date === "string") next.date = c.date;
           if (typeof c.dueDate === "string") next.dueDate = c.dueDate;
           if (typeof c.status === "string" && validStatus(c.status)) next.status = c.status;
