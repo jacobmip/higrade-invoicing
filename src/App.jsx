@@ -934,7 +934,7 @@ function PDFPreview({ form, clients }) {
 }
 
 // ─── Invoice Form ─────────────────────────────────────────────────────────────
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onCancel, onDelete, onSaveItem }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -999,10 +999,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
-      {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => setForm(updated)} />}
-      {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => setForm(f => ({ ...f, ...fields }))} />}
-      {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => setForm(f => ({ ...f, ...fields }))} />}
-      {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { setField("signatureData", sigData); setField("signedAt", new Date().toISOString()); setField("status", "approved"); setShowSignature(false); }} />}
+      {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
+      {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
+      {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
+      {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { const updated = { ...form, signatureData: sigData, signedAt: new Date().toISOString(), status: "approved" }; setForm(updated); setShowSignature(false); onPartialSave?.(updated); }} />}
       {editingItem !== null && (
         <ItemModal
           item={form.items[editingItem]}
@@ -1402,11 +1402,12 @@ function EstimatesTab({ invoices, onNew, onSelect }) {
 }
 
 // ─── Clients Tab ──────────────────────────────────────────────────────────────
-function ClientsTab({ clients, onSave }) {
+function ClientsTab({ clients, onSave, onDelete }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const startEdit = (c) => { setEditing(c?.id || "new"); setForm(c || { name: "", email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "" }); };
   const save = () => { onSave(form, editing); setEditing(null); };
+  const handleDelete = () => { if (confirm(`Delete ${form.name}?`)) { onDelete(editing); setEditing(null); } };
 
   if (editing !== null) return (
     <div style={{ padding: 16, paddingBottom: 40 }}>
@@ -1431,6 +1432,7 @@ function ClientsTab({ clients, onSave }) {
         <button onClick={() => alert("Import from Contacts — coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Import from Contacts</button>
         <button onClick={() => alert("Create Statement — coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Create Statement</button>
       </div>
+      {editing !== "new" && <button onClick={handleDelete} style={{ ...S.btn("ghost"), width: "100%", marginTop: 10, fontSize: 13, color: "#cc4444" }}>Delete Client</button>}
     </div>
   );
 
@@ -1452,7 +1454,7 @@ function ClientsTab({ clients, onSave }) {
 }
 
 // ─── Items Tab ────────────────────────────────────────────────────────────────
-function ItemsTab({ savedItems }) {
+function ItemsTab({ savedItems, onDelete }) {
   const categories = [...new Set(savedItems.map(i => i.category))];
   return (
     <div style={{ padding: 12 }}>
@@ -1465,7 +1467,10 @@ function ItemsTab({ savedItems }) {
           {savedItems.filter(i => i.category === cat).map(item => (
             <div key={item.id} style={{ ...S.card, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 14 }}>{item.name}</span>
-              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: ORANGE }}>{fmt(item.price)}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: ORANGE }}>{fmt(item.price)}</span>
+                {onDelete && <button onClick={() => { if (confirm(`Remove "${item.name}"?`)) onDelete(item.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", color: "#cc4444", fontSize: 16, lineHeight: 1 }}>×</button>}
+              </div>
             </div>
           ))}
         </div>
@@ -2343,6 +2348,26 @@ export default function App() {
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
   };
 
+  const partialSaveInvoice = async (updated) => {
+    if (!selected?.id) return;
+    const year = new Date(updated.date || today()).getFullYear();
+    const withMeta = { ...updated, id: selected.id, year };
+    try {
+      await db.upsertInvoice(withMeta, false);
+      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? withMeta : inv) }));
+    } catch (e) { console.error('Auto-save failed:', e); }
+  };
+
+  const removeClient = async (id) => {
+    await db.deleteClient(id);
+    setData(d => ({ ...d, clients: d.clients.filter(c => c.id !== id) }));
+  };
+
+  const removeSavedItem = async (id) => {
+    await db.deleteSavedItem(id);
+    setData(d => ({ ...d, savedItems: d.savedItems.filter(i => i.id !== id) }));
+  };
+
   if (dbLoading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY, flexDirection: "column", gap: 16 }}>
       <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
@@ -2389,6 +2414,7 @@ export default function App() {
           savedItems={data.savedItems}
           gcalAuthed={gcalAuthed}
           onSave={updateInvoice}
+          onPartialSave={partialSaveInvoice}
           onCancel={() => { setView("list"); setSelected(null); }}
           onDelete={deleteInvoice}
           onSaveItem={saveItemToLibrary}
@@ -2397,8 +2423,8 @@ export default function App() {
         <>
           {tab === "invoices"  && <InvoiceList invoices={invoices} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
           {tab === "estimates" && <EstimatesTab invoices={estimates} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
-          {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} />}
-          {tab === "items"     && <ItemsTab savedItems={data.savedItems} />}
+          {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} />}
+          {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
           {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} />}
           {tab === "reports"   && <ReportsTab invoices={data.invoices} expenses={data.expenses || []} />}
