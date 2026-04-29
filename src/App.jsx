@@ -148,6 +148,9 @@ Send invoice email (requires confirmation):
 Save or update a price in Jake's memory (use when Jake says "save", "remember", "set price", "my price for X is Y"):
 {"action":"save_item","item":{"name":"Item Name","category":"Category","price":000},"summary":"one sentence"}
 
+Create a new client:
+{"action":"create_client","client":{"name":"Full Name","email":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
+
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
 - When generating an estimate or invoice, check JAKE'S SAVED PRICES first — if a match exists, use that exact price.
@@ -262,6 +265,7 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     pen:       <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
     receipt:   <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
     camera:    <svg {...p}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
+    person:    <svg {...p}><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>,
   };
   return icons[name] || null;
 };
@@ -575,6 +579,11 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
           }
         } else if (action.action === "estimate") {
           setMsgs(p => [...p, { role: "assistant", text: action.summary || "Here's the estimate:", estimate: action }]);
+        } else if (action.action === "create_client") {
+          const newClient = await onAction(action);
+          if (newClient) {
+            setMsgs(p => [...p, { role: "assistant", text: action.summary || `Client "${newClient.name}" added.`, card: { type: "created_client", client: newClient } }]);
+          }
         }
       }
 
@@ -652,6 +661,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
               {m.card?.type === "email_sent" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}><Icon name="check" size={15} color="#27ae60" /><span style={{ fontSize: 12, fontWeight: 600, color: "#27ae60" }}>Sent!</span></div>}
               {m.card?.type === "email_cancelled" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px" }}><span style={{ fontSize: 12, color: "#aaa" }}>Email cancelled</span></div>}
               {m.card?.type === "email_failed" && <div style={{ marginTop: 10, background: "#fff0ee", borderRadius: 8, padding: "10px 12px" }}><span style={{ fontSize: 12, color: "#cc4444" }}>Failed: {m.card.error}</span></div>}
+              {m.card?.type === "created_client" && <div style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff" }}><Icon name="person" size={16} color="#2980b9" /><div><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#2980b9" }}>{m.card.client?.name}</div>{m.card.client?.email && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.email}</div>}{m.card.client?.phone && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.phone}</div>}</div></div>}
             </div>
           </div>
         ))}
@@ -2243,6 +2253,15 @@ export default function App() {
           .then(id => setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] })))
           .catch(console.error);
       }
+    }
+    if (parsed.action === "create_client") {
+      const c = parsed.client || {};
+      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", phone: c.phone || "", fax: c.fax || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
+      return db.insertClient(form).then(id => {
+        const newClient = { ...form, id };
+        setData(d => ({ ...d, clients: [...d.clients, newClient] }));
+        return newClient;
+      });
     }
   };
 
