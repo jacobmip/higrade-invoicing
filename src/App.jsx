@@ -869,8 +869,9 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
 // ─── PDF Preview ──────────────────────────────────────────────────────────────
 function PDFPreview({ form, clients }) {
   const t = calcTotals(form);
-  const client = clients.find(c => c.name === form.client) || {};
-  const addr = [client.address1 || client.address, client.address2, client.address3].filter(Boolean).join(", ");
+  const clientRecord = clients.find(c => c.name === form.client) || {};
+  const clientData = form.clientInfo || clientRecord;
+  const addr = [clientData.address1, clientData.address2, clientData.address3].filter(Boolean).join(", ");
   const isEstimate = form.type === "estimate";
 
   return (
@@ -900,11 +901,11 @@ function PDFPreview({ form, clients }) {
           <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 7 }}>Bill To</div>
           {form.client ? (
             <>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 3 }}>{form.client}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 3 }}>{clientData.name || form.client}</div>
               {addr && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{addr}</div>}
               <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
-                {client.phone && <div style={{ fontSize: 12, color: "#777" }}>{client.phone}</div>}
-                {client.email && <div style={{ fontSize: 12, color: "#999" }}>{client.email}</div>}
+                {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
+                {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
               </div>
             </>
           ) : (
@@ -961,7 +962,7 @@ function PDFPreview({ form, clients }) {
 }
 
 // ─── Invoice Form ─────────────────────────────────────────────────────────────
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -975,6 +976,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showScheduleJob, setShowScheduleJob] = useState(false);
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
+  const [editingClient, setEditingClient] = useState(false);
+  const [saveToProfile, setSaveToProfile] = useState(false);
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -990,10 +993,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
 
   const selectedClient = clients.find(c => c.name === form.client);
+  const effectiveClientInfo = form.clientInfo || (selectedClient ? { name: selectedClient.name, email: selectedClient.email || "", phone: selectedClient.phone || selectedClient.mobile || "", address1: selectedClient.address1 || "", address2: selectedClient.address2 || "", address3: selectedClient.address3 || "" } : null);
+  const setClientInfoField = (k, v) => setField("clientInfo", { ...(effectiveClientInfo || {}), [k]: v });
   const categories = [...new Set(savedItems.map(i => i.category))];
 
   const handleEmail = async () => {
-    const client = clients.find(c => c.name === form.client);
+    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
     if (!client?.email) { alert("No email on file for this client."); return; }
     setEmailStatus("Sending…");
     try {
@@ -1004,7 +1009,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
 
   const handleSendEstimate = async () => {
-    const client = clients.find(c => c.name === form.client);
+    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
     if (!client?.email) { alert("No email on file for this client."); return; }
     const t2 = calcTotals(form);
     const job = form.items[0]?.name || "Plumbing Work";
@@ -1015,6 +1020,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       await fetch("/api/send-estimate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: client.email, clientName: client.name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
       alert("Estimate sent! Client will receive signing link by email.");
     } catch (e) { alert("Failed to send: " + e.message); }
+  };
+
+  const handleSave = async () => {
+    if (saveToProfile && selectedClient && effectiveClientInfo) {
+      try { await onUpdateClient?.({ ...effectiveClientInfo, id: selectedClient.id }); } catch (e) { console.error('Failed to update client profile:', e); }
+    }
+    onSave(form);
   };
 
   const historyEvents = [
@@ -1044,7 +1056,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         <button onClick={onCancel} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
         <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>{invoice ? invoice.id : isEstimate ? "New Estimate" : "New Invoice"}</span>
         {invoice && onDelete && <button onClick={() => { if (confirm("Delete this?")) onDelete(invoice.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        <button onClick={() => onSave(form)} style={S.btn("primary")}>Save</button>
+        <button onClick={handleSave} style={S.btn("primary")}>Save</button>
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0", position: "sticky", top: 54, zIndex: 90 }}>
@@ -1060,17 +1072,41 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           {/* Bill To */}
           <div style={{ padding: "16px 16px 0" }}>
             <label style={S.label}>Bill To</label>
-            <select style={S.input} value={form.client} onChange={e => setField("client", e.target.value)}>
+            <select style={S.input} value={form.client} onChange={e => {
+              const name = e.target.value;
+              const c = clients.find(cl => cl.name === name);
+              setForm(f => ({ ...f, client: name, clientInfo: c ? { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" } : null }));
+              setEditingClient(false);
+              setSaveToProfile(false);
+            }}>
               <option value="">Select client…</option>
               {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
             </select>
-            {selectedClient && (
-              <div style={{ background: "#fff", borderRadius: 8, padding: "10px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
-                {(selectedClient.address1 || selectedClient.address) && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{selectedClient.address1 || selectedClient.address}{selectedClient.address2 ? ", " + selectedClient.address2 : ""}</div>}
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                  {selectedClient.phone && <span style={{ fontSize: 12, color: "#777" }}>{selectedClient.phone}</span>}
-                  {selectedClient.email && <span style={{ fontSize: 12, color: "#999" }}>{selectedClient.email}</span>}
+            {selectedClient && !editingClient && (
+              <div style={{ background: "#fff", borderRadius: 8, padding: "10px 13px", marginTop: 8, border: "1px solid #e8ecf4", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {effectiveClientInfo?.address1 && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{effectiveClientInfo.address1}{effectiveClientInfo.address2 ? ", " + effectiveClientInfo.address2 : ""}{effectiveClientInfo.address3 ? " " + effectiveClientInfo.address3 : ""}</div>}
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    {effectiveClientInfo?.phone && <span style={{ fontSize: 12, color: "#777" }}>{effectiveClientInfo.phone}</span>}
+                    {effectiveClientInfo?.email && <span style={{ fontSize: 12, color: "#999" }}>{effectiveClientInfo.email}</span>}
+                  </div>
                 </div>
+                <button onClick={() => setEditingClient(true)} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
+              </div>
+            )}
+            {selectedClient && editingClient && (
+              <div style={{ background: "#fff", borderRadius: 8, padding: "14px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
+                {[{ k: "name", label: "Name" }, { k: "email", label: "Email", type: "email" }, { k: "phone", label: "Phone", type: "tel" }, { k: "address1", label: "Address" }, { k: "address2", label: "City / State" }, { k: "address3", label: "ZIP" }].map(({ k, label, type }) => (
+                  <div key={k} style={{ marginBottom: 9 }}>
+                    <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
+                    <input style={S.input} type={type || "text"} value={effectiveClientInfo?.[k] || ""} onChange={e => setClientInfoField(k, e.target.value)} />
+                  </div>
+                ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10, borderTop: "1px solid #f0f2f8", marginTop: 4 }}>
+                  <input type="checkbox" id="saveToProfile" checked={saveToProfile} onChange={e => setSaveToProfile(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer", flexShrink: 0 }} />
+                  <label htmlFor="saveToProfile" style={{ fontSize: 12, color: "#555", cursor: "pointer", lineHeight: 1.4 }}>Save changes to client profile</label>
+                </div>
+                <button onClick={() => setEditingClient(false)} style={{ ...S.btn("ghost"), fontSize: 12, marginTop: 10, width: "100%", padding: "7px 0" }}>Done</button>
               </div>
             )}
           </div>
@@ -2456,6 +2492,10 @@ export default function App() {
           onCancel={() => { setView("list"); setSelected(null); }}
           onDelete={deleteInvoice}
           onSaveItem={saveItemToLibrary}
+          onUpdateClient={async (updated) => {
+            await db.updateClient(updated);
+            setData(d => ({ ...d, clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c) }));
+          }}
         />
       ) : (
         <>

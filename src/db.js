@@ -22,6 +22,7 @@ function toInvoice(row, items = [], payments = []) {
     followUpEventId: row.follow_up_event_id || null,
     signatureData: row.signature_data || null,
     signedAt: row.signed_at || null,
+    clientInfo: row.client_info || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -143,6 +144,7 @@ export async function upsertInvoice(inv, isNew) {
     follow_up_event_id: inv.followUpEventId || null,
     signature_data: inv.signatureData || null,
     signed_at: inv.signedAt || null,
+    client_info: inv.clientInfo || null,
     updated_at: new Date().toISOString(),
   })
   if (invErr) throw invErr
