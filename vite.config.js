@@ -11,8 +11,15 @@ export default defineConfig({
     // on the same Wi-Fi (Capacitor dev server).
     host: true,
     port: 5173,
+    // Proxy /api/* to the live Vercel deployment so the AI / email /
+    // signature serverless functions work in `npm run dev` without
+    // needing to run a local backend.
     proxy: {
-      '/api': 'http://localhost:3001'
+      '/api': {
+        target: 'https://higrade-invoicing.vercel.app',
+        changeOrigin: true,
+        secure: true
+      }
     }
   }
 })
