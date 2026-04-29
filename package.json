@@ -5,10 +5,21 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync": "vite build && cap sync",
+    "ios": "vite build && cap sync ios && cap open ios",
+    "android": "vite build && cap sync android && cap open android",
+    "android:apk": "vite build && cap sync android && cd android && ./gradlew assembleDebug",
+    "android:release": "vite build && cap sync android && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@capacitor/android": "^7.6.2",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/cli": "^7.6.2",
+    "@capacitor/core": "^7.6.2",
+    "@capacitor/ios": "^7.6.2",
+    "@capacitor/preferences": "^7.0.4",
     "@supabase/supabase-js": "^2.105.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

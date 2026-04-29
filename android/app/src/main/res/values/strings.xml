@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HI Grade Invoicing</string>
+    <string name="title_activity_main">HI Grade Invoicing</string>
+    <string name="package_name">com.higradeplumbing.invoicing</string>
+    <string name="custom_url_scheme">com.higradeplumbing.invoicing</string>
+</resources>

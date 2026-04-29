@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
+import { api } from './apiBase.js';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -164,7 +165,7 @@ RULES:
 }
 
 async function callAI(messages, systemPrompt = null) {
-  const res = await fetch("/api/ai", {
+  const res = await fetch(api("/api/ai"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages, ...(systemPrompt ? { systemPrompt } : {}) }),
@@ -247,7 +248,7 @@ async function sendInvoiceEmail(invoice, client) {
       <p>GET (${invoice.tax}%): ${fmt(t.taxAmt)}</p>
     </div>
   `;
-  const res = await fetch("/api/send-email", {
+  const res = await fetch(api("/api/send-email"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ to: client.email, clientName: client.name, invoiceId: invoice.id, total: t.total.toFixed(2), invoiceHtml }),
@@ -1017,7 +1018,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     const signingLink = `${window.location.origin}/sign?${params.toString()}`;
     const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
     try {
-      await fetch("/api/send-estimate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: client.email, clientName: client.name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
+      await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: client.email, clientName: client.name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
       alert("Estimate sent! Client will receive signing link by email.");
     } catch (e) { alert("Failed to send: " + e.message); }
   };
@@ -1859,7 +1860,7 @@ function SignaturePage() {
     setStatus("submitting");
     try {
       const sig = canvasRef.current.toDataURL("image/png");
-      const res = await fetch("/api/submit-signature", {
+      const res = await fetch(api("/api/submit-signature"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ estimateId, clientName, total, job, signatureData: sig, signedAt: new Date().toISOString() }),
@@ -1941,7 +1942,7 @@ function ExpenseModal({ expense, onClose, onSave }) {
     reader.onload = async (e) => {
       const base64 = e.target.result.split(",")[1];
       try {
-        const res = await fetch("/api/extract-receipt", {
+        const res = await fetch(api("/api/extract-receipt"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ imageData: base64, mediaType: file.type || "image/jpeg" }),

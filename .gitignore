@@ -1,4 +1,23 @@
 node_modules
 dist
 .env
+.env.local
 backups/
+
+# Capacitor / native build artifacts
+ios/App/Pods
+ios/App/build
+ios/App/DerivedData
+ios/App/App/public
+ios/.xcode.env.local
+android/.gradle
+android/build
+android/app/build
+android/app/release
+android/app/src/main/assets/public
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/local.properties
+android/.idea
+*.keystore
+*.jks

@@ -1,0 +1,15 @@
+{
+  "appId": "com.higradeplumbing.invoicing",
+  "appName": "HI Grade Invoicing",
+  "webDir": "dist",
+  "backgroundColor": "#0a1628",
+  "ios": {
+    "contentInset": "always"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
