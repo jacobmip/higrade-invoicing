@@ -206,6 +206,25 @@ function extractActionsJSON(text) {
 }
 function extractActionJSON(text) { return extractActionsJSON(text)[0] || null; }
 
+function stripActionBlocks(text) {
+  if (!text) return text;
+  let t = text.replace(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)```/g, (match, inner) => {
+    try { const p = JSON.parse(inner.trim()); if (p?.action || (Array.isArray(p) && p[0]?.action)) return ''; } catch {}
+    return match;
+  });
+  let result = '', i = 0;
+  while (i < t.length) {
+    if (t[i] === '{') {
+      let depth = 0, start = i, j = i;
+      while (j < t.length) { if (t[j] === '{') depth++; else if (t[j] === '}') { depth--; if (depth === 0) break; } j++; }
+      let isAction = false;
+      try { const p = JSON.parse(t.slice(start, j + 1)); if (p?.action) isAction = true; } catch {}
+      if (isAction) { i = j + 1; } else { result += t[i]; i++; }
+    } else { result += t[i]; i++; }
+  }
+  return result.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 async function sendInvoiceEmail(invoice, client) {
   const t = calcTotals(invoice);
   const itemsHtml = invoice.items.map(it => {
@@ -542,7 +561,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
   const speak = (text) => {
     if (!ttsRef.current || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const clean = text
+    const clean = stripActionBlocks(text)
       .replace(/\*+/g, '').replace(/#+\s*/g, '').replace(/`+/g, '').replace(/[_~>]/g, '')
       .replace(/\$([0-9,]+(\.[0-9]{2})?)/g, (_, n) => n.replace(/,/g, '') + ' dollars')
       .replace(/INV(\d+)/g, 'Invoice $1')
@@ -684,7 +703,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={bubble(m.role === "user")}>
-              {m.text}
+              {m.role === "assistant" ? stripActionBlocks(m.text) : m.text}
               {m.estimate && (
                 <div style={{ marginTop: 10, borderTop: "1px solid #f0f2f8", paddingTop: 10 }}>
                   {m.estimate.items.map((it, j) => (
