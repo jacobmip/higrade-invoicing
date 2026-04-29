@@ -153,6 +153,27 @@ Save or update a price in Jake's memory (use when Jake says "save", "remember", 
 Create a new client:
 {"action":"create_client","client":{"name":"Full Name","email":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
 
+Update an existing invoice (set client, dates, status, notes — only include the fields you want to change):
+{"action":"update_invoice","invoiceId":"INV0000","changes":{"client":"exact name","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","status":"outstanding|paid|partial|net30","notes":"text","discount":0,"tax":4.712},"summary":"one sentence"}
+
+Delete an invoice or estimate:
+{"action":"delete_invoice","invoiceId":"INV0000","summary":"one sentence"}
+
+Record a payment on an invoice:
+{"action":"add_payment","invoiceId":"INV0000","payment":{"amount":000,"method":"Cash|Check|Venmo|Zelle|Card|Other","date":"YYYY-MM-DD"},"summary":"one sentence"}
+
+Remove a line item from an invoice (1-based index as it appears in the invoice):
+{"action":"remove_item","invoiceId":"INV0000","itemIndex":1,"summary":"one sentence"}
+
+Update an existing line item on an invoice (1-based index; only include fields to change):
+{"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"name":"...","desc":"...","qty":1,"price":000,"taxable":true},"summary":"one sentence"}
+
+Update a client's contact info (only include fields to change):
+{"action":"update_client","clientName":"exact name","changes":{"email":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
+
+Delete a client:
+{"action":"delete_client","clientName":"exact name","summary":"one sentence"}
+
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
 - When generating an estimate or invoice, check JAKE'S SAVED PRICES first — if a match exists, use that exact price.
@@ -323,9 +344,9 @@ const S = {
   }),
 };
 
-// ─── AI Chat Panel ────────────────────────────────────────────────────────────
-function AIChatPanel({ onAddItems }) {
-  const [msgs, setMsgs] = useState([{ role: "assistant", text: "Hey Jake! Describe a job and I'll build the estimate." }]);
+// ─── AI Chat Panel (per-invoice with full app control) ───────────────────────
+function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobalAction }) {
+  const [msgs, setMsgs] = useState([{ role: "assistant", text: "Hey Jake! Describe a job and I'll build the estimate, or tell me to change the client, set the date, mark this paid, etc." }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -346,15 +367,43 @@ function AIChatPanel({ onAddItems }) {
     setInput(""); const userMsg = { role: "user", text };
     setMsgs(p => [...p, userMsg]); setLoading(true);
     try {
+      // Context-aware system prompt: global knowledge + the open invoice.
+      const systemBase = data ? buildGlobalSystemPrompt(data) : null;
+      let invoiceContext = "";
+      if (currentInvoice) {
+        const itemList = (currentInvoice.items || []).map((it, i) =>
+          `  ${i + 1}. ${it.name || it.desc || "(unnamed)"} — qty ${it.qty || 1} @ $${it.price || 0}`
+        ).join("\n");
+        invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", etc. without specifying an ID — he means THIS one (${currentInvoice.id || 'unsaved'}). Use that ID in your action's invoiceId field. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him.`;
+      }
+      const systemPrompt = systemBase ? systemBase + invoiceContext : null;
       const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
       const first = history.findIndex(m => m.role === "user");
-      const reply = await callAI(first >= 0 ? history.slice(first) : history);
-      const parsed = extractActionJSON(reply);
-      if (parsed?.action === "estimate" && parsed.items?.length) {
-        setMsgs(p => [...p, { role: "assistant", text: parsed.summary || "Here's your estimate:", estimate: parsed }]);
-      } else {
-        setMsgs(p => [...p, { role: "assistant", text: reply }]);
+      const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt);
+      const actions = extractActionsJSON(reply);
+      const cleanText = stripActionBlocks(reply);
+
+      // The legacy 'estimate' action stays as a preview-then-confirm card.
+      const previewEstimate = actions.find(a => a.action === "estimate" && a.items?.length);
+      const otherActions = actions.filter(a => a !== previewEstimate);
+
+      if (otherActions.length && onGlobalAction) {
+        for (const a of otherActions) {
+          const targetsCurrent = currentInvoice && a.invoiceId && a.invoiceId === currentInvoice.id;
+          let handledLocally = false;
+          if (targetsCurrent && onLocalAction) {
+            handledLocally = !!(await onLocalAction(a));
+          }
+          if (!handledLocally) await onGlobalAction(a);
+        }
       }
+
+      const summaryFromActions = otherActions.map(a => a.summary).filter(Boolean).join("\n");
+      const replyText = previewEstimate
+        ? (previewEstimate.summary || "Here's your estimate:")
+        : (cleanText || summaryFromActions || (otherActions.length ? "✓ Done" : reply));
+
+      setMsgs(p => [...p, { role: "assistant", text: replyText, estimate: previewEstimate || undefined }]);
     } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Error: " + e.message }]); }
     setLoading(false);
   };
@@ -963,7 +1012,7 @@ function PDFPreview({ form, clients }) {
 }
 
 // ─── Invoice Form ─────────────────────────────────────────────────────────────
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient, data, onAIAction }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -991,6 +1040,73 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const handleAddFromAI = (items, notes) => {
     setForm(f => ({ ...f, items: [...f.items.filter(it => it.name || it.desc || it.price), ...items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty, price: it.price }))], notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes }));
     setShowAI(false);
+  };
+
+  // AI "local action" handler — mutates the open form for instant feedback
+  // without round-tripping through the DB. Returns true if handled.
+  const handleLocalAIAction = async (action) => {
+    const a = action || {};
+    const validStatus = (s) => ["outstanding", "paid", "partial", "net30"].includes(s);
+    switch (a.action) {
+      case "add_items": {
+        if (Array.isArray(a.items) && a.items.length) {
+          handleAddFromAI(a.items, a.notes);
+          return true;
+        }
+        return false;
+      }
+      case "update_invoice": {
+        const c = a.changes || {};
+        setForm(f => {
+          const next = { ...f };
+          if (typeof c.client === "string") next.client = c.client;
+          if (typeof c.date === "string") next.date = c.date;
+          if (typeof c.dueDate === "string") next.dueDate = c.dueDate;
+          if (typeof c.status === "string" && validStatus(c.status)) next.status = c.status;
+          if (typeof c.notes === "string") next.notes = c.notes;
+          if (typeof c.discount === "number") next.discount = c.discount;
+          if (typeof c.tax === "number") next.tax = c.tax;
+          return next;
+        });
+        return true;
+      }
+      case "add_payment": {
+        const p = a.payment;
+        if (!p || typeof p.amount !== "number") return false;
+        setForm(f => {
+          const payments = [...(f.payments || []), { amount: p.amount, method: p.method || "Cash", date: p.date || today() }];
+          const totals = calcTotals({ ...f, payments });
+          const newStatus = totals.balance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : f.status);
+          return { ...f, payments, status: newStatus };
+        });
+        return true;
+      }
+      case "remove_item": {
+        const idx = (a.itemIndex || 0) - 1;
+        if (idx < 0) return false;
+        setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+        return true;
+      }
+      case "update_item": {
+        const idx = (a.itemIndex || 0) - 1;
+        const c = a.changes || {};
+        if (idx < 0) return false;
+        setForm(f => ({
+          ...f,
+          items: f.items.map((it, i) => i === idx ? {
+            ...it,
+            ...(typeof c.name === "string" ? { name: c.name } : {}),
+            ...(typeof c.desc === "string" ? { desc: c.desc } : {}),
+            ...(typeof c.qty === "number" ? { qty: c.qty } : {}),
+            ...(typeof c.price === "number" ? { price: c.price } : {}),
+            ...(typeof c.taxable === "boolean" ? { taxable: c.taxable } : {}),
+          } : it),
+        }));
+        return true;
+      }
+      default:
+        return false;
+    }
   };
 
   const selectedClient = clients.find(c => c.name === form.client);
@@ -1134,7 +1250,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               </div>
             </div>
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel onAddItems={handleAddFromAI} /></div>}
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} /></div>}
 
             {showSaved && (
               <div style={{ background: "#fff", borderRadius: 10, marginBottom: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxHeight: 280, overflowY: "auto" }}>
@@ -2385,6 +2501,88 @@ export default function App() {
       setData(d => ({ ...d, clients: [...d.clients, newClient] }));
       return newClient;
     }
+    if (parsed.action === "update_invoice") {
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      if (!inv) return;
+      const c = parsed.changes || {};
+      const validStatus = (s) => ["outstanding", "paid", "partial", "net30"].includes(s);
+      const updated = {
+        ...inv,
+        ...(typeof c.client === "string" ? { client: c.client } : {}),
+        ...(typeof c.date === "string" ? { date: c.date } : {}),
+        ...(typeof c.dueDate === "string" ? { dueDate: c.dueDate } : {}),
+        ...(typeof c.status === "string" && validStatus(c.status) ? { status: c.status } : {}),
+        ...(typeof c.notes === "string" ? { notes: c.notes } : {}),
+        ...(typeof c.discount === "number" ? { discount: c.discount } : {}),
+        ...(typeof c.tax === "number" ? { tax: c.tax } : {}),
+      };
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
+      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+    }
+    if (parsed.action === "delete_invoice") {
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      if (!inv) return;
+      try { await db.deleteInvoice(parsed.invoiceId); } catch (e) { console.error(e); }
+      setData(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
+    }
+    if (parsed.action === "add_payment") {
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      const p = parsed.payment;
+      if (!inv || !p || typeof p.amount !== "number") return;
+      const payments = [...(inv.payments || []), { amount: p.amount, method: p.method || "Cash", date: p.date || today() }];
+      const totals = calcTotals({ ...inv, payments });
+      const updated = { ...inv, payments, status: totals.balance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : inv.status) };
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+    }
+    if (parsed.action === "remove_item") {
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      const idx = (parsed.itemIndex || 0) - 1;
+      if (!inv || idx < 0) return;
+      const updated = { ...inv, items: inv.items.filter((_, i) => i !== idx) };
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+    }
+    if (parsed.action === "update_item") {
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      const idx = (parsed.itemIndex || 0) - 1;
+      const c = parsed.changes || {};
+      if (!inv || idx < 0) return;
+      const updated = {
+        ...inv,
+        items: inv.items.map((it, i) => i === idx ? {
+          ...it,
+          ...(typeof c.name === "string" ? { name: c.name } : {}),
+          ...(typeof c.desc === "string" ? { desc: c.desc } : {}),
+          ...(typeof c.qty === "number" ? { qty: c.qty } : {}),
+          ...(typeof c.price === "number" ? { price: c.price } : {}),
+          ...(typeof c.taxable === "boolean" ? { taxable: c.taxable } : {}),
+        } : it),
+      };
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+    }
+    if (parsed.action === "update_client") {
+      const target = data.clients.find(c => c.name === parsed.clientName);
+      if (!target) return;
+      const c = parsed.changes || {};
+      const updated = {
+        ...target,
+        ...(typeof c.email === "string" ? { email: c.email } : {}),
+        ...(typeof c.phone === "string" ? { phone: c.phone, mobile: c.phone } : {}),
+        ...(typeof c.address1 === "string" ? { address1: c.address1 } : {}),
+        ...(typeof c.address2 === "string" ? { address2: c.address2 } : {}),
+        ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
+      };
+      try { await db.updateClient(updated); } catch (e) { console.error(e); }
+      setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
+    }
+    if (parsed.action === "delete_client") {
+      const target = data.clients.find(c => c.name === parsed.clientName);
+      if (!target) return;
+      try { await db.deleteClient(target.id); } catch (e) { console.error(e); }
+      setData(d => ({ ...d, clients: d.clients.filter(cc => cc.id !== target.id) }));
+    }
   };
 
   const updateInvoice = async (form) => {
@@ -2488,6 +2686,8 @@ export default function App() {
           clients={data.clients}
           savedItems={data.savedItems}
           gcalAuthed={gcalAuthed}
+          data={data}
+          onAIAction={handleGlobalAIAction}
           onSave={updateInvoice}
           onPartialSave={partialSaveInvoice}
           onCancel={() => { setView("list"); setSelected(null); }}
