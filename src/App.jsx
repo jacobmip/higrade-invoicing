@@ -2309,7 +2309,7 @@ export default function App() {
         newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
         return { ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 };
       });
-      await db.upsertInvoice(newInvoice, true);
+      try { await db.upsertInvoice(newInvoice, true); } catch (e) { console.error('DB write failed:', e); }
       return newInvoice;
     }
     if (parsed.action === "add_items") {
