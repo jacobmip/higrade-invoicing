@@ -266,6 +266,8 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     receipt:   <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
     camera:    <svg {...p}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
     person:    <svg {...p}><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>,
+    speaker:   <svg {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>,
+    speakerOff:<svg {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>,
   };
   return icons[name] || null;
 };
@@ -530,8 +532,48 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  const [ttsOn, setTtsOn] = useState(true);
+  const ttsRef = useRef(true);
+  const msgCountRef = useRef(0);
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading]);
+
+  const speak = (text) => {
+    if (!ttsRef.current || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const clean = text
+      .replace(/\*+/g, '').replace(/#+\s*/g, '').replace(/`+/g, '').replace(/[_~>]/g, '')
+      .replace(/\$([0-9,]+(\.[0-9]{2})?)/g, (_, n) => n.replace(/,/g, '') + ' dollars')
+      .replace(/INV(\d+)/g, 'Invoice $1')
+      .replace(/\s{2,}/g, ' ').trim();
+    if (!clean) return;
+    const utt = new SpeechSynthesisUtterance(clean);
+    const voices = window.speechSynthesis.getVoices();
+    utt.voice = voices.find(v => /natural|premium|enhanced/i.test(v.name) && v.lang.startsWith('en'))
+      || voices.find(v => /google/i.test(v.name) && v.lang.startsWith('en'))
+      || voices.find(v => v.lang === 'en-US')
+      || voices.find(v => v.lang.startsWith('en'))
+      || null;
+    utt.rate = 1.05;
+    window.speechSynthesis.speak(utt);
+  };
+
+  const toggleTts = () => {
+    const next = !ttsRef.current;
+    ttsRef.current = next;
+    setTtsOn(next);
+    if (!next) window.speechSynthesis?.cancel();
+  };
+
+  useEffect(() => {
+    if (msgs.length > msgCountRef.current) {
+      const last = msgs[msgs.length - 1];
+      if (last?.role === 'assistant' && last.text) speak(last.text);
+    }
+    msgCountRef.current = msgs.length;
+  }, [msgs]);
+
+  useEffect(() => { return () => window.speechSynthesis?.cancel(); }, []);
 
   const startListening = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -634,7 +676,8 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
           <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, letterSpacing: 1 }}>AI ASSISTANT</div>
           <div style={{ color: "#8899bb", fontSize: 11 }}>{data.invoices.length} invoices · {data.clients.length} clients</div>
         </div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
+        <button onClick={toggleTts} title={ttsOn ? "Mute" : "Unmute"} style={{ width: 34, height: 34, borderRadius: 8, border: "none", background: ttsOn ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={ttsOn ? "speaker" : "speakerOff"} size={16} color={ttsOn ? "#fff" : "#556688"} /></button>
+        <button onClick={() => { window.speechSynthesis?.cancel(); onClose(); }} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 0" }}>
         {msgs.map((m, i) => (
