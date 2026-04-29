@@ -562,7 +562,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
 
       for (const action of actions) {
         if (action.action === "create_invoice" || action.action === "create_estimate") {
-          const newInv = onAction(action);
+          const newInv = await onAction(action);
           if (newInv) { createdDocs.push(newInv); action.action === "create_estimate" ? estimatesCreated++ : invoicesCreated++; }
         } else if (action.action === "save_item") {
           onAction(action); itemsSaved++;
@@ -2219,7 +2219,7 @@ export default function App() {
     setData(d => ({ ...d, expenses: (d.expenses||[]).filter(e => e.id !== id) }));
   };
 
-  const handleGlobalAIAction = (parsed) => {
+  const handleGlobalAIAction = async (parsed) => {
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
       const year = new Date(inv.date || today()).getFullYear();
@@ -2256,12 +2256,11 @@ export default function App() {
     }
     if (parsed.action === "create_client") {
       const c = parsed.client || {};
-      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", phone: c.phone || "", fax: c.fax || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
-      return db.insertClient(form).then(id => {
-        const newClient = { ...form, id };
-        setData(d => ({ ...d, clients: [...d.clients, newClient] }));
-        return newClient;
-      });
+      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", fax: c.fax || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
+      const id = await db.insertClient(form);
+      const newClient = { ...form, id };
+      setData(d => ({ ...d, clients: [...d.clients, newClient] }));
+      return newClient;
     }
   };
 
