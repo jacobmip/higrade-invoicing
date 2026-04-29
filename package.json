@@ -8,6 +8,8 @@
     "preview": "vite preview",
     "sync": "vite build && cap sync",
     "ios": "vite build && cap sync ios && cap open ios",
+    "ios:live": "CAPACITOR_CONFIG=capacitor.config.dev.json cap sync ios --config capacitor.config.dev.json && CAPACITOR_CONFIG=capacitor.config.dev.json cap open ios",
+    "ios:live:reset": "cap sync ios && cap open ios",
     "android": "vite build && cap sync android && cap open android",
     "android:apk": "vite build && cap sync android && cd android && ./gradlew assembleDebug",
     "android:release": "vite build && cap sync android && cd android && ./gradlew assembleRelease"

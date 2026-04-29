@@ -7,6 +7,10 @@ export default defineConfig({
   // file:// — absolute '/assets/...' paths fail in native shells.
   base: './',
   server: {
+    // Listen on all network interfaces so live-reload works from a phone
+    // on the same Wi-Fi (Capacitor dev server).
+    host: true,
+    port: 5173,
     proxy: {
       '/api': 'http://localhost:3001'
     }

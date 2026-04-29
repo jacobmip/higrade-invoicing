@@ -17,7 +17,18 @@ function isNative() {
   return false;
 }
 
-export const API_BASE = isNative() ? PROD_API : '';
+// In Capacitor live-reload mode the app loads from a LAN URL like
+// http://192.168.x.x:5173 instead of capacitor://. There's no `/api`
+// serverless backend on the dev server, so route those calls to Vercel.
+function isLiveReload() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  if (!host) return false;
+  // Private LAN ranges + non-localhost dev hosts
+  return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
+}
+
+export const API_BASE = (isNative() || isLiveReload()) ? PROD_API : '';
 
 export function api(path) {
   if (!path.startsWith('/')) path = '/' + path;

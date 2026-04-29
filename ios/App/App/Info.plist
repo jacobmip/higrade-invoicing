@@ -45,5 +45,16 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Allow plain-HTTP loads to LAN dev server during Capacitor live-reload.
+	     Production traffic still goes to https://higrade-invoicing.vercel.app via apiBase. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>HI Grade Invoicing connects to a development server on your local network during testing.</string>
 </dict>
 </plist>
