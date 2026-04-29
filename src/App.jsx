@@ -159,7 +159,8 @@ RULES:
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
 - Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
 - For plain questions or conversation, reply in plain text without JSON.
-- When asked to create multiple invoices or estimates, return a JSON array containing one action object per document. Example: [{"action":"create_invoice",...},{"action":"create_invoice",...}]`;
+- When asked to create multiple invoices or estimates, return a JSON array containing one action object per document. Example: [{"action":"create_invoice",...},{"action":"create_estimate",...}]
+- IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.`;
 }
 
 async function callAI(messages, systemPrompt = null) {
@@ -612,7 +613,9 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
       const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history, buildGlobalSystemPrompt(data));
+      console.log('[AI reply]', reply);
       const actions = extractActionsJSON(reply);
+      console.log('[AI actions]', actions);
 
       if (actions.length === 0) {
         setMsgs(p => [...p, { role: "assistant", text: reply }]);
@@ -640,7 +643,11 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
             setMsgs(p => [...p, { role: "assistant", text: action.summary || `Ready to send ${action.invoiceId}.`, card: { type: "confirm_email", invoiceId: action.invoiceId, email: client.email, total: calcTotals(inv).total } }]);
           }
         } else if (action.action === "estimate") {
-          setMsgs(p => [...p, { role: "assistant", text: action.summary || "Here's the estimate:", estimate: action }]);
+          // AI used preview format instead of create_estimate — normalize and save
+          console.log('[AI] "estimate" action received in GlobalAI — converting to create_estimate');
+          const normalized = { action: "create_estimate", invoice: { client: action.client || "", date: today(), dueDate: today(), items: action.items || [], notes: action.notes || "", tax: TAX_RATE, discount: 0 }, summary: action.summary };
+          const newInv = await onAction(normalized);
+          if (newInv) { createdDocs.push(newInv); estimatesCreated++; }
         } else if (action.action === "create_client") {
           const newClient = await onAction(action);
           if (newClient) {
@@ -2299,6 +2306,7 @@ export default function App() {
   };
 
   const handleGlobalAIAction = async (parsed) => {
+    console.log('[handleGlobalAIAction]', parsed.action, parsed);
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
       const year = new Date(inv.date || today()).getFullYear();
