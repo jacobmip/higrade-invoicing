@@ -5,6 +5,7 @@ import * as db from './db.js';
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
 const NAVY2 = "#0f2040";
+const CACHE_KEY = "higrade_v6";
 const LIGHT = "#f4f6fa";
 const TAX_RATE = 4.712;
 
@@ -2245,13 +2246,24 @@ export default function App() {
 
   useEffect(() => {
     db.loadAll()
-      .then(d => { setData(d); setDbLoading(false); })
+      .then(d => {
+        setData(d);
+        setDbLoading(false);
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch {}
+      })
       .catch(e => {
-        console.error('Failed to load data from Supabase:', e);
-        setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 });
+        console.error('Supabase load failed:', e);
+        try {
+          const raw = localStorage.getItem(CACHE_KEY);
+          if (raw) { setData(JSON.parse(raw)); } else { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 }); }
+        } catch { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 }); }
         setDbLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (!dbLoading) try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch {}
+  }, [data, dbLoading]);
 
   const addExpense = async (exp) => {
     const id = await db.upsertExpense(exp);
@@ -2278,7 +2290,7 @@ export default function App() {
         newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
         return { ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 };
       });
-      db.upsertInvoice(newInvoice, true).catch(console.error);
+      await db.upsertInvoice(newInvoice, true);
       return newInvoice;
     }
     if (parsed.action === "add_items") {
@@ -2286,7 +2298,7 @@ export default function App() {
       if (inv) {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
         setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
-        db.upsertInvoice(updated, false).catch(console.error);
+        await db.upsertInvoice(updated, false);
       }
     }
     if (parsed.action === "save_item") {
@@ -2295,11 +2307,10 @@ export default function App() {
       if (existing) {
         const updated = { ...existing, price: item.price, category: item.category || existing.category };
         setData(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
-        db.updateSavedItem(updated).catch(console.error);
+        await db.updateSavedItem(updated);
       } else {
-        db.insertSavedItem({ category: item.category || "Custom", name: item.name, price: item.price })
-          .then(id => setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] })))
-          .catch(console.error);
+        const id = await db.insertSavedItem({ category: item.category || "Custom", name: item.name, price: item.price });
+        setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] }));
       }
     }
     if (parsed.action === "create_client") {
