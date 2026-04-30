@@ -3390,7 +3390,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", overflowX: "hidden", paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
       {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
