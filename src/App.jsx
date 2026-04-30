@@ -2203,7 +2203,7 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
   };
 
   return (
-    <div style={{ minHeight: "60vh" }}>
+    <div>
       <div
         ref={trackRef}
         onScroll={onScroll}
@@ -2214,6 +2214,7 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
           scrollSnapType: "x mandatory",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
+          minHeight: "calc(100vh - 280px)",
         }}
       >
         {TABS.map(key => (
@@ -2226,6 +2227,7 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
               scrollSnapStop: "always",
               padding: "12px 12px 0",
               boxSizing: "border-box",
+              minHeight: "calc(100vh - 280px)",
             }}
           >
             {renderColumn(key)}
@@ -2350,7 +2352,7 @@ function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
   };
 
   return (
-    <div style={{ minHeight: "60vh" }}>
+    <div>
       <div
         ref={trackRef}
         onScroll={onScroll}
@@ -2361,6 +2363,7 @@ function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
           scrollSnapType: "x mandatory",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
+          minHeight: "calc(100vh - 280px)",
         }}
       >
         {TABS.map(key => (
@@ -2373,6 +2376,7 @@ function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
               scrollSnapStop: "always",
               padding: "12px 12px 0",
               boxSizing: "border-box",
+              minHeight: "calc(100vh - 280px)",
             }}
           >
             {renderColumn(key)}
