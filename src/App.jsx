@@ -5,6 +5,7 @@ import * as db from './db.js';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
+import * as backup from './backup.js';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -328,6 +329,7 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     print:     <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/><line x1="9" y1="17" x2="15" y2="17"/></svg>,
     swap:      <svg {...p}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>,
     history:   <svg {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg>,
+    settings:  <svg {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
   };
   return icons[name] || null;
 };
@@ -3518,6 +3520,162 @@ function ReportsTab({ invoices, expenses }) {
   );
 }
 
+// ─── Settings Tab (Backup / Restore) ───────────────────────────────────────────
+function SettingsTab({ onAfterRestore }) {
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
+  const [importMode, setImportMode] = useState("merge"); // 'merge' | 'replace'
+  const [pendingFile, setPendingFile] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleExport = async () => {
+    setBusy(true); setStatus(null);
+    try {
+      const r = await backup.downloadBackup();
+      setStatus({ kind: "ok", text: `Exported ${r.rows} rows (${(r.bytes/1024).toFixed(1)} KB). Save the JSON file somewhere safe — iCloud Drive, Files app, or email it to yourself.` });
+    } catch (e) {
+      setStatus({ kind: "err", text: "Export failed: " + (e.message || e) });
+    }
+    setBusy(false);
+  };
+
+  const handleFilePicked = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow reselecting same file
+    if (!file) return;
+    try {
+      const snap = await backup.readBackupFile(file);
+      setPendingFile({ file, snap });
+      setShowConfirm(true);
+    } catch (err) {
+      setStatus({ kind: "err", text: err.message });
+    }
+  };
+
+  const handleConfirmRestore = async () => {
+    if (!pendingFile) return;
+    setShowConfirm(false);
+    setBusy(true); setStatus(null);
+    try {
+      const r = await backup.importBackup(pendingFile.snap, { mode: importMode });
+      const total = Object.values(r.restored).reduce((s, n) => s + n, 0);
+      const errs = r.errors.length;
+      setStatus({
+        kind: errs ? "err" : "ok",
+        text: errs
+          ? `Restored ${total} rows. ${errs} table${errs !== 1 ? "s" : ""} had errors: ${r.errors.map(e => e.table + " (" + e.message + ")").join("; ")}`
+          : `Restored ${total} rows successfully. Reloading…`,
+      });
+      if (!errs && onAfterRestore) setTimeout(onAfterRestore, 1200);
+    } catch (e) {
+      setStatus({ kind: "err", text: "Restore failed: " + (e.message || e) });
+    }
+    setBusy(false);
+    setPendingFile(null);
+  };
+
+  const card = { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(10,22,40,0.06)" };
+  const heading = { fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, color: "#8899bb", textTransform: "uppercase", marginBottom: 8 };
+  const body = { fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 12 };
+
+  return (
+    <div style={{ padding: "16px", paddingBottom: 100 }}>
+      <div style={card}>
+        <div style={heading}>Backup</div>
+        <div style={body}>
+          Download every client, invoice, line item, payment, expense, and saved item as a single JSON file you can keep on iCloud, your Mac mini, or your NAS. Re-import it anytime to restore everything.
+        </div>
+        <button onClick={handleExport} disabled={busy} style={{ ...S.btn("primary"), width: "100%" }}>
+          {busy ? "Working…" : "Export everything to JSON"}
+        </button>
+      </div>
+
+      <div style={card}>
+        <div style={heading}>Restore</div>
+        <div style={body}>
+          Pick a previously-exported backup file. <b>Merge</b> adds rows from the backup without deleting anything new. <b>Replace</b> wipes the cloud database and reinstates the backup exactly — use only if data is corrupted or you want to roll back.
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {[
+            { id: "merge",   label: "Merge"   },
+            { id: "replace", label: "Replace" },
+          ].map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => setImportMode(opt.id)}
+              style={{
+                flex: 1, padding: "10px 12px", borderRadius: 8, cursor: "pointer",
+                border: importMode === opt.id ? `2px solid ${ORANGE}` : "1.5px solid #dde2ee",
+                background: importMode === opt.id ? "#fff5ef" : "#fff",
+                color: importMode === opt.id ? ORANGE : "#445",
+                fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif",
+                letterSpacing: 1, textTransform: "uppercase", fontSize: 13,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={handleFilePicked} style={{ display: "none" }} />
+        <button onClick={() => fileInputRef.current?.click()} disabled={busy} style={{ ...S.btn("primary"), width: "100%" }}>
+          {busy ? "Working…" : "Choose backup file…"}
+        </button>
+      </div>
+
+      {status && (
+        <div style={{
+          ...card,
+          background: status.kind === "ok" ? "#eaf6ee" : "#fdecec",
+          color: status.kind === "ok" ? "#1f6f3a" : "#8a1f1f",
+          border: `1px solid ${status.kind === "ok" ? "#bfe2c8" : "#f3c4c4"}`,
+        }}>
+          {status.text}
+        </div>
+      )}
+
+      <div style={{ ...card, background: "#f5f7fb", color: "#556" }}>
+        <div style={heading}>Tip</div>
+        <div style={{ ...body, marginBottom: 0 }}>
+          For peace of mind, export a fresh backup at the end of every workday and keep the last few. The file is portable Postgres-shape JSON, so it stays useful if you ever migrate the app off Supabase to your own NAS / VPS.
+        </div>
+      </div>
+
+      {showConfirm && pendingFile && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.6)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: "100%", maxWidth: 380, boxSizing: "border-box" }}>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, marginBottom: 6 }}>
+              {importMode === "replace" ? "Replace all data?" : "Merge backup into current data?"}
+            </div>
+            <div style={{ fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 16 }}>
+              {(() => {
+                const t = pendingFile.snap.tables || {};
+                const rows = Object.values(t).reduce((s, r) => s + (r?.length || 0), 0);
+                const exported = pendingFile.snap.exportedAt ? new Date(pendingFile.snap.exportedAt).toLocaleString() : "unknown date";
+                return `Backup contains ${rows} rows, exported ${exported}.`;
+              })()}
+              {importMode === "replace" && <div style={{ marginTop: 8, color: "#8a1f1f", fontWeight: 600 }}>This will delete every existing row before importing. Cannot be undone.</div>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => { setShowConfirm(false); setPendingFile(null); }} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+              <button
+                onClick={handleConfirmRestore}
+                style={{
+                  ...S.btn("primary"),
+                  flex: 2,
+                  background: importMode === "replace" ? "#c0392b" : ORANGE,
+                }}
+              >
+                {importMode === "replace" ? "Replace all" : "Merge"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 });
@@ -3944,6 +4102,7 @@ export default function App() {
     { id: "items",    label: "Items",    icon: "items"    },
     { id: "reports",  label: "Reports",  icon: "chart"    },
     { id: "calendar", label: "Calendar", icon: "calendar" },
+    { id: "settings", label: "Settings", icon: "settings" },
   ];
   // Highlight “More” when the active tab lives inside the sheet.
   const isMoreTab = moreNavItems.some(n => n.id === tab);
@@ -4024,6 +4183,7 @@ export default function App() {
           {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
           {tab === "reports"   && <ReportsTab invoices={data.invoices} expenses={data.expenses || []} />}
           {tab === "calendar"  && <CalendarTab invoices={data.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
+          {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} />}
         </>
       )}
 
