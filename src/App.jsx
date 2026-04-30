@@ -530,10 +530,13 @@ function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobal
 // ─── Payment Modal ────────────────────────────────────────────────────────────
 function PaymentModal({ invoice, onClose, onSave }) {
   const t = calcTotals(invoice);
-  const [amount, setAmount] = useState(Math.max(0, t.balance).toFixed(2));
+  const isEstimate = invoice.type === "estimate";
+  // Estimates default the amount field to empty (deposits are usually a
+  // partial sum) — invoices default to the full remaining balance.
+  const [amount, setAmount] = useState(isEstimate ? "" : Math.max(0, t.balance).toFixed(2));
   const [method, setMethod] = useState("Cash");
   const [date, setDate] = useState(today());
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState(isEstimate ? "Down payment" : "");
   const parsedAmt = parseFloat(amount) || 0;
   const newPaid = (invoice.payments || []).reduce((s, p) => s + p.amount, 0) + parsedAmt;
   const willOverpay = newPaid > t.total + 0.01;
@@ -541,15 +544,20 @@ function PaymentModal({ invoice, onClose, onSave }) {
     const payment = { id: Date.now(), amount: parsedAmt, method, date, note: note.trim() };
     const payments = [...(invoice.payments || []), payment];
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-    const newStatus = totalPaid >= t.total - 0.01 ? "paid" : totalPaid > 0 ? "partial" : (invoice.status === "net30" ? "net30" : "outstanding");
+    // For estimates, status stays as-is (deposit doesn't "pay" an estimate —
+    // it just gets carried over when converted). For invoices, flip to
+    // paid/partial as before.
+    const newStatus = isEstimate
+      ? invoice.status
+      : (totalPaid >= t.total - 0.01 ? "paid" : totalPaid > 0 ? "partial" : (invoice.status === "net30" ? "net30" : "outstanding"));
     onSave({ ...invoice, payments, status: newStatus });
     onClose();
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto" }}>
-        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>Record Payment</div>
-        <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.id} · Balance: {fmt(Math.max(0, t.balance))}</div>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>{isEstimate ? "Record Down Payment" : "Record Payment"}</div>
+        <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.id} · {isEstimate ? `Estimate Total: ${fmt(t.total)} · Remaining: ${fmt(Math.max(0, t.balance))}` : `Balance: ${fmt(Math.max(0, t.balance))}`}</div>
         <div style={{ marginBottom: 12 }}>
           <label style={S.label}>Amount</label>
           <input type="number" style={{ ...S.input, borderColor: willOverpay ? "#cc4444" : undefined }} value={amount} onChange={e => setAmount(e.target.value)} step="0.01" />
@@ -2022,7 +2030,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
-              {!isEstimate && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> Record Payment</button>}
+              <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
               <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
@@ -2045,7 +2053,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         <div style={{ padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Activity Log</span>
-            {!isEstimate && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> Record Payment</button>}
+            <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
           </div>
           <div style={{ position: "relative" }}>
             {historyEvents.length > 1 && <div style={{ position: "absolute", left: 17, top: 18, bottom: 18, width: 2, background: "#e8ecf4" }} />}
@@ -2065,7 +2073,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           </div>
           {(form.payments || []).length > 0 && (
             <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginTop: 8, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }} data-marker="history-totals">
-              {[["Invoice Total", fmt(t.total), "#222"], ["Total Paid", fmt(t.paid), "#27ae60"], ["Balance Due", fmt(Math.max(0, t.balance)), t.balance <= 0 ? "#27ae60" : ORANGE]].map(([label, val, color]) => (
+              {[[isEstimate ? "Estimate Total" : "Invoice Total", fmt(t.total), "#222"], [isEstimate ? "Down Payment" : "Total Paid", fmt(t.paid), "#27ae60"], [isEstimate ? "Remaining" : "Balance Due", fmt(Math.max(0, t.balance)), t.balance <= 0 ? "#27ae60" : ORANGE]].map(([label, val, color]) => (
                 <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f4f6fa" }}>
                   <span style={{ fontSize: 13, color: "#777" }}>{label}</span>
                   <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color }}>{val}</span>
@@ -3499,20 +3507,40 @@ export default function App() {
     // Both invoices and estimates use the INV#### scheme — the `type` field
     // is what distinguishes them throughout the app.
     const newId = `INV${String(data.nextNum).padStart(4, "0")}`;
+    // Carry payments forward (e.g. a down payment recorded on an estimate
+    // becomes the opening paid balance on the new invoice). Stamp each
+    // copied payment with a fresh id so the DB doesn't see a primary-key
+    // collision against the source document's payment rows.
+    const carriedPayments = (form.payments || []).map(p => ({
+      ...p,
+      id: Date.now() + Math.floor(Math.random() * 100000),
+      note: p.note || (targetType === "invoice" ? "Down payment (from estimate)" : ""),
+    }));
+    const totals = calcTotals(form);
+    const carriedPaid = carriedPayments.reduce((s, p) => s + p.amount, 0);
+    // Status of the new doc:
+    //   estimate → invoice: "paid" if deposit covers it, "partial" if some,
+    //                       "outstanding" if none.
+    //   invoice  → estimate: always "outstanding".
+    const initialStatus = targetType === "invoice"
+      ? (carriedPaid >= totals.total - 0.01 ? "paid" : carriedPaid > 0 ? "partial" : "outstanding")
+      : "outstanding";
     const copy = {
       ...form,
       id: newId,
       type: targetType,
       year,
-      // Reset payment + signature state on the new doc so it starts clean.
-      payments: [],
+      // Carry payments over; reset only signature + scheduling state.
+      payments: carriedPayments,
       signatureData: null,
       signedAt: null,
-      status: targetType === "estimate" ? "outstanding" : "outstanding",
+      status: initialStatus,
       gcalEventId: null,
       gcalDate: null,
       followUpEventId: null,
       followUpDate: null,
+      // Don't carry the convertedToId from the source — the copy is brand new.
+      convertedToId: null,
       notes: form.notes ? form.notes : "",
     };
     // Mark the source as converted (estimate → invoice or invoice → estimate)
