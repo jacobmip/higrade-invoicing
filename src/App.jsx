@@ -1675,7 +1675,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
-  const [saveToProfile, setSaveToProfile] = useState(false);
+  // Working draft of the client record while editing inline. The full client
+  // shape (name/email/phone/addresses[]/billingAddress) so we can reuse the
+  // same ClientEditFields component the Clients page uses. Only saved on
+  // Done so the user can cancel out by collapsing the editor.
+  const [clientDraft, setClientDraft] = useState(null);
+  const [savingClient, setSavingClient] = useState(false);
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sending, setSending] = useState(false);
@@ -2042,9 +2047,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Save button now means "save and exit". Auto-save already handles the
   // persistence on its own — we just flush any pending change and close.
   const handleSave = async () => {
-    if (saveToProfile && selectedClient && effectiveClientInfo) {
-      try { await onUpdateClient?.({ ...effectiveClientInfo, id: selectedClient.id }); } catch (e) { console.error('Failed to update client profile:', e); }
-    }
     if (onAutoSave) {
       await flushAutoSaveRef.current();
       onCancel?.();
@@ -2238,7 +2240,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                     billingAddress: c.billingAddress || null,
                   }));
                   setEditingClient(false);
-                  setSaveToProfile(false);
+                  setClientDraft(null);
                 }}
                 onSave={async (newClient) => {
                   if (!onCreateClient) return null;
@@ -2256,7 +2258,36 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                     {effectiveClientInfo?.email && <span style={{ fontSize: 12, color: "#999" }}>{effectiveClientInfo.email}</span>}
                   </div>
                 </div>
-                <button onClick={() => setEditingClient(true)} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
+                <button onClick={() => {
+                  // Seed the draft from the selected client (or, when only an
+                  // ad-hoc clientInfo exists, from that). This keeps the
+                  // working state separate so the user can cancel without
+                  // dirtying the invoice.
+                  if (selectedClient) {
+                    setClientDraft({
+                      ...emptyClient(),
+                      ...selectedClient,
+                      addresses: Array.isArray(selectedClient.addresses) ? [...selectedClient.addresses] : [],
+                    });
+                  } else if (effectiveClientInfo) {
+                    setClientDraft({
+                      ...emptyClient(),
+                      name: effectiveClientInfo.name || "",
+                      email: effectiveClientInfo.email || "",
+                      phone: effectiveClientInfo.phone || "",
+                      addresses: (effectiveClientInfo.address1 || effectiveClientInfo.address2 || effectiveClientInfo.address3) ? [{
+                        id: newAddressId(),
+                        label: "Primary",
+                        line1: effectiveClientInfo.address1 || "",
+                        line2: effectiveClientInfo.address2 || "",
+                        line3: effectiveClientInfo.address3 || "",
+                      }] : [],
+                    });
+                  } else {
+                    setClientDraft(emptyClient());
+                  }
+                  setEditingClient(true);
+                }} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
               </div>
             )}
             {selectedClient && !editingClient && clientAddresses.length > 1 && (
@@ -2296,19 +2327,68 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 </select>
               </div>
             )}
-            {selectedClient && editingClient && (
+            {editingClient && clientDraft && (
               <div style={{ background: "#fff", borderRadius: 8, padding: "14px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
-                {[{ k: "name", label: "Name" }, { k: "email", label: "Email", type: "email" }, { k: "phone", label: "Phone", type: "tel" }, { k: "address1", label: "Address" }, { k: "address2", label: "City / State" }, { k: "address3", label: "ZIP" }].map(({ k, label, type }) => (
-                  <div key={k} style={{ marginBottom: 9 }}>
-                    <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
-                    <input style={S.input} type={type || "text"} value={effectiveClientInfo?.[k] || ""} onChange={e => setClientInfoField(k, e.target.value)} />
-                  </div>
-                ))}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10, borderTop: "1px solid #f0f2f8", marginTop: 4 }}>
-                  <input type="checkbox" id="saveToProfile" checked={saveToProfile} onChange={e => setSaveToProfile(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer", flexShrink: 0 }} />
-                  <label htmlFor="saveToProfile" style={{ fontSize: 12, color: "#555", cursor: "pointer", lineHeight: 1.4 }}>Save changes to client profile</label>
+                <ClientEditFields value={clientDraft} onChange={setClientDraft} compact />
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingClient(false); setClientDraft(null); }}
+                    style={{ ...S.btn("ghost"), fontSize: 13, flex: 1, padding: "9px 0" }}
+                    disabled={savingClient}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    disabled={savingClient}
+                    onClick={async () => {
+                      // Persist edits to the client profile (creating one
+                      // if this was an ad-hoc client). Then re-sync the
+                      // invoice's bill-to display + job-site dropdown so
+                      // the new property shows up immediately.
+                      const cleaned = normalizeClientDraft({ ...clientDraft, name: clientDraft.name || form.client || "" });
+                      setSavingClient(true);
+                      try {
+                        let saved = cleaned;
+                        if (selectedClient?.id) {
+                          await onUpdateClient?.({ ...cleaned, id: selectedClient.id });
+                          saved = { ...cleaned, id: selectedClient.id };
+                        } else if (cleaned.name && onCreateClient) {
+                          const created = await onCreateClient(cleaned);
+                          if (created?.id) saved = { ...cleaned, id: created.id };
+                        }
+                        // Pick a job-site address to keep the invoice
+                        // pointed at: prefer the currently-selected one if
+                        // it still exists, otherwise the first address.
+                        const addrs = saved.addresses || [];
+                        const stillThere = form.jobAddressId && addrs.find(a => a.id === form.jobAddressId);
+                        const pickedJob = stillThere || addrs[0] || null;
+                        setForm(f => ({
+                          ...f,
+                          client: saved.name || f.client,
+                          jobAddressId: pickedJob?.id || null,
+                          jobAddress: pickedJob || null,
+                          billingAddress: saved.billingAddress || null,
+                          clientInfo: {
+                            name: saved.name || f.clientInfo?.name || "",
+                            email: saved.email || "",
+                            phone: saved.phone || "",
+                            address1: pickedJob?.line1 || "",
+                            address2: pickedJob?.line2 || "",
+                            address3: pickedJob?.line3 || "",
+                          },
+                        }));
+                        setEditingClient(false);
+                        setClientDraft(null);
+                      } catch (e) {
+                        console.error('Failed to save client profile:', e);
+                        alert('Could not save client. Please try again.');
+                      } finally {
+                        setSavingClient(false);
+                      }
+                    }}
+                    style={{ ...S.btn("primary"), fontSize: 13, flex: 1, padding: "9px 0", opacity: savingClient ? 0.7 : 1 }}
+                  >{savingClient ? "Saving…" : "Done"}</button>
                 </div>
-                <button onClick={() => setEditingClient(false)} style={{ ...S.btn("ghost"), fontSize: 12, marginTop: 10, width: "100%", padding: "7px 0" }}>Done</button>
               </div>
             )}
           </div>
@@ -2950,6 +3030,94 @@ function emptyClient() {
   };
 }
 
+// Shared client editor — used by both ClientsTab and InvoiceForm so adding a
+// new property from inside an invoice goes through the same UI as editing on
+// the Clients page. Pure controlled component: render the working draft and
+// emit changes upward via `onChange`.
+function ClientEditFields({ value, onChange, compact }) {
+  const form = value || emptyClient();
+  const setField = (k, v) => onChange({ ...form, [k]: v });
+  const addresses = Array.isArray(form.addresses) ? form.addresses : [];
+  const setAddrField = (idx, field, val) => {
+    const next = [...addresses];
+    next[idx] = { ...next[idx], [field]: val };
+    onChange({ ...form, addresses: next });
+  };
+  const addAddress = () => {
+    onChange({ ...form, addresses: [...addresses, { id: newAddressId(), label: "", line1: "", line2: "", line3: "" }] });
+  };
+  const removeAddress = (idx) => {
+    onChange({ ...form, addresses: addresses.filter((_, i) => i !== idx) });
+  };
+  const billing = form.billingAddress || {};
+  const setBillingField = (field, val) => {
+    onChange({ ...form, billingAddress: { ...billing, [field]: val } });
+  };
+  // In compact mode (used inside the invoice form) we drop the heavier
+  // padding and tighten the section labels so the editor fits cleanly
+  // inside the bill-to card.
+  const sectionLabelStyle = { fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" };
+  return (
+    <div>
+      {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"], ["fax", "Fax"]].map(([k, l]) => (
+        <div key={k} style={{ marginBottom: compact ? 9 : 12 }}>
+          <label style={{ ...S.label, marginBottom: compact ? 3 : 4 }}>{l}</label>
+          <input style={S.input} value={form[k] || ""} onChange={e => setField(k, e.target.value)} type={k === "email" || k === "email2" ? "email" : "text"} />
+        </div>
+      ))}
+
+      {/* Job sites — for property managers, multiple sites per client */}
+      <div style={{ marginTop: compact ? 14 : 18, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={sectionLabelStyle}>Job Sites / Properties</span>
+        <button type="button" onClick={addAddress} style={{ ...S.btn("primary"), padding: "6px 12px", fontSize: 12 }}>+ Add</button>
+      </div>
+      {addresses.length === 0 && (
+        <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 12, color: "#888", marginBottom: 12 }}>
+          No job sites yet. Tap + Add to enter the first property address. For a property manager, add one entry per property and give each a nickname (e.g. “Kaimuki Duplex”).
+        </div>
+      )}
+      {addresses.map((a, idx) => (
+        <div key={a.id || idx} style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <span style={{ ...sectionLabelStyle, letterSpacing: 1 }}>Property {idx + 1}</span>
+            <button type="button" onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
+          </div>
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Address Line 1" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Address Line 2 (optional)" />
+          <input style={S.input} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, Zip" />
+        </div>
+      ))}
+
+      {/* Billing address — single, separate from job sites */}
+      <div style={{ marginTop: compact ? 14 : 18, marginBottom: 8 }}>
+        <span style={sectionLabelStyle}>Billing Address</span>
+      </div>
+      <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
+        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Address Line 1" />
+        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Address Line 2 (optional)" />
+        <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, Zip" />
+      </div>
+    </div>
+  );
+}
+
+// Normalize a draft client before save: ensure every address has an id and
+// fall back to empty strings for missing label/line fields.
+function normalizeClientDraft(draft) {
+  return {
+    ...draft,
+    addresses: (draft.addresses || []).map(a => ({
+      id: a.id || newAddressId(),
+      label: a.label || "",
+      line1: a.line1 || "",
+      line2: a.line2 || "",
+      line3: a.line3 || "",
+    })),
+  };
+}
+
 function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, openClientId, onOpenedClient }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
@@ -2986,17 +3154,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, open
 
   const save = () => {
     // Make sure each address has an id and a label so dropdowns work later.
-    const cleaned = {
-      ...form,
-      addresses: (form.addresses || []).map(a => ({
-        id: a.id || newAddressId(),
-        label: a.label || "",
-        line1: a.line1 || "",
-        line2: a.line2 || "",
-        line3: a.line3 || "",
-      })),
-    };
-    onSave(cleaned, editId);
+    onSave(normalizeClientDraft(form), editId);
     // After save, slide back to detail (or list for new clients).
     if (editId === "new") { setMode("list"); setEditId(null); }
     else { setDetailId(editId); setMode("detail"); setEditId(null); }
@@ -3009,70 +3167,13 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, open
 
   // ─── Edit mode ──────────────────────────────────────────────────────────
   if (mode === "edit") {
-    const setAddrField = (idx, field, val) => {
-      setForm(f => {
-        const next = [...(f.addresses || [])];
-        next[idx] = { ...next[idx], [field]: val };
-        return { ...f, addresses: next };
-      });
-    };
-    const addAddress = () => {
-      setForm(f => ({ ...f, addresses: [...(f.addresses || []), { id: newAddressId(), label: "", line1: "", line2: "", line3: "" }] }));
-    };
-    const removeAddress = (idx) => {
-      setForm(f => ({ ...f, addresses: (f.addresses || []).filter((_, i) => i !== idx) }));
-    };
-    const setBillingField = (field, val) => {
-      setForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), [field]: val } }));
-    };
-    const billing = form.billingAddress || {};
     return (
       <div style={{ padding: 16, paddingBottom: 40 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
           <button onClick={() => { setMode(detailId ? "detail" : "list"); setEditId(null); }} style={{ background: "none", border: "none", cursor: "pointer" }}><Icon name="back" size={22} /></button>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{editId === "new" ? "New Client" : "Edit Client"}</span>
         </div>
-        {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"], ["fax", "Fax"]].map(([k, l]) => (
-          <div key={k} style={{ marginBottom: 12 }}>
-            <label style={S.label}>{l}</label>
-            <input style={S.input} value={form[k] || ""} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} type={k === "email" || k === "email2" ? "email" : "text"} />
-          </div>
-        ))}
-
-        {/* Job sites — for property managers, multiple sites per client */}
-        <div style={{ marginTop: 18, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Job Sites / Properties</span>
-          <button onClick={addAddress} style={{ ...S.btn("primary"), padding: "6px 12px", fontSize: 12 }}>+ Add</button>
-        </div>
-        {(form.addresses || []).length === 0 && (
-          <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 12, color: "#888", marginBottom: 12 }}>
-            No job sites yet. Tap + Add to enter the first property address. For a property manager, add one entry per property and give each a nickname (e.g. “Kaimuki Duplex”).
-          </div>
-        )}
-        {(form.addresses || []).map((a, idx) => (
-          <div key={a.id || idx} style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Property {idx + 1}</span>
-              <button onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
-            </div>
-            <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
-            <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Address Line 1" />
-            <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Address Line 2 (optional)" />
-            <input style={S.input} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, Zip" />
-          </div>
-        ))}
-
-        {/* Billing address — single, separate from job sites */}
-        <div style={{ marginTop: 18, marginBottom: 8 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</span>
-        </div>
-        <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 10 }}>
-          <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
-          <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Address Line 1" />
-          <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Address Line 2 (optional)" />
-          <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, Zip" />
-        </div>
-
+        <ClientEditFields value={form} onChange={setForm} />
         <button onClick={save} style={{ ...S.btn("primary"), width: "100%", marginTop: 12, fontSize: 16, padding: 14 }}>Save Client</button>
         <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
           <button onClick={() => alert("Import from Contacts \u2014 coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Import from Contacts</button>
