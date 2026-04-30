@@ -110,10 +110,16 @@ function statusDisplay(inv) {
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
 
 function buildGlobalSystemPrompt(data) {
-  const invoiceLines = data.invoices.slice(0, 20).map(inv => {
+  // Split docs by type so invoices and estimates aren't lumped together in
+  // the model's context. Each list is capped at 20 to keep the prompt small.
+  const realInvoices = data.invoices.filter(i => i.type !== "estimate");
+  const realEstimates = data.invoices.filter(i => i.type === "estimate");
+  const fmtLine = (inv) => {
     const t = calcTotals(inv);
     return `  ${inv.id} | ${inv.client} | ${fmt(t.total)} | ${inv.status} | ${inv.date}`;
-  }).join("\n");
+  };
+  const invoiceLines = realInvoices.slice(0, 20).map(fmtLine).join("\n");
+  const estimateLines = realEstimates.slice(0, 20).map(fmtLine).join("\n");
   const clientLines = data.clients.map(c =>
     `  ${c.name}${c.email ? " | " + c.email : ""}${c.phone ? " | " + c.phone : ""}`
   ).join("\n");
@@ -121,8 +127,13 @@ function buildGlobalSystemPrompt(data) {
 
   return `You are Jake's AI assistant for HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You have full control over the app.
 
-CURRENT INVOICES (ID | Client | Total | Status | Date):
+COUNTS: ${realInvoices.length} invoices, ${realEstimates.length} estimates, ${data.clients.length} clients. Invoices and estimates are SEPARATE — never combine the totals.
+
+CURRENT INVOICES (ID | Client | Total | Status | Date) — these are billable invoices, NOT estimates:
 ${invoiceLines || "  (none)"}
+
+CURRENT ESTIMATES (ID | Client | Total | Status | Date) — these are quotes/bids, NOT invoices:
+${estimateLines || "  (none)"}
 
 CLIENTS (Name | Email | Phone):
 ${clientLines || "  (none)"}
@@ -1107,7 +1118,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
         <div style={{ flex: 1 }}>
           <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, letterSpacing: 1 }}>AI ASSISTANT</div>
-          <div style={{ color: "#8899bb", fontSize: 11 }}>{data.invoices.length} invoices · {data.clients.length} clients</div>
+          <div style={{ color: "#8899bb", fontSize: 11 }}>{data.invoices.filter(i => i.type !== "estimate").length} invoices · {data.invoices.filter(i => i.type === "estimate").length} estimates · {data.clients.length} clients</div>
         </div>
         <button onClick={toggleTts} title={ttsOn ? "Mute" : "Unmute"} style={{ width: 34, height: 34, borderRadius: 8, border: "none", background: ttsOn ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={ttsOn ? "speaker" : "speakerOff"} size={16} color={ttsOn ? "#fff" : "#556688"} /></button>
         <button onClick={() => { if (confirm("Clear all chat history?")) { window.speechSynthesis?.cancel(); onResetChat?.(); } }} title="Clear chat" style={{ width: 34, height: 34, borderRadius: 8, border: "none", background: "rgba(255,255,255,0.04)", cursor: "pointer", color: "#8899bb", fontSize: 11, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1 }}>CLR</button>
@@ -3895,7 +3906,14 @@ export default function App() {
       const raw = localStorage.getItem("higrade_global_ai_chat");
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) return parsed;
+        if (Array.isArray(parsed) && parsed.length) {
+          // Migration: if the only message is an old greeting, drop it so the
+          // new greeting gets seeded fresh. Real conversation history is kept.
+          if (parsed.length === 1 && parsed[0].role === "assistant" && /I can see \d+ invoices and \d+ clients/.test(parsed[0].text || "")) {
+            return null;
+          }
+          return parsed;
+        }
       }
     } catch {}
     return null; // null means "not yet seeded — seed once data is available"
@@ -3967,9 +3985,9 @@ export default function App() {
   // history is preserved across closes and reloads.
   useEffect(() => {
     if (globalAIMsgs == null && !dbLoading) {
-      setGlobalAIMsgs([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
+      setGlobalAIMsgs([{ role: "assistant", text: "Aloha Jake. What can I help you with today?" }]);
     }
-  }, [globalAIMsgs, dbLoading, data.invoices.length, data.clients.length]);
+  }, [globalAIMsgs, dbLoading]);
 
   // Persist the global AI chat history to localStorage on every change so it
   // survives page reloads. Cap at 200 messages to keep the payload small.
@@ -3983,7 +4001,7 @@ export default function App() {
 
   // Reset the global AI chat: clears history and restores the greeting.
   const resetGlobalAIChat = () => {
-    setGlobalAIMsgs([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
+    setGlobalAIMsgs([{ role: "assistant", text: "Aloha Jake. What can I help you with today?" }]);
   };
 
   const addExpense = async (exp) => {
