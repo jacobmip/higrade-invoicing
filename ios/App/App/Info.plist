@@ -56,5 +56,15 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>HI Grade Invoicing connects to a development server on your local network during testing.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>HI Grade Invoicing imports contacts so you can quickly add them as clients on invoices and estimates.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>HI Grade Invoicing uses the camera to capture receipt photos for expense tracking.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>HI Grade Invoicing uses the photo library to attach receipt images to expenses.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>HI Grade Invoicing uses the microphone for voice input to the AI assistant.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>HI Grade Invoicing converts your voice to text for the AI assistant.</string>
 </dict>
 </plist>

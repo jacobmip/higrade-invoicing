@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
 import { api } from './apiBase.js';
+import { canImportContacts, pickContact } from './contacts.js';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -598,7 +599,7 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
 }
 
 // ─── Global AI Modal ──────────────────────────────────────────────────────────
-function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
+function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const [msgs, setMsgs] = useState([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -781,7 +782,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc }) {
               {m.card?.type === "email_sent" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}><Icon name="check" size={15} color="#27ae60" /><span style={{ fontSize: 12, fontWeight: 600, color: "#27ae60" }}>Sent!</span></div>}
               {m.card?.type === "email_cancelled" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px" }}><span style={{ fontSize: 12, color: "#aaa" }}>Email cancelled</span></div>}
               {m.card?.type === "email_failed" && <div style={{ marginTop: 10, background: "#fff0ee", borderRadius: 8, padding: "10px 12px" }}><span style={{ fontSize: 12, color: "#cc4444" }}>Failed: {m.card.error}</span></div>}
-              {m.card?.type === "created_client" && <div style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff" }}><Icon name="person" size={16} color="#2980b9" /><div><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#2980b9" }}>{m.card.client?.name}</div>{m.card.client?.email && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.email}</div>}{m.card.client?.phone && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.phone}</div>}</div></div>}
+              {m.card?.type === "created_client" && <div onClick={() => onOpenClient?.(m.card.client)} style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff", cursor: "pointer" }}><Icon name="person" size={16} color="#2980b9" /><div style={{ flex: 1 }}><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#2980b9" }}>{m.card.client?.name}</div>{m.card.client?.email && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.email}</div>}{m.card.client?.phone && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.phone}</div>}</div><div style={{ fontSize: 11, color: "#2980b9", fontWeight: 600 }}>Open →</div></div>}
             </div>
           </div>
         ))}
@@ -1011,8 +1012,137 @@ function PDFPreview({ form, clients }) {
   );
 }
 
-// ─── Invoice Form ─────────────────────────────────────────────────────────────
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient, data, onAIAction }) {
+// ─── Client Picker Modal ──────────────────────────────────────────────────────
+// Bottom-sheet modal for selecting a client on the invoice form.
+// Search, edit, create new, and import from iPhone/Android Contacts.
+function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, onOpenEdit }) {
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newForm, setNewForm] = useState({ name: "", email: "", phone: "", address1: "", address2: "", address3: "" });
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? clients.filter(c => (c.name || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q) || (c.phone || "").toLowerCase().includes(q))
+    : clients;
+  const sorted = [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const handleImport = async () => {
+    setImportError("");
+    if (!canImportContacts()) {
+      setImportError("Contacts import is only available in the iPhone or Android app. Open the installed app to use this.");
+      return;
+    }
+    setImporting(true);
+    try {
+      const c = await pickContact();
+      if (!c) { setImporting(false); return; }
+      // Pre-fill the new-client form with the picked contact, let user confirm + save
+      setNewForm({
+        name: c.name || "",
+        email: c.email || "",
+        email2: c.email2 || "",
+        phone: c.phone || "",
+        address1: c.address1 || "",
+        address2: c.address2 || "",
+        address3: c.address3 || "",
+      });
+      setCreating(true);
+    } catch (e) {
+      setImportError(e.message || "Failed to import");
+    }
+    setImporting(false);
+  };
+
+  const handleSaveNew = async () => {
+    if (!newForm.name?.trim()) { alert("Name is required"); return; }
+    const saved = await onSave(newForm);
+    if (saved) {
+      onSelect(saved);
+      onClose();
+    }
+  };
+
+  if (creating) {
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+        <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", padding: "20px 18px 28px", maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 14, gap: 10 }}>
+            <button onClick={() => setCreating(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={20} /></button>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
+          </div>
+          {[["name", "Name"], ["email", "Email", "email"], ["phone", "Phone", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
+            <div key={k} style={{ marginBottom: 10 }}>
+              <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
+              <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
+            </div>
+          ))}
+          <button onClick={handleSaveNew} style={{ ...S.btn("primary"), width: "100%", marginTop: 8, fontSize: 15, padding: 12 }}>Save Client</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", padding: "18px 16px 24px", maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1 }}>SELECT CLIENT</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
+        </div>
+
+        <input
+          autoFocus
+          style={{ ...S.input, marginBottom: 10 }}
+          placeholder="Search clients…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button onClick={() => { setNewForm({ name: search, email: "", phone: "", address1: "", address2: "", address3: "" }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Icon name="plus" size={14} color="#fff" /> New Client
+          </button>
+          <button onClick={handleImport} disabled={importing} style={{ ...S.btn("navy"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: importing ? 0.6 : 1 }}>
+            <Icon name="person" size={14} color="#fff" /> {importing ? "Opening…" : "From Contacts"}
+          </button>
+        </div>
+
+        {importError && <div style={{ background: "#fff4f0", border: "1px solid #ffd6c2", color: "#a44222", borderRadius: 8, padding: "8px 10px", fontSize: 12, marginBottom: 10 }}>{importError}</div>}
+
+        <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid #eee", margin: "0 -16px", padding: "0 16px" }}>
+          {sorted.length === 0 && (
+            <div style={{ padding: "24px 8px", textAlign: "center", color: "#888", fontSize: 13 }}>
+              {clients.length === 0 ? "No clients yet — create one above." : "No matches."}
+            </div>
+          )}
+          {sorted.map(c => {
+            const isSelected = c.name === selectedName;
+            return (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #f1f3f8", padding: "10px 0", gap: 8 }}>
+                <div onClick={() => { onSelect(c); onClose(); }} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: isSelected ? ORANGE : "#1a1a1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {c.name}{isSelected && <span style={{ fontSize: 11, marginLeft: 8, color: ORANGE }}>✓ selected</span>}
+                  </div>
+                  {(c.phone || c.email) && (
+                    <div style={{ fontSize: 12, color: "#888", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.phone}{c.phone && c.email ? " · " : ""}{c.email}
+                    </div>
+                  )}
+                </div>
+                <button onClick={() => { onOpenEdit(c); onClose(); }} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "6px 8px" }}>Edit</button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, data, onAIAction }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -1028,6 +1158,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showSignature, setShowSignature] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
   const [saveToProfile, setSaveToProfile] = useState(false);
+  const [showClientPicker, setShowClientPicker] = useState(false);
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -1202,16 +1333,31 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           {/* Bill To */}
           <div style={{ padding: "16px 16px 0" }}>
             <label style={S.label}>Bill To</label>
-            <select style={S.input} value={form.client} onChange={e => {
-              const name = e.target.value;
-              const c = clients.find(cl => cl.name === name);
-              setForm(f => ({ ...f, client: name, clientInfo: c ? { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" } : null }));
-              setEditingClient(false);
-              setSaveToProfile(false);
-            }}>
-              <option value="">Select client…</option>
-              {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-            </select>
+            <button
+              type="button"
+              onClick={() => setShowClientPicker(true)}
+              style={{ ...S.input, textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", background: "#fff" }}
+            >
+              <span style={{ color: form.client ? "#1a1a1a" : "#999" }}>{form.client || "Select client…"}</span>
+              <Icon name="chevron" size={16} color="#888" />
+            </button>
+            {showClientPicker && (
+              <ClientPickerModal
+                clients={clients}
+                selectedName={form.client}
+                onClose={() => setShowClientPicker(false)}
+                onSelect={(c) => {
+                  setForm(f => ({ ...f, client: c.name, clientInfo: { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" } }));
+                  setEditingClient(false);
+                  setSaveToProfile(false);
+                }}
+                onSave={async (newClient) => {
+                  if (!onCreateClient) return null;
+                  return await onCreateClient(newClient);
+                }}
+                onOpenEdit={(c) => onOpenClient?.(c)}
+              />
+            )}
             {selectedClient && !editingClient && (
               <div style={{ background: "#fff", borderRadius: 8, padding: "10px 13px", marginTop: 8, border: "1px solid #e8ecf4", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -1595,10 +1741,18 @@ function EstimatesTab({ invoices, onNew, onSelect }) {
 }
 
 // ─── Clients Tab ──────────────────────────────────────────────────────────────
-function ClientsTab({ clients, onSave, onDelete }) {
+function ClientsTab({ clients, onSave, onDelete, openClientId, onOpenedClient }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const startEdit = (c) => { setEditing(c?.id || "new"); setForm(c || { name: "", email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "" }); };
+
+  // Auto-open a client when navigated in via AI assistant or invoice client picker
+  useEffect(() => {
+    if (openClientId == null) return;
+    const c = clients.find(cl => cl.id === openClientId);
+    if (c) startEdit(c);
+    onOpenedClient?.();
+  }, [openClientId]);
   const save = () => { onSave(form, editing); setEditing(null); };
   const handleDelete = () => { if (confirm(`Delete ${form.name}?`)) { onDelete(editing); setEditing(null); } };
 
@@ -2434,6 +2588,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [newDocType, setNewDocType] = useState("invoice");
   const [showGlobalAI, setShowGlobalAI] = useState(false);
+  const [openClientId, setOpenClientId] = useState(null);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
 
   useEffect(() => {
@@ -2677,8 +2832,8 @@ export default function App() {
   ];
 
   return (
-    <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
-      {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} />}
+    <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", overflowX: "hidden", paddingBottom: view === "list" ? 80 : 0 }}>
+      {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
         <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
@@ -2710,12 +2865,19 @@ export default function App() {
             await db.updateClient(updated);
             setData(d => ({ ...d, clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c) }));
           }}
+          onCreateClient={async (form) => {
+            const id = await db.insertClient(form);
+            const newClient = { ...form, id };
+            setData(d => ({ ...d, clients: [...d.clients, newClient] }));
+            return newClient;
+          }}
+          onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
         />
       ) : (
         <>
           {tab === "invoices"  && <InvoiceList invoices={invoices} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
           {tab === "estimates" && <EstimatesTab invoices={estimates} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
-          {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} />}
+          {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
           {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} />}
