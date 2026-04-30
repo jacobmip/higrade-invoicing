@@ -3757,7 +3757,13 @@ export default function App() {
     });
   };
   const deleteExpense = async (id) => {
-    await db.deleteExpense(id);
+    try {
+      await db.deleteExpense(id);
+    } catch (e) {
+      console.error('Delete expense failed:', e);
+      alert('Could not delete this expense: ' + (e.message || e));
+      return;
+    }
     setData(d => ({ ...d, expenses: (d.expenses||[]).filter(e => e.id !== id) }));
   };
 
@@ -3925,7 +3931,13 @@ export default function App() {
   };
 
   const deleteInvoice = async (id) => {
-    await db.deleteInvoice(id);
+    try {
+      await db.deleteInvoice(id);
+    } catch (e) {
+      console.error('Delete invoice failed:', e);
+      alert('Could not delete this invoice: ' + (e.message || e));
+      return;
+    }
     setData(d => ({ ...d, invoices: d.invoices.filter(inv => inv.id !== id) }));
     setView("list"); setSelected(null);
   };
@@ -4093,12 +4105,35 @@ export default function App() {
   };
 
   const removeClient = async (id) => {
-    await db.deleteClient(id);
-    setData(d => ({ ...d, clients: d.clients.filter(c => c.id !== id) }));
+    try {
+      await db.deleteClient(id);
+    } catch (e) {
+      console.error('Delete client failed:', e);
+      // 23503 = foreign key violation. Should be impossible after migration
+      // 007, but keep a friendly message in case someone is on an old schema.
+      if (String(e?.code) === '23503' || /foreign key/i.test(e?.message || '')) {
+        alert('Cannot delete this client — they still have invoices linked to them. Update the database to allow this (run migration 007).');
+      } else {
+        alert('Could not delete this client: ' + (e.message || e));
+      }
+      return;
+    }
+    // Locally clear the client_id on any cached invoices so the list view stays consistent.
+    setData(d => ({
+      ...d,
+      clients: d.clients.filter(c => c.id !== id),
+      invoices: d.invoices.map(inv => inv.client_id === id ? { ...inv, client_id: null } : inv),
+    }));
   };
 
   const removeSavedItem = async (id) => {
-    await db.deleteSavedItem(id);
+    try {
+      await db.deleteSavedItem(id);
+    } catch (e) {
+      console.error('Delete saved item failed:', e);
+      alert('Could not delete this item: ' + (e.message || e));
+      return;
+    }
     setData(d => ({ ...d, savedItems: d.savedItems.filter(i => i.id !== id) }));
   };
 
