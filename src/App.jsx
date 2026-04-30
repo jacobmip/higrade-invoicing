@@ -1145,7 +1145,7 @@ function PDFPreview({ form, clients }) {
           <div>
             <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
             <div style={{ color: ORANGE, fontSize: 10, letterSpacing: 2.5, fontWeight: 700, marginTop: 2, fontFamily: "'Barlow Condensed', sans-serif" }}>LLC · HONOLULU, HI</div>
-            <div style={{ color: "#6677aa", fontSize: 11, marginTop: 6 }}>License #C-39547</div>
+            <div style={{ color: "#6677aa", fontSize: 11, marginTop: 6 }}>License #PJ-13579</div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 26, letterSpacing: 1, lineHeight: 1 }}>{isEstimate ? "ESTIMATE" : "INVOICE"}</div>
