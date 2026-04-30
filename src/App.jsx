@@ -891,10 +891,13 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
       let invoicesCreated = 0, estimatesCreated = 0, itemsSaved = 0;
       const createdDocs = [];
 
+      let failed = 0;
       for (const action of actions) {
         if (action.action === "create_invoice" || action.action === "create_estimate") {
-          const newInv = await onAction(action);
-          if (newInv) { createdDocs.push(newInv); action.action === "create_estimate" ? estimatesCreated++ : invoicesCreated++; }
+          try {
+            const newInv = await onAction(action);
+            if (newInv) { createdDocs.push(newInv); action.action === "create_estimate" ? estimatesCreated++ : invoicesCreated++; }
+          } catch (e) { console.error('create failed', e); failed++; }
         } else if (action.action === "save_item") {
           onAction(action); itemsSaved++;
         } else if (action.action === "add_items") {
@@ -912,8 +915,10 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
           // AI used preview format instead of create_estimate — normalize and save
           console.log('[AI] "estimate" action received in GlobalAI — converting to create_estimate');
           const normalized = { action: "create_estimate", invoice: { client: action.client || "", date: today(), dueDate: today(), items: action.items || [], notes: action.notes || "", tax: TAX_RATE, discount: 0 }, summary: action.summary };
-          const newInv = await onAction(normalized);
-          if (newInv) { createdDocs.push(newInv); estimatesCreated++; }
+          try {
+            const newInv = await onAction(normalized);
+            if (newInv) { createdDocs.push(newInv); estimatesCreated++; }
+          } catch (e) { console.error('estimate create failed', e); failed++; }
         } else if (action.action === "create_client") {
           const newClient = await onAction(action);
           if (newClient) {
@@ -928,13 +933,16 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
         if (estimatesCreated) parts.push(`${estimatesCreated} estimate${estimatesCreated !== 1 ? "s" : ""}`);
         if (itemsSaved) parts.push(`${itemsSaved} price${itemsSaved !== 1 ? "s" : ""} saved`);
         const isSingle = actions.length === 1;
-        const summaryText = isSingle
+        let summaryText = isSingle
           ? (actions[0].summary || `${parts[0].charAt(0).toUpperCase() + parts[0].slice(1)} created.`)
           : `Created ${parts.join(" and ")} successfully.`;
+        if (failed > 0) summaryText += ` (${failed} failed to save \u2014 check connection.)`;
         const card = createdDocs.length === 1
           ? { type: "created", invoice: createdDocs[0] }
           : createdDocs.length > 1 ? { type: "batch_created", invoices: createdDocs } : undefined;
         setMsgs(p => [...p, { role: "assistant", text: summaryText, ...(card ? { card } : {}) }]);
+      } else if (failed > 0) {
+        setMsgs(p => [...p, { role: "assistant", text: `Couldn't save ${failed} document${failed !== 1 ? "s" : ""} \u2014 check your connection and try again.` }]);
       }
     } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Error: " + e.message }]); }
     setLoading(false);
@@ -3025,6 +3033,12 @@ export default function App() {
   // directly underneath it (e.g. KPI strip + filter tabs on the Invoices list).
   const rootRef = useRef(null);
   const brandHeaderRef = useRef(null);
+  // Synchronous counter for invoice IDs. setData's functional updater is
+  // deferred, so when handleGlobalAIAction runs 20 times in a tight loop
+  // (bulk-create) the closure-captured `newInvoice` race-conditions and only
+  // one ends up persisted. Using a ref lets each call grab a unique ID and
+  // build the full record up-front, before any state update or DB write.
+  const nextNumRef = useRef(753);
   useEffect(() => {
     const el = brandHeaderRef.current;
     const root = rootRef.current;
@@ -3039,10 +3053,19 @@ export default function App() {
     return () => ro.disconnect();
   }, [view]);
 
+  // Keep the synchronous counter aligned with state whenever state advances
+  // (e.g. after a load from Supabase or after a single-doc create updates state).
+  useEffect(() => {
+    if (typeof data.nextNum === "number" && data.nextNum > nextNumRef.current) {
+      nextNumRef.current = data.nextNum;
+    }
+  }, [data.nextNum]);
+
   useEffect(() => {
     db.loadAll()
       .then(d => {
         setData(d);
+        nextNumRef.current = d.nextNum || 753;
         setDbLoading(false);
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch {}
       })
@@ -3080,13 +3103,27 @@ export default function App() {
       const inv = parsed.invoice || {};
       const year = new Date(inv.date || today()).getFullYear();
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
-      let newInvoice;
-      setData(d => {
-        const id = `INV${String(d.nextNum).padStart(4, "0")}`;
-        newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
-        return { ...d, invoices: [newInvoice, ...d.invoices], nextNum: d.nextNum + 1 };
-      });
-      try { await db.upsertInvoice(newInvoice, true); } catch (e) { console.error('DB write failed:', e); }
+      // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
+      // create) don't collide. setData below uses a functional updater to
+      // stay consistent if state-derived nextNum has already advanced.
+      const num = nextNumRef.current++;
+      const id = `INV${String(num).padStart(4, "0")}`;
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
+      // Persist FIRST so we don't show success in the UI for records that fail
+      // to land in Supabase. If the write throws we surface the error.
+      try {
+        await db.upsertInvoice(newInvoice, true);
+      } catch (e) {
+        console.error('DB write failed for', id, e);
+        // Roll back the synchronous counter so the next call reuses this number
+        if (nextNumRef.current === num + 1) nextNumRef.current = num;
+        throw e;
+      }
+      setData(d => ({
+        ...d,
+        invoices: [newInvoice, ...d.invoices],
+        nextNum: Math.max(d.nextNum, num + 1),
+      }));
       return newInvoice;
     }
     if (parsed.action === "add_items") {
