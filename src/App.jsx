@@ -660,11 +660,44 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
-  const [ttsOn, setTtsOn] = useState(true);
-  const ttsRef = useRef(true);
-  const msgCountRef = useRef(0);
+  // TTS defaults to OFF — only speaks when user explicitly taps the speaker button
+  const [ttsOn, setTtsOn] = useState(false);
+  const ttsRef = useRef(false);
+  const lastSpokenIdxRef = useRef(-1);
   const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading]);
+  // Track the visual viewport height so the modal shrinks when the iOS keyboard opens
+  const [vh, setVh] = useState(typeof window !== "undefined" ? window.innerHeight : 0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => setVh(vv.height);
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+  }, []);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, vh]);
+
+  // Pick the most natural-sounding English voice available. iOS exposes
+  // "Samantha", "Ava", "Allison", "Karen" — Apple's enhanced/premium voices —
+  // which sound far less robotic than the default fallback.
+  const pickVoice = () => {
+    const voices = window.speechSynthesis?.getVoices() || [];
+    const en = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith("en"));
+    const prefer = [
+      /Ava \(Premium\)/i, /Ava \(Enhanced\)/i, /Ava/i,
+      /Allison \(Premium\)/i, /Allison \(Enhanced\)/i, /Allison/i,
+      /Samantha \(Premium\)/i, /Samantha \(Enhanced\)/i, /Samantha/i,
+      /Karen/i, /Moira/i, /Tessa/i,
+      /\(Premium\)/i, /\(Enhanced\)/i, /natural/i,
+      /Google US English/i, /Microsoft.*Natural/i,
+    ];
+    for (const re of prefer) {
+      const v = en.find(v => re.test(v.name));
+      if (v) return v;
+    }
+    return en.find(v => v.lang === "en-US") || en[0] || null;
+  };
 
   const speak = (text) => {
     if (!ttsRef.current || !window.speechSynthesis) return;
@@ -676,13 +709,10 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
       .replace(/\s{2,}/g, ' ').trim();
     if (!clean) return;
     const utt = new SpeechSynthesisUtterance(clean);
-    const voices = window.speechSynthesis.getVoices();
-    utt.voice = voices.find(v => /natural|premium|enhanced/i.test(v.name) && v.lang.startsWith('en'))
-      || voices.find(v => /google/i.test(v.name) && v.lang.startsWith('en'))
-      || voices.find(v => v.lang === 'en-US')
-      || voices.find(v => v.lang.startsWith('en'))
-      || null;
-    utt.rate = 1.05;
+    utt.voice = pickVoice();
+    utt.rate = 0.95;   // slightly slower than default — easier to follow
+    utt.pitch = 1.0;   // neutral pitch
+    utt.volume = 1.0;
     window.speechSynthesis.speak(utt);
   };
 
@@ -690,16 +720,35 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
     const next = !ttsRef.current;
     ttsRef.current = next;
     setTtsOn(next);
-    if (!next) window.speechSynthesis?.cancel();
+    if (!next) {
+      window.speechSynthesis?.cancel();
+    } else {
+      // User just turned TTS ON — speak the most recent assistant message so
+      // they hear something immediately, then continue speaking new replies.
+      const last = [...msgs].reverse().find(m => m.role === "assistant" && m.text);
+      if (last) speak(last.text);
+      lastSpokenIdxRef.current = msgs.length - 1;
+    }
   };
 
+  // Speak NEW assistant messages only while TTS is on. Never auto-speak on mount.
   useEffect(() => {
-    if (msgs.length > msgCountRef.current) {
-      const last = msgs[msgs.length - 1];
-      if (last?.role === 'assistant' && last.text) speak(last.text);
+    if (!ttsRef.current) { lastSpokenIdxRef.current = msgs.length - 1; return; }
+    const lastIdx = msgs.length - 1;
+    if (lastIdx > lastSpokenIdxRef.current) {
+      const last = msgs[lastIdx];
+      if (last?.role === "assistant" && last.text) speak(last.text);
+      lastSpokenIdxRef.current = lastIdx;
     }
-    msgCountRef.current = msgs.length;
   }, [msgs]);
+
+  // Some browsers load voices asynchronously — refresh once they arrive.
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    const handler = () => {};
+    window.speechSynthesis.addEventListener?.("voiceschanged", handler);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", handler);
+  }, []);
 
   useEffect(() => { return () => window.speechSynthesis?.cancel(); }, []);
 
@@ -802,7 +851,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto" }}>
+    <div style={{ position: "fixed", left: 0, right: 0, top: 0, height: vh ? `${vh}px` : "100dvh", zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
@@ -813,7 +862,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
         <button onClick={toggleTts} title={ttsOn ? "Mute" : "Unmute"} style={{ width: 34, height: 34, borderRadius: 8, border: "none", background: ttsOn ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={ttsOn ? "speaker" : "speakerOff"} size={16} color={ttsOn ? "#fff" : "#556688"} /></button>
         <button onClick={() => { window.speechSynthesis?.cancel(); onClose(); }} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 0" }}>
+      <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "14px 14px 0", minHeight: 0 }}>
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={bubble(m.role === "user")}>
