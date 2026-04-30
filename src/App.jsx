@@ -3253,9 +3253,39 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
     }
   };
 
-  const previewClients = useMemo(() => rows.map(r => csvRowToClient(r, mapping)), [rows, mapping]);
+  // Invoice Simple's only CSV export is the Invoice Summary — one row per
+  // invoice with the client name/email/phone/address embedded as columns.
+  // Same client appears N times if they have N invoices. Dedupe by
+  // case-insensitive name, keeping the first non-blank value for each
+  // contact field (so an empty cell on a later invoice doesn't wipe out
+  // a real value from an earlier one).
+  const previewClients = useMemo(() => {
+    const all = rows.map(r => csvRowToClient(r, mapping));
+    const byName = new Map();
+    for (const c of all) {
+      const key = (c.name || "").trim().toLowerCase();
+      if (!key) continue;
+      const prev = byName.get(key);
+      if (!prev) { byName.set(key, c); continue; }
+      // Merge: prefer first non-empty value for each scalar field, and
+      // keep the first address that has any line populated.
+      prev.email = prev.email || c.email;
+      prev.email2 = prev.email2 || c.email2;
+      prev.phone = prev.phone || c.phone;
+      prev.fax = prev.fax || c.fax;
+      if ((!prev.addresses || prev.addresses.length === 0) && c.addresses && c.addresses.length) {
+        prev.addresses = c.addresses;
+      }
+    }
+    return Array.from(byName.values());
+  }, [rows, mapping]);
   const validPreview = previewClients.filter(c => c.name && c.name.trim());
-  const skippedNoName = previewClients.length - validPreview.length;
+  // Count of rows that had no name in the chosen Name column — separate from
+  // dedupe collapse, so the user knows if rows fell through entirely.
+  const skippedNoName = rows.filter(r => {
+    const n = mapping.name ? (r[mapping.name] || "").trim() : "";
+    return !n;
+  }).length;
 
   const existingNames = useMemo(() => new Set((existingClients || []).map(c => (c.name || "").trim().toLowerCase())), [existingClients]);
   const duplicates = validPreview.filter(c => existingNames.has(c.name.trim().toLowerCase()));
@@ -3305,8 +3335,15 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
         <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
           {step === "pick" && (
             <div>
-              <div style={{ fontSize: 13, color: "#444", marginBottom: 14, lineHeight: 1.4 }}>
-                Export your clients from Invoice Simple as a CSV file, then choose it here. Common columns (Name, Email, Phone, Address, City, State, Zip) are detected automatically — you can adjust the mapping on the next screen.
+              <div style={{ fontSize: 13, color: "#444", marginBottom: 10, lineHeight: 1.45 }}>
+                Export your data from Invoice Simple, then choose the CSV file here.
+              </div>
+              <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 14, fontSize: 12, color: "#555", lineHeight: 1.5 }}>
+                <div style={{ fontWeight: 700, color: "#222", marginBottom: 6 }}>How to export from Invoice Simple</div>
+                Invoice Simple has no client-only export, but their <b>Invoice Summary</b> CSV includes each client’s name, email, phone, and address on every invoice row. We’ll dedupe by name and pull out the unique clients automatically.
+                <div style={{ marginTop: 8 }}>
+                  In the Invoice Simple app: <b>Settings → Export Invoice Summary</b>, pick the widest date range it offers, choose <b>CSV</b>, then save the file and pick it here.
+                </div>
               </div>
               <button onClick={() => fileRef.current?.click()} style={{ ...S.btn("primary"), width: "100%", padding: 14, fontSize: 15 }}>Choose CSV File</button>
               <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={e => onFile(e.target.files?.[0])} />
@@ -3316,7 +3353,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
 
           {step === "map" && (
             <div>
-              <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Found <b>{rows.length}</b> rows · <b>{headers.length}</b> columns. Review the mapping and preview below.</div>
+              <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Found <b>{rows.length}</b> rows · <b>{headers.length}</b> columns · deduped to <b>{validPreview.length}</b> client{validPreview.length === 1 ? "" : "s"} by name. Review the mapping below.</div>
 
               <div style={{ marginBottom: 14 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Column Mapping</span>
