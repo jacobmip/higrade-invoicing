@@ -182,15 +182,34 @@ RULES:
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
 - Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
 - For plain questions or conversation, reply in plain text without JSON.
-- When asked to create multiple invoices or estimates, return a JSON array containing one action object per document. Example: [{"action":"create_invoice",...},{"action":"create_estimate",...}]
+- When asked to create multiple invoices or estimates (e.g. "create 10 invoices", "make 5 sample estimates", "create 10 invoices and 10 estimates"), you MUST return ONE single JSON array containing one action object per document — never just one. If asked for 10 invoices, the array MUST have exactly 10 create_invoice objects. If asked for "10 invoices and 10 estimates", return ONE array with 20 objects total (10 create_invoice + 10 create_estimate). Do not split across multiple turns; do not stop after the first object. Vary clients, dates, and items across the documents. Keep desc concise (6 short steps) when generating in bulk so the full array fits in your response. Example shape: [{"action":"create_invoice",...},{"action":"create_invoice",...}, ...]
 - IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.`;
 }
 
-async function callAI(messages, systemPrompt = null) {
+async function callAI(messages, systemPrompt = null, opts = {}) {
+  // Heuristic: bulk-doc requests need lots of tokens. Look at the latest user
+  // message for numbers like "10 invoices" or "create 5 estimates" and bump
+  // the limit so the response doesn't truncate to a single doc.
+  let maxTokens = opts.maxTokens;
+  if (!maxTokens) {
+    try {
+      const lastUser = [...(messages || [])].reverse().find(m => m.role === "user");
+      const txt = typeof lastUser?.content === "string"
+        ? lastUser.content
+        : (Array.isArray(lastUser?.content) ? lastUser.content.map(c => c?.text || "").join(" ") : "");
+      const nums = [...txt.matchAll(/(\d{1,3})\s*(invoice|estimate|quote|bid|sample|doc)/gi)].map(m => parseInt(m[1], 10));
+      const total = nums.reduce((a, b) => a + b, 0);
+      if (total >= 3) maxTokens = 8192; // ceiling — server clamps anyway
+    } catch {}
+  }
   const res = await fetch(api("/api/ai"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, ...(systemPrompt ? { systemPrompt } : {}) }),
+    body: JSON.stringify({
+      messages,
+      ...(systemPrompt ? { systemPrompt } : {}),
+      ...(maxTokens ? { maxTokens } : {}),
+    }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || data.error);

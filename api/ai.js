@@ -73,9 +73,14 @@ export default async function handler(req) {
   }
 
   try {
-    const { messages, systemPrompt } = await req.json();
+    const { messages, systemPrompt, maxTokens } = await req.json();
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // Default 8000 (Haiku 4.5 supports up to 8192). Allow caller to override
+    // (clamped) so bulk requests like "create 10 invoices" don't truncate.
+    const requestedMax = Number.isFinite(maxTokens) ? maxTokens : 8000;
+    const finalMax = Math.max(1024, Math.min(8192, Math.floor(requestedMax)));
+
+    const callAnthropic = (mt) => fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -84,13 +89,21 @@ export default async function handler(req) {
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1500,
+        max_tokens: mt,
         system: systemPrompt || AI_SYSTEM,
         messages,
       }),
     });
 
-    const data = await response.json();
+    let response = await callAnthropic(finalMax);
+    let data = await response.json();
+
+    // If we hit the token cap and weren't already at the model max, retry once
+    // at the absolute ceiling so multi-document responses can complete.
+    if (data?.stop_reason === 'max_tokens' && finalMax < 8192) {
+      response = await callAnthropic(8192);
+      data = await response.json();
+    }
 
     return new Response(JSON.stringify(data), {
       headers: {
