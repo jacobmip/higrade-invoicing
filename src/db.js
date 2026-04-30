@@ -24,6 +24,7 @@ function toInvoice(row, items = [], payments = []) {
     signedAt: row.signed_at || null,
     clientInfo: row.client_info || null,
     convertedToId: row.converted_to_id || null,
+    viewToken: row.view_token || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -152,6 +153,7 @@ export async function upsertInvoice(inv, isNew) {
     signed_at: inv.signedAt || null,
     client_info: inv.clientInfo || null,
     converted_to_id: inv.convertedToId || null,
+    view_token: inv.viewToken || null,
     updated_at: new Date().toISOString(),
   })
   if (invErr) throw invErr
@@ -227,6 +229,51 @@ export async function loadInvoiceVersions(invoiceId) {
     .order('version_number', { ascending: false })
   if (error) throw error
   return data || []
+}
+
+// ─── Invoice events (sent / opened / etc.) ───────────────────────────────────
+
+// Generate a short URL-safe random token for trackable view links.
+// Crypto API is available in modern browsers and on Vercel edge runtime.
+export function generateViewToken() {
+  const bytes = new Uint8Array(9);
+  (globalThis.crypto || crypto).getRandomValues(bytes);
+  // base64url, ~12 chars — short enough to copy, long enough to be unguessable.
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Make sure the invoice has a view_token. Returns the (possibly new) token.
+// Persists it on the row if it was newly minted.
+export async function ensureViewToken(invoice) {
+  if (invoice.viewToken) return invoice.viewToken;
+  const token = generateViewToken();
+  const { error } = await supabase
+    .from('invoices')
+    .update({ view_token: token })
+    .eq('id', invoice.id);
+  if (error) throw error;
+  return token;
+}
+
+export async function recordInvoiceEvent(invoiceId, kind, recipient, meta) {
+  const { error } = await supabase.from('invoice_events').insert({
+    invoice_id: invoiceId,
+    kind,
+    recipient: recipient || null,
+    meta: meta || null,
+  });
+  if (error) throw error;
+}
+
+export async function loadInvoiceEvents(invoiceId) {
+  const { data, error } = await supabase
+    .from('invoice_events')
+    .select('*')
+    .eq('invoice_id', invoiceId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
 }
 
 export async function deleteInvoice(id) {

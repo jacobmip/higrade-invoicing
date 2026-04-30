@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
+import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 
@@ -269,31 +270,22 @@ function stripActionBlocks(text) {
   return result.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-async function sendInvoiceEmail(invoice, client, message) {
+async function sendInvoiceEmail(invoice, client, message, viewLink) {
   const t = calcTotals(invoice);
-  const itemsHtml = invoice.items.map(it => {
-    const title = it.name || it.desc || "";
-    const detail = it.name && it.desc ? `<br><span style="color:#888;font-size:12px;">${it.desc.replace(/\n/g, "<br>")}</span>` : "";
-    return `<tr><td style="padding:8px;border-bottom:1px solid #eee;">${title}${detail}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${it.qty}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${fmt(calcItemTotal(it))}</td></tr>`;
-  }).join("");
-  const invoiceHtml = `
-    <table style="width:100%;border-collapse:collapse;margin-top:16px;">
-      <thead><tr style="background:#0a1628;color:#fff;">
-        <th style="padding:10px;text-align:left;">Description</th>
-        <th style="padding:10px;text-align:center;">Qty</th>
-        <th style="padding:10px;text-align:right;">Amount</th>
-      </tr></thead>
-      <tbody>${itemsHtml}</tbody>
-    </table>
-    <div style="text-align:right;margin-top:12px;">
-      <p>Subtotal: ${fmt(t.sub)}</p>
-      <p>GET (${invoice.tax}%): ${fmt(t.taxAmt)}</p>
-    </div>
-  `;
+  // Link-only email: server renders a Review & Pay button and minimal
+  // summary. We no longer pass a full items table so the customer is
+  // motivated to click the link (which is what we track).
   const res = await fetch(api("/api/send-email"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ to: client.email, clientName: client.name, invoiceId: invoice.id, total: t.total.toFixed(2), invoiceHtml, message: message || "" }),
+    body: JSON.stringify({
+      to: client.email,
+      clientName: client.name,
+      invoiceId: invoice.id,
+      total: t.total.toFixed(2),
+      message: message || "",
+      viewLink: viewLink || "",
+    }),
   });
   return res.json();
 }
@@ -1014,7 +1006,17 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
     try {
       const inv = data.invoices.find(i => i.id === invoiceId);
       const client = data.clients.find(c => c.name === inv?.client);
-      await sendInvoiceEmail(inv, client);
+      let viewToken = inv?.viewToken;
+      if (inv && !viewToken) {
+        try { viewToken = await db.ensureViewToken(inv); inv.viewToken = viewToken; }
+        catch (e) { console.warn('ensureViewToken failed:', e); }
+      }
+      const viewLink = viewToken ? `${window.location.origin}/v/${viewToken}` : '';
+      await sendInvoiceEmail(inv, client, '', viewLink);
+      if (inv?.id) {
+        try { await db.recordInvoiceEvent(inv.id, 'sent', client?.email, { kind: 'invoice', via: 'assistant' }); }
+        catch (e) { console.warn('recordInvoiceEvent failed:', e); }
+      }
       setMsgs(p => p.map((m, i) => i === idx ? { ...m, card: { ...m.card, type: "email_sent" } } : m));
     } catch (e) {
       setMsgs(p => p.map((m, i) => i === idx ? { ...m, card: { ...m.card, type: "email_failed", error: e.message } } : m));
@@ -1469,6 +1471,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
+  // Activity events from invoice_events (sent, opened, etc.)
+  const [events, setEvents] = useState([]);
+  const refreshEvents = async () => {
+    if (!form.id) return;
+    try { setEvents(await db.loadInvoiceEvents(form.id)); }
+    catch (e) { console.warn('loadInvoiceEvents failed:', e); }
+  };
+  useEffect(() => { refreshEvents(); /* eslint-disable-next-line */ }, [form.id]);
+  // Refresh events when the History tab is opened (catches opens that happened
+  // since the form was loaded).
+  useEffect(() => { if (activeTab === 'history') refreshEvents(); /* eslint-disable-next-line */ }, [activeTab]);
   const [autoSaving, setAutoSaving] = useState(false);
   // Debounced auto-save — persists silently while the user edits so the back
   // button and the Save button are interchangeable. We skip the very first
@@ -1639,32 +1652,47 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
     setSending(true);
     try {
+      // Mint (or reuse) a public view-token so the email link is trackable.
+      // Best-effort: if the DB write fails we still send the email, just
+      // without a tracked link.
+      let viewToken = form.viewToken || null;
+      if (form.id && !viewToken) {
+        try {
+          viewToken = await db.ensureViewToken(form);
+          form.viewToken = viewToken; // mutate so subsequent sends reuse it
+        } catch (e) { console.warn('ensureViewToken failed:', e); }
+      }
+      const viewLink = viewToken ? `${window.location.origin}/v/${viewToken}` : '';
+
       if (confirmSend === "estimate") {
         const t2 = calcTotals(form);
-        const job = form.items[0]?.name || "Plumbing Work";
-        const params = new URLSearchParams({ id: form.id || "EST0000", client: form.client || "", total: t2.total.toFixed(2), job });
-        const signingLink = `${window.location.origin}/sign?${params.toString()}`;
         const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
-        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items, message: message || "" }) });
-        // Snapshot the version that was sent (best-effort — don't block on failure).
+        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" }) });
+        // Log a "sent" activity event + snapshot version (both best-effort).
         if (form.id) {
+          try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'estimate' }); }
+          catch (e) { console.warn('recordInvoiceEvent failed:', e); }
           try { await db.recordInvoiceVersion(form, email, "Estimate sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
         }
-        alert("Estimate sent. Client will receive a signing link by email.");
+        alert("Estimate sent. The link in the email will be tracked when opened.");
       } else {
-        const result = await sendInvoiceEmail(form, client, message);
+        const result = await sendInvoiceEmail(form, client, message, viewLink);
         if (result?.error) {
           setEmailStatus("Failed");
         } else {
           setEmailStatus("✓ Sent!");
           if (form.id) {
+            try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'invoice' }); }
+            catch (e) { console.warn('recordInvoiceEvent failed:', e); }
             try { await db.recordInvoiceVersion(form, email, "Invoice sent"); }
             catch (e) { console.warn('Version snapshot failed:', e); }
           }
         }
         setTimeout(() => setEmailStatus(""), 4000);
       }
+      // Reload events for the History tab so the new "sent" entry shows up.
+      if (form.id) refreshEvents?.();
       setConfirmSend(null);
     } catch (e) {
       alert("Failed to send: " + (e.message || e));
@@ -1711,10 +1739,36 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     onCancel?.();
   };
 
+  // Merge: created → payments → server-side events (sent/opened). Server
+  // events use full ISO timestamps; created+payments are just YYYY-MM-DD,
+  // so we sort by a unified `sortKey` (timestamp ms).
+  const dayMs = (d) => d ? new Date(d + (d.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
   const historyEvents = [
-    { date: form.date, label: isEstimate ? "Estimate created" : "Invoice created", type: "created", amount: null },
-    ...(form.payments || []).map(p => ({ date: p.date, label: `${p.method} payment received`, type: "payment", amount: p.amount })),
-  ].sort((a, b) => (a.date < b.date ? 1 : -1));
+    { date: form.date, label: isEstimate ? "Estimate created" : "Invoice created", type: "created", amount: null, sortKey: dayMs(form.date) },
+    ...(form.payments || []).map(p => ({ date: p.date, label: `${p.method} payment received`, type: "payment", amount: p.amount, sortKey: dayMs(p.date) + 1 })),
+    ...events.map(ev => {
+      const when = ev.created_at;
+      if (ev.kind === 'sent') {
+        return {
+          date: when,
+          label: ev.recipient ? `Sent to ${ev.recipient}` : (isEstimate ? 'Estimate sent' : 'Invoice sent'),
+          type: 'sent',
+          amount: null,
+          sortKey: new Date(when).getTime(),
+        };
+      }
+      if (ev.kind === 'opened') {
+        return {
+          date: when,
+          label: isEstimate ? 'Estimate opened by client' : 'Invoice opened by client',
+          type: 'opened',
+          amount: null,
+          sortKey: new Date(when).getTime(),
+        };
+      }
+      return null;
+    }).filter(Boolean),
+  ].sort((a, b) => b.sortKey - a.sortKey);
 
   const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }];
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
@@ -2119,19 +2173,31 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           </div>
           <div style={{ position: "relative" }}>
             {historyEvents.length > 1 && <div style={{ position: "absolute", left: 17, top: 18, bottom: 18, width: 2, background: "#e8ecf4" }} />}
-            {historyEvents.map((ev, i) => (
-              <div key={i} style={{ display: "flex", gap: 14, marginBottom: 14, position: "relative" }}>
-                <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: ev.type === "payment" ? "#e8f8ef" : "#eef0fa", border: `2px solid ${ev.type === "payment" ? "#27ae60" : "#8899bb"}`, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
-                  <Icon name={ev.type === "payment" ? "payment" : "invoice"} size={15} color={ev.type === "payment" ? "#27ae60" : "#8899bb"} />
-                </div>
-                <div style={{ flex: 1, background: "#fff", borderRadius: 10, padding: "11px 14px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div><div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 }}>{ev.label}</div><div style={{ fontSize: 12, color: "#aaa" }}>{fmtDate(ev.date)}</div></div>
-                    {ev.amount != null && <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: "#27ae60" }}>{fmt(ev.amount)}</div>}
+            {historyEvents.map((ev, i) => {
+              const palette = ev.type === 'payment' ? { bg: '#e8f8ef', stroke: '#27ae60', icon: 'payment' }
+                : ev.type === 'sent'    ? { bg: '#eaf2ff', stroke: '#2c6ed4', icon: 'mail' }
+                : ev.type === 'opened'  ? { bg: '#fff1e0', stroke: '#E8622A', icon: 'eye' }
+                : { bg: '#eef0fa', stroke: '#8899bb', icon: 'invoice' };
+              // For sent/opened we have full timestamps; show "Apr 30, 12:42 AM".
+              const fmtTime = (iso) => {
+                try { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+                catch { return fmtDate(iso); }
+              };
+              const dateLabel = (ev.type === 'sent' || ev.type === 'opened') ? fmtTime(ev.date) : fmtDate(ev.date);
+              return (
+                <div key={i} style={{ display: "flex", gap: 14, marginBottom: 14, position: "relative" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: palette.bg, border: `2px solid ${palette.stroke}`, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
+                    <Icon name={palette.icon} size={15} color={palette.stroke} />
+                  </div>
+                  <div style={{ flex: 1, background: "#fff", borderRadius: 10, padding: "11px 14px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div><div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 }}>{ev.label}</div><div style={{ fontSize: 12, color: "#aaa" }}>{dateLabel}</div></div>
+                      {ev.amount != null && <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: "#27ae60" }}>{fmt(ev.amount)}</div>}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {(form.payments || []).length > 0 && (
             <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginTop: 8, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }} data-marker="history-totals">
@@ -2808,6 +2874,122 @@ function InPersonSignatureModal({ estimate, onClose, onSave }) {
           <button onClick={() => onSave(canvasRef.current.toDataURL("image/png"))} disabled={isEmpty} style={{ ...S.btn(isEmpty ? "ghost" : "primary"), flex: 2, fontSize: 15, opacity: isEmpty ? 0.5 : 1 }}>
             ✓ Approve Estimate
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Public Viewer (trackable invoice/estimate link) ─────────────────────────
+// Customers receive an email containing a link like /v/<token>. This page
+// loads the invoice straight from Supabase using the public anon key (RLS
+// allows anon select on invoices/items/payments) and pings /api/track-open
+// once per mount so the activity log gets an "opened" entry.
+function PublicViewerPage({ token }) {
+  const [state, setState] = useState({ loading: true, error: null, invoice: null, items: [], payments: [], company: null });
+  const trackedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: invRows, error: e1 } = await supabase
+          .from('invoices').select('*').eq('view_token', token).limit(1);
+        if (e1) throw e1;
+        const inv = invRows?.[0];
+        if (!inv) { if (!cancelled) setState(s => ({ ...s, loading: false, error: 'Link not found' })); return; }
+        const [{ data: items }, { data: payments }] = await Promise.all([
+          supabase.from('invoice_items').select('*').eq('invoice_id', inv.id),
+          supabase.from('payments').select('*').eq('invoice_id', inv.id),
+        ]);
+        if (cancelled) return;
+        setState({ loading: false, error: null, invoice: inv, items: items || [], payments: payments || [] });
+        // Fire-and-forget open tracker. Guarded so React StrictMode double
+        // mount doesn't double-log; the server also de-dupes by IP/hour.
+        if (!trackedRef.current) {
+          trackedRef.current = true;
+          fetch(api(`/api/track-open?token=${encodeURIComponent(token)}`), { method: 'POST' }).catch(() => {});
+        }
+      } catch (e) {
+        if (!cancelled) setState({ loading: false, error: e.message || 'Error loading', invoice: null, items: [], payments: [] });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  if (state.loading) return (
+    <div style={{ fontFamily: "'Barlow', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: LIGHT, color: '#888' }}>Loading…</div>
+  );
+  if (state.error || !state.invoice) return (
+    <div style={{ fontFamily: "'Barlow', sans-serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: LIGHT, padding: 24, textAlign: 'center' }}>
+      <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+        <Icon name="invoice" size={28} color="#aaa" />
+      </div>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: NAVY, marginBottom: 6 }}>Link not available</div>
+      <div style={{ color: '#888', fontSize: 14, maxWidth: 320 }}>This invoice link is no longer valid. Please contact HI Grade Plumbing for a fresh copy.</div>
+      <div style={{ color: '#aaa', fontSize: 12, marginTop: 16 }}>808-393-0015 · higradeplumbing@gmail.com</div>
+    </div>
+  );
+
+  // Adapt the row + child rows back to the in-app shape so we can reuse PDFPreview.
+  const invForm = {
+    id: state.invoice.id,
+    type: state.invoice.type,
+    client: state.invoice.client_name || '',
+    date: state.invoice.date,
+    dueDate: state.invoice.due_date,
+    status: state.invoice.status,
+    tax: parseFloat(state.invoice.tax ?? 4.712),
+    discount: parseFloat(state.invoice.discount ?? 0),
+    discountType: state.invoice.discount_type || '$',
+    notes: state.invoice.notes || '',
+    clientInfo: state.invoice.client_info || null,
+    items: (state.items || []).sort((a, b) => a.sort_order - b.sort_order).map(it => ({
+      name: it.name || '',
+      desc: it.description ?? it.desc ?? '',
+      qty: parseFloat(it.qty ?? 1),
+      price: parseFloat(it.price ?? 0),
+      unit: it.unit || 'ea',
+      discount: parseFloat(it.discount ?? 0),
+      discountType: it.discount_type || '%',
+      taxable: it.taxable !== false,
+    })),
+    payments: (state.payments || []).map(p => ({
+      id: p.id, amount: parseFloat(p.amount), method: p.method || '', date: p.date, note: p.note || '',
+    })),
+  };
+  const totals = calcTotals(invForm);
+  const isEstimate = invForm.type === 'estimate';
+  const balance = Math.max(0, totals.balance);
+
+  return (
+    <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: '100vh' }}>
+      <div style={{ background: NAVY, padding: '18px 20px', textAlign: 'center' }}>
+        <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, letterSpacing: 2 }}>HI GRADE PLUMBING LLC</div>
+        <div style={{ color: '#8899bb', fontSize: 11, letterSpacing: 1, marginTop: 2 }}>HONOLULU, HAWAII · LIC PJ-13579</div>
+      </div>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: '20px 0 24px' }}>
+        {/* Top summary card */}
+        <div style={{ background: '#fff', margin: '0 12px 16px', borderRadius: 12, padding: '20px 18px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+          <div style={{ color: '#888', fontSize: 11, letterSpacing: 1.5, fontWeight: 700, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>{isEstimate ? `Estimate ${invForm.id}` : `Invoice ${invForm.id}`}</div>
+          <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 1, lineHeight: 1.1, marginTop: 8 }}>${balance.toFixed(2)}</div>
+          <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>{isEstimate ? 'Estimate total' : (balance > 0 ? 'Balance due' : 'Paid in full')}</div>
+          {!isEstimate && balance > 0 && (
+            <a href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${balance.toFixed(2)}&currency_code=USD&item_name=Invoice%20${encodeURIComponent(invForm.id)}&no_note=1&no_shipping=1`} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', marginTop: 16, background: '#0070ba', color: '#fff', textDecoration: 'none', fontSize: 15, fontWeight: 700, padding: '13px 30px', borderRadius: 8 }}>
+              Pay ${balance.toFixed(2)} Now
+            </a>
+          )}
+          {isEstimate && (
+            <a href={`/sign?id=${encodeURIComponent(invForm.id)}&client=${encodeURIComponent(invForm.client)}&total=${totals.total.toFixed(2)}&job=${encodeURIComponent(invForm.items[0]?.name || 'Plumbing Work')}`} style={{ display: 'inline-block', marginTop: 16, background: ORANGE, color: '#fff', textDecoration: 'none', fontSize: 15, fontWeight: 700, padding: '13px 30px', borderRadius: 8 }}>
+              Review &amp; Sign
+            </a>
+          )}
+        </div>
+        {/* Reuse the in-app PDF preview for full details */}
+        <PDFPreview form={invForm} clients={[]} />
+        {/* Footer */}
+        <div style={{ textAlign: 'center', color: '#aaa', fontSize: 12, padding: '20px 16px 0' }}>
+          Questions? Call or text 808-393-0015<br />higradeplumbing@gmail.com
         </div>
       </div>
     </div>
@@ -3691,14 +3873,20 @@ export default function App() {
     setData(d => ({ ...d, savedItems: d.savedItems.filter(i => i.id !== id) }));
   };
 
+  // Public routes — must come before the dbLoading gate so customers don't
+  // wait through the owner-side initial loadAll().
+  if (window.location.pathname === "/sign") return <SignaturePage />;
+  if (window.location.pathname.startsWith("/v/")) {
+    const token = window.location.pathname.slice(3);
+    return <PublicViewerPage token={token} />;
+  }
+
   if (dbLoading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY, flexDirection: "column", gap: 16 }}>
       <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
       <div style={{ color: "#8899bb", fontSize: 13 }}>Loading…</div>
     </div>
   );
-
-  if (window.location.pathname === "/sign") return <SignaturePage />;
 
   const invoices = data.invoices.filter(i => i.type !== "estimate");
   const estimates = data.invoices.filter(i => i.type === "estimate");
