@@ -48,6 +48,18 @@
          shrink to their parent. */
       input, select, textarea { min-width: 0; max-width: 100%; box-sizing: border-box; }
 
+      /* iOS Safari ignores width:100% / min-width:0 on native date/time pickers
+         because their intrinsic content size (the formatted date string)
+         takes precedence. Stripping appearance and forcing display:block lets
+         them shrink and fill the parent column instead of overflowing. */
+      input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"], input[type="week"] {
+        -webkit-appearance: none;
+        appearance: none;
+        display: block;
+        width: 100%;
+        min-width: 0;
+      }
+
       /* Strip the iOS "cancel" X and pill rounding from chat search inputs */
       input[type="search"]::-webkit-search-decoration,
       input[type="search"]::-webkit-search-cancel-button,

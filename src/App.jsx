@@ -2039,9 +2039,16 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
           {/* Tax & Discount */}
           <div style={{ padding: "4px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div><label style={S.label}>Tax %</label><input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} step={0.001} /></div>
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ minWidth: 0 }}>
+              {/* Match the height of the Discount label+toggle row so inputs
+                  line up across columns. */}
+              <div style={{ display: "flex", alignItems: "center", height: 24, marginBottom: 4 }}>
+                <label style={S.label}>Tax %</label>
+              </div>
+              <input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} step={0.001} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", height: 24, marginBottom: 4 }}>
                 <label style={S.label}>Discount</label>
                 <div style={{ display: "flex", background: "#f0f2f8", borderRadius: 6, padding: 2, gap: 2 }}>
                   {["%", "$"].map(type => (
