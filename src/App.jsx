@@ -109,6 +109,66 @@ function statusDisplay(inv) {
 }
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
 
+// Match an invoice/estimate against a search query. Searches across:
+//   - invoice ID (e.g. "INV0753")
+//   - client name
+//   - line item names and descriptions
+//   - notes
+//   - job-site address (label + lines) and billing address
+// All terms (whitespace-separated) must match somewhere. Case-insensitive.
+function matchesSearch(inv, query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return true;
+  const terms = q.split(/\s+/).filter(Boolean);
+  const ja = inv.jobAddress || {};
+  const ba = inv.billingAddress || {};
+  const haystackParts = [
+    inv.id || "",
+    inv.client || "",
+    inv.notes || "",
+    ja.label || "", ja.line1 || "", ja.line2 || "", ja.line3 || "",
+    ba.line1 || "", ba.line2 || "", ba.line3 || "",
+  ];
+  for (const it of (inv.items || [])) {
+    haystackParts.push(it.name || "", it.desc || "");
+  }
+  const haystack = haystackParts.join(" ").toLowerCase();
+  return terms.every(t => haystack.includes(t));
+}
+
+// Compact search-bar component reused on the Invoices and Estimates tabs.
+function SearchBar({ value, onChange, placeholder }) {
+  return (
+    <div style={{ background: "#fff", padding: "8px 12px", borderBottom: "1px solid #eee", position: "relative" }}>
+      <input
+        type="search"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder || "Search"}
+        style={{
+          width: "100%",
+          background: "#f4f6fa",
+          border: "1px solid #dde2ee",
+          borderRadius: 8,
+          padding: "9px 32px 9px 34px",
+          fontSize: 14,
+          outline: "none",
+          boxSizing: "border-box",
+          WebkitAppearance: "none",
+        }}
+      />
+      <span style={{ position: "absolute", left: 22, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 14, pointerEvents: "none" }}>⌕</span>
+      {value && (
+        <button
+          onClick={() => onChange("")}
+          aria-label="Clear search"
+          style={{ position: "absolute", right: 18, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 12, lineHeight: 1, padding: 0 }}
+        >×</button>
+      )}
+    </div>
+  );
+}
+
 function buildGlobalSystemPrompt(data) {
   // Split docs by type so invoices and estimates aren't lumped together in
   // the model's context. Each list is capped at 20 to keep the prompt small.
@@ -1732,9 +1792,19 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     try {
       // Always send the freshest updatedAt token we know about so the RPC's
       // optimistic-lock check passes after the very first save.
+      // Also snapshot the currently-selected job site + billing address from
+      // the client onto the invoice so it stays correct even if the client's
+      // addresses are edited later.
+      const f = formRef.current;
+      const c = clients.find(x => x.name === f.client);
+      const cAddrs = Array.isArray(c?.addresses) ? c.addresses : [];
+      const pickedJob = (f.jobAddressId && cAddrs.find(a => a.id === f.jobAddressId)) || f.jobAddress || cAddrs[0] || null;
+      const billing = f.billingAddress || c?.billingAddress || null;
       const saved = await onAutoSave({
-        ...formRef.current,
-        id: autoSavedId || formRef.current.id,
+        ...f,
+        jobAddress: pickedJob,
+        billingAddress: billing,
+        id: autoSavedId || f.id,
         updatedAt: updatedAtRef.current,
       });
       if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
@@ -1854,7 +1924,30 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
 
   const selectedClient = clients.find(c => c.name === form.client);
-  const effectiveClientInfo = form.clientInfo || (selectedClient ? { name: selectedClient.name, email: selectedClient.email || "", phone: selectedClient.phone || selectedClient.mobile || "", address1: selectedClient.address1 || "", address2: selectedClient.address2 || "", address3: selectedClient.address3 || "" } : null);
+  const clientAddresses = Array.isArray(selectedClient?.addresses) ? selectedClient.addresses : [];
+  // Resolve which job-site address applies to this invoice. Prefer the
+  // explicitly picked id, then the snapshot already saved on the invoice,
+  // then the client's first address.
+  const resolvedJobAddress = (() => {
+    if (form.jobAddressId && clientAddresses.length) {
+      const found = clientAddresses.find(a => a.id === form.jobAddressId);
+      if (found) return found;
+    }
+    if (form.jobAddress) return form.jobAddress;
+    if (clientAddresses.length) return clientAddresses[0];
+    return null;
+  })();
+  const effectiveClientInfo = form.clientInfo || (selectedClient ? {
+    name: selectedClient.name,
+    email: selectedClient.email || "",
+    phone: selectedClient.phone || selectedClient.mobile || "",
+    // When a job-site address is resolved, surface its lines as the displayed
+    // address so the rest of the form (PDF, email body, etc.) reflects the
+    // property the user picked. Falls back to legacy flat fields otherwise.
+    address1: resolvedJobAddress?.line1 || selectedClient.address1 || "",
+    address2: resolvedJobAddress?.line2 || selectedClient.address2 || "",
+    address3: resolvedJobAddress?.line3 || selectedClient.address3 || "",
+  } : null);
   const setClientInfoField = (k, v) => setField("clientInfo", { ...(effectiveClientInfo || {}), [k]: v });
   const categories = [...new Set(savedItems.map(i => i.category))];
 
@@ -2128,7 +2221,22 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 selectedName={form.client}
                 onClose={() => setShowClientPicker(false)}
                 onSelect={(c) => {
-                  setForm(f => ({ ...f, client: c.name, clientInfo: { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" } }));
+                  // Pick the client's first job-site address by default. The
+                  // resolvedJobAddress logic above will fall back to legacy
+                  // flat fields if addresses[] is empty.
+                  const cAddresses = Array.isArray(c.addresses) ? c.addresses : [];
+                  const defaultAddr = cAddresses[0] || null;
+                  const displayLine1 = defaultAddr?.line1 || c.address1 || "";
+                  const displayLine2 = defaultAddr?.line2 || c.address2 || "";
+                  const displayLine3 = defaultAddr?.line3 || c.address3 || "";
+                  setForm(f => ({
+                    ...f,
+                    client: c.name,
+                    clientInfo: { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: displayLine1, address2: displayLine2, address3: displayLine3 },
+                    jobAddressId: defaultAddr?.id || null,
+                    jobAddress: defaultAddr || null,
+                    billingAddress: c.billingAddress || null,
+                  }));
                   setEditingClient(false);
                   setSaveToProfile(false);
                 }}
@@ -2149,6 +2257,43 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   </div>
                 </div>
                 <button onClick={() => setEditingClient(true)} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
+              </div>
+            )}
+            {selectedClient && !editingClient && clientAddresses.length > 1 && (
+              <div style={{ marginTop: 8 }}>
+                <label style={{ ...S.label, marginBottom: 4 }}>Job Site</label>
+                <select
+                  style={{ ...S.input, background: "#fff", cursor: "pointer" }}
+                  value={form.jobAddressId || clientAddresses[0]?.id || ""}
+                  onChange={e => {
+                    const newId = e.target.value;
+                    const picked = clientAddresses.find(a => a.id === newId) || null;
+                    setForm(f => ({
+                      ...f,
+                      jobAddressId: newId,
+                      jobAddress: picked,
+                      // Refresh the displayed address lines on the form's
+                      // clientInfo snapshot so the rest of the UI (PDFs, email
+                      // bodies, line on the bill-to card) follows the pick.
+                      clientInfo: {
+                        ...(f.clientInfo || {}),
+                        name: f.clientInfo?.name || selectedClient.name,
+                        email: f.clientInfo?.email ?? (selectedClient.email || ""),
+                        phone: f.clientInfo?.phone ?? (selectedClient.phone || selectedClient.mobile || ""),
+                        address1: picked?.line1 || "",
+                        address2: picked?.line2 || "",
+                        address3: picked?.line3 || "",
+                      },
+                    }));
+                  }}
+                >
+                  {clientAddresses.map(a => {
+                    const label = a.label || a.line1 || "Address";
+                    const sub = [a.line1, a.line2].filter(Boolean).join(", ");
+                    const display = a.label && sub ? `${label} — ${sub}` : (label || sub);
+                    return <option key={a.id} value={a.id}>{display}</option>;
+                  })}
+                </select>
               </div>
             )}
             {selectedClient && editingClient && (
@@ -2504,6 +2649,7 @@ function EstimateListCard({ inv, onSelect, onDelete, pillLabel, pillColor, total
 function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
+  const [search, setSearch] = useState("");
   const tabIndex = TABS.indexOf(tab);
   // Native CSS scroll-snap carousel. Each column is `width: 100%` of the
   // scroll container, and the container has `scroll-snap-type: x mandatory`
@@ -2551,7 +2697,9 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
     setTab(next); // useEffect above will scroll to the new column
   };
 
-  const filterFor = (key) => invoices.filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === key);
+  const filterFor = (key) => invoices
+    .filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === key)
+    .filter(inv => matchesSearch(inv, search));
   const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
@@ -2564,6 +2712,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
           <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(outstanding)}</div></div>
           <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>2026 Paid</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(paidThisYear)}</div></div>
         </div>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search invoices, clients, line items" />
         <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
           {TABS.map(t => (
             <button key={t} onClick={() => goToTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
@@ -2571,7 +2720,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
         </div>
       </>
     );
-  }, [tab, outstanding, paidThisYear, setSubHeader]);
+  }, [tab, outstanding, paidThisYear, search, setSubHeader]);
 
   // Render one column per tab inside a flex track, then translate the track.
   // This produces a real carousel feel: the next/previous tab visibly slides
@@ -2649,6 +2798,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
 function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
   const TABS = ["all", "open", "closed"];
   const [tab, setTab] = useState("all");
+  const [search, setSearch] = useState("");
   const tabIndex = TABS.indexOf(tab);
   // Native scroll-snap carousel — same pattern as InvoiceList.
   const trackRef = useRef(null);
@@ -2687,9 +2837,9 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
 
   // Closed = signed/approved OR converted to invoice (Jake's definition)
   const isClosed = (inv) => inv.status === "approved" || !!inv.convertedToId;
-  const filterFor = (key) => invoices.filter(inv =>
-    key === "all" ? true : key === "open" ? !isClosed(inv) : isClosed(inv)
-  );
+  const filterFor = (key) => invoices
+    .filter(inv => key === "all" ? true : key === "open" ? !isClosed(inv) : isClosed(inv))
+    .filter(inv => matchesSearch(inv, search));
 
   const openTotal = invoices.filter(i => !isClosed(i)).reduce((s, i) => s + calcTotals(i).total, 0);
   const closedTotal = invoices.filter(isClosed).reduce((s, i) => s + calcTotals(i).total, 0);
@@ -2705,6 +2855,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
           <div style={{ textAlign: "center" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Close Rate</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{closeRate}%</div></div>
           <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Closed</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(closedTotal)}</div></div>
         </div>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search estimates, clients, line items" />
         <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
           {TABS.map(t => (
             <button key={t} onClick={() => goToTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
@@ -2712,7 +2863,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
         </div>
       </>
     );
-  }, [tab, openTotal, closedTotal, closeRate, setSubHeader]);
+  }, [tab, openTotal, closedTotal, closeRate, search, setSubHeader]);
 
   const renderColumn = (key) => {
     const list = filterFor(key);
@@ -2783,61 +2934,302 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
 }
 
 // ─── Clients Tab ──────────────────────────────────────────────────────────────
-function ClientsTab({ clients, onSave, onDelete, openClientId, onOpenedClient }) {
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({});
-  const startEdit = (c) => { setEditing(c?.id || "new"); setForm(c || { name: "", email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "" }); };
+// Generate a stable-ish unique id for a job-site address. Doesn't need to be
+// cryptographically random — just unique within a single client.
+function newAddressId() {
+  return "a_" + Math.random().toString(36).slice(2, 10);
+}
+
+function emptyClient() {
+  return {
+    name: "", email: "", email2: "", phone: "", fax: "", contact: "",
+    addresses: [],
+    billingAddress: null,
+    // Legacy flat fields kept blank
+    address1: "", address2: "", address3: "",
+  };
+}
+
+function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, openClientId, onOpenedClient }) {
+  // Three modes: "list" (default), "detail" (viewing one client),
+  // "edit" (form). detailId / editId hold the client id (or "new" for edit).
+  const [mode, setMode] = useState("list");
+  const [detailId, setDetailId] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState(emptyClient());
+  const [search, setSearch] = useState("");
+
+  const startEdit = (c) => {
+    setEditId(c?.id ?? "new");
+    // Make sure the form has an addresses array — even legacy clients should
+    // get one entry from their flat address fields (toClient already does this).
+    setForm(c ? {
+      ...emptyClient(),
+      ...c,
+      addresses: Array.isArray(c.addresses) ? c.addresses : [],
+    } : emptyClient());
+    setMode("edit");
+  };
+  const openDetail = (c) => {
+    setDetailId(c.id);
+    setMode("detail");
+  };
 
   // Auto-open a client when navigated in via AI assistant or invoice client picker
   useEffect(() => {
     if (openClientId == null) return;
     const c = clients.find(cl => cl.id === openClientId);
-    if (c) startEdit(c);
+    if (c) openDetail(c);
     onOpenedClient?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openClientId]);
-  const save = () => { onSave(form, editing); setEditing(null); };
-  const handleDelete = () => { if (confirm(`Delete ${form.name}?`)) { onDelete(editing); setEditing(null); } };
 
-  if (editing !== null) return (
-    <div style={{ padding: 16, paddingBottom: 40 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-        <button onClick={() => setEditing(null)} style={{ background: "none", border: "none", cursor: "pointer" }}><Icon name="back" size={22} /></button>
-        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{editing === "new" ? "New Client" : "Edit Client"}</span>
-      </div>
-      {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"], ["fax", "Fax"]].map(([k, l]) => (
-        <div key={k} style={{ marginBottom: 12 }}>
-          <label style={S.label}>{l}</label>
-          <input style={S.input} value={form[k] || ""} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} type={k === "email" || k === "email2" ? "email" : "text"} />
-        </div>
-      ))}
-      <div style={{ marginBottom: 4 }}><label style={S.label}>Address</label></div>
-      {[["address1", "Address Line 1"], ["address2", "Address Line 2"], ["address3", "City, State, Zip"]].map(([k, ph]) => (
-        <div key={k} style={{ marginBottom: 8 }}>
-          <input style={S.input} value={form[k] || ""} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} placeholder={ph} />
-        </div>
-      ))}
-      <button onClick={save} style={{ ...S.btn("primary"), width: "100%", marginTop: 12, fontSize: 16, padding: 14 }}>Save Client</button>
-      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-        <button onClick={() => alert("Import from Contacts — coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Import from Contacts</button>
-        <button onClick={() => alert("Create Statement — coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Create Statement</button>
-      </div>
-      {editing !== "new" && <button onClick={handleDelete} style={{ ...S.btn("ghost"), width: "100%", marginTop: 10, fontSize: 13, color: "#cc4444" }}>Delete Client</button>}
-    </div>
-  );
+  const save = () => {
+    // Make sure each address has an id and a label so dropdowns work later.
+    const cleaned = {
+      ...form,
+      addresses: (form.addresses || []).map(a => ({
+        id: a.id || newAddressId(),
+        label: a.label || "",
+        line1: a.line1 || "",
+        line2: a.line2 || "",
+        line3: a.line3 || "",
+      })),
+    };
+    onSave(cleaned, editId);
+    // After save, slide back to detail (or list for new clients).
+    if (editId === "new") { setMode("list"); setEditId(null); }
+    else { setDetailId(editId); setMode("detail"); setEditId(null); }
+  };
+  const handleDelete = () => {
+    if (!confirm(`Delete ${form.name}?`)) return;
+    onDelete(editId);
+    setMode("list"); setEditId(null); setDetailId(null);
+  };
 
+  // ─── Edit mode ──────────────────────────────────────────────────────────
+  if (mode === "edit") {
+    const setAddrField = (idx, field, val) => {
+      setForm(f => {
+        const next = [...(f.addresses || [])];
+        next[idx] = { ...next[idx], [field]: val };
+        return { ...f, addresses: next };
+      });
+    };
+    const addAddress = () => {
+      setForm(f => ({ ...f, addresses: [...(f.addresses || []), { id: newAddressId(), label: "", line1: "", line2: "", line3: "" }] }));
+    };
+    const removeAddress = (idx) => {
+      setForm(f => ({ ...f, addresses: (f.addresses || []).filter((_, i) => i !== idx) }));
+    };
+    const setBillingField = (field, val) => {
+      setForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), [field]: val } }));
+    };
+    const billing = form.billingAddress || {};
+    return (
+      <div style={{ padding: 16, paddingBottom: 40 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <button onClick={() => { setMode(detailId ? "detail" : "list"); setEditId(null); }} style={{ background: "none", border: "none", cursor: "pointer" }}><Icon name="back" size={22} /></button>
+          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{editId === "new" ? "New Client" : "Edit Client"}</span>
+        </div>
+        {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"], ["fax", "Fax"]].map(([k, l]) => (
+          <div key={k} style={{ marginBottom: 12 }}>
+            <label style={S.label}>{l}</label>
+            <input style={S.input} value={form[k] || ""} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} type={k === "email" || k === "email2" ? "email" : "text"} />
+          </div>
+        ))}
+
+        {/* Job sites — for property managers, multiple sites per client */}
+        <div style={{ marginTop: 18, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Job Sites / Properties</span>
+          <button onClick={addAddress} style={{ ...S.btn("primary"), padding: "6px 12px", fontSize: 12 }}>+ Add</button>
+        </div>
+        {(form.addresses || []).length === 0 && (
+          <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 12, color: "#888", marginBottom: 12 }}>
+            No job sites yet. Tap + Add to enter the first property address. For a property manager, add one entry per property and give each a nickname (e.g. “Kaimuki Duplex”).
+          </div>
+        )}
+        {(form.addresses || []).map((a, idx) => (
+          <div key={a.id || idx} style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Property {idx + 1}</span>
+              <button onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
+            </div>
+            <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
+            <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Address Line 1" />
+            <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Address Line 2 (optional)" />
+            <input style={S.input} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, Zip" />
+          </div>
+        ))}
+
+        {/* Billing address — single, separate from job sites */}
+        <div style={{ marginTop: 18, marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</span>
+        </div>
+        <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
+          <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Address Line 1" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Address Line 2 (optional)" />
+          <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, Zip" />
+        </div>
+
+        <button onClick={save} style={{ ...S.btn("primary"), width: "100%", marginTop: 12, fontSize: 16, padding: 14 }}>Save Client</button>
+        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          <button onClick={() => alert("Import from Contacts \u2014 coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Import from Contacts</button>
+          <button onClick={() => alert("Create Statement \u2014 coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Create Statement</button>
+        </div>
+        {editId !== "new" && <button onClick={handleDelete} style={{ ...S.btn("ghost"), width: "100%", marginTop: 10, fontSize: 13, color: "#cc4444" }}>Delete Client</button>}
+      </div>
+    );
+  }
+
+  // ─── Detail mode ────────────────────────────────────────────────────────
+  if (mode === "detail") {
+    const c = clients.find(cl => cl.id === detailId);
+    if (!c) {
+      // Client was deleted while we were viewing it — fall back to list.
+      setMode("list"); setDetailId(null);
+      return null;
+    }
+    const docs = (invoices || []).filter(i => i.client === c.name);
+    const realInvoices = docs.filter(d => d.type !== "estimate");
+    const realEstimates = docs.filter(d => d.type === "estimate");
+    const sortByDate = (a, b) => (a.date < b.date ? 1 : -1);
+    realInvoices.sort(sortByDate);
+    realEstimates.sort(sortByDate);
+    const outstanding = realInvoices
+      .filter(i => i.status === "outstanding" || i.status === "net30" || i.status === "partial")
+      .reduce((s, i) => s + calcTotals(i).balance, 0);
+    const totalBilled = realInvoices.reduce((s, i) => s + calcTotals(i).total, 0);
+    const billing = c.billingAddress || {};
+
+    return (
+      <div style={{ paddingBottom: 40 }}>
+        {/* Header bar */}
+        <div style={{ background: NAVY2, padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={() => { setMode("list"); setDetailId(null); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+            {c.phone && <div style={{ fontSize: 12, color: "#8899bb" }}>{c.phone}</div>}
+          </div>
+          <button onClick={() => startEdit(c)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 12 }}>Edit</button>
+        </div>
+
+        {/* KPI strip */}
+        <div style={{ background: NAVY2, padding: "0 16px 12px", display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>{fmt(outstanding)}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Total Billed</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>{fmt(totalBilled)}</div></div>
+        </div>
+
+        <div style={{ padding: 12 }}>
+          {/* Contact card */}
+          {(c.email || c.email2 || c.phone || c.fax) && (
+            <div style={{ ...S.card, padding: "12px 14px", marginBottom: 12 }}>
+              {c.email && <div style={{ fontSize: 13, color: "#444" }}>{c.email}</div>}
+              {c.email2 && <div style={{ fontSize: 13, color: "#444" }}>{c.email2}</div>}
+              {c.phone && <div style={{ fontSize: 13, color: "#444" }}>{c.phone}</div>}
+              {c.fax && <div style={{ fontSize: 13, color: "#444" }}>fax {c.fax}</div>}
+            </div>
+          )}
+
+          {/* Job sites list */}
+          {(c.addresses || []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", padding: "0 4px", marginBottom: 6 }}>Job Sites ({c.addresses.length})</div>
+              {c.addresses.map(a => (
+                <div key={a.id} style={{ ...S.card, padding: "10px 14px", marginBottom: 6 }}>
+                  {a.label && <div style={{ fontWeight: 700, fontSize: 13, color: NAVY }}>{a.label}</div>}
+                  {a.line1 && <div style={{ fontSize: 13, color: "#444" }}>{a.line1}</div>}
+                  {a.line2 && <div style={{ fontSize: 13, color: "#444" }}>{a.line2}</div>}
+                  {a.line3 && <div style={{ fontSize: 13, color: "#444" }}>{a.line3}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Billing address */}
+          {(billing.line1 || billing.line2 || billing.line3) && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", padding: "0 4px", marginBottom: 6 }}>Billing Address</div>
+              <div style={{ ...S.card, padding: "10px 14px" }}>
+                {billing.line1 && <div style={{ fontSize: 13, color: "#444" }}>{billing.line1}</div>}
+                {billing.line2 && <div style={{ fontSize: 13, color: "#444" }}>{billing.line2}</div>}
+                {billing.line3 && <div style={{ fontSize: 13, color: "#444" }}>{billing.line3}</div>}
+              </div>
+            </div>
+          )}
+
+          {/* Invoices */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", padding: "0 4px", marginBottom: 6 }}>Invoices ({realInvoices.length})</div>
+            {realInvoices.length === 0 ? (
+              <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 13, color: "#888" }}>No invoices yet for this client.</div>
+            ) : realInvoices.map(inv => {
+              const t = calcTotals(inv);
+              const { label: statusLabel, color: pillColor } = statusDisplay(inv);
+              const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
+              const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
+              const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
+              return (
+                <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelectInvoice} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
+              );
+            })}
+          </div>
+
+          {/* Estimates */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", padding: "0 4px", marginBottom: 6 }}>Estimates ({realEstimates.length})</div>
+            {realEstimates.length === 0 ? (
+              <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 13, color: "#888" }}>No estimates yet for this client.</div>
+            ) : realEstimates.map(inv => {
+              const t = calcTotals(inv);
+              const closed = inv.status === "approved" || !!inv.convertedToId;
+              const pillLabel = inv.convertedToId ? "\u2192 Invoice" : inv.status === "approved" ? "\u2713 Approved" : "Open";
+              const pillColor = closed ? "#27ae60" : "#8899bb";
+              return (
+                <EstimateListCard key={inv.id} inv={inv} onSelect={onSelectInvoice} pillLabel={pillLabel} pillColor={pillColor} total={t.total} />
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── List mode ──────────────────────────────────────────────────────────
+  const filtered = clients.filter(c => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const hay = [c.name, c.email, c.email2, c.phone, ...(c.addresses || []).map(a => `${a.label} ${a.line1} ${a.line2} ${a.line3}`)].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
   return (
-    <div style={{ padding: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({clients.length})</span>
-        <button onClick={() => startEdit(null)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 13 }}>+ Add</button>
-      </div>
-      {clients.map(c => (
-        <div key={c.id} onClick={() => startEdit(c)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer" }}>
-          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{c.name}</div>
-          {c.phone && <div style={{ fontSize: 13, color: "#666" }}>{c.phone}</div>}
-          {c.email && <div style={{ fontSize: 13, color: "#666" }}>{c.email}</div>}
+    <div>
+      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" />
+      <div style={{ padding: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
+          <button onClick={() => startEdit(null)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 13 }}>+ Add</button>
         </div>
-      ))}
+        {filtered.map(c => {
+          const propCount = (c.addresses || []).length;
+          return (
+            <div key={c.id} onClick={() => openDetail(c)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{c.name}</div>
+                {c.phone && <div style={{ fontSize: 13, color: "#666" }}>{c.phone}</div>}
+                {c.email && <div style={{ fontSize: 13, color: "#666", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.email}</div>}
+              </div>
+              {propCount > 1 && (
+                <span style={{ ...S.pill("#2980b9"), marginLeft: 10 }}>{propCount} sites</span>
+              )}
+            </div>
+          );
+        })}
+        {filtered.length === 0 && search && (
+          <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -4513,7 +4905,7 @@ export default function App() {
         <>
           {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
           {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
-          {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
+          {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
           {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}

@@ -25,6 +25,8 @@ function toInvoice(row, items = [], payments = []) {
     clientInfo: row.client_info || null,
     convertedToId: row.converted_to_id || null,
     viewToken: row.view_token || null,
+    jobAddress: row.job_address || null,
+    billingAddress: row.billing_address || null,
     // Optimistic-lock token. The server returns this on every save and we
     // pass it back on the next save so a concurrent edit on another device
     // can be detected before it overwrites changes.
@@ -56,6 +58,20 @@ function toInvoice(row, items = [], payments = []) {
 }
 
 function toClient(row) {
+  // Promote legacy flat address1/2/3 into a single "Primary" entry in
+  // addresses[] when addresses is empty/missing. Keeps old data usable
+  // even before migration 008 is applied.
+  let addresses = Array.isArray(row.addresses) ? row.addresses : []
+  const hasFlat = !!(row.address1 || row.address2 || row.address3)
+  if (addresses.length === 0 && hasFlat) {
+    addresses = [{
+      id: 'primary',
+      label: 'Primary',
+      line1: row.address1 || '',
+      line2: row.address2 || '',
+      line3: row.address3 || '',
+    }]
+  }
   return {
     id: row.id,
     name: row.name,
@@ -65,9 +81,13 @@ function toClient(row) {
     phone: row.phone || '',
     fax: row.fax || '',
     contact: row.contact || '',
+    // Legacy flat fields kept for any code path that still reads them
     address1: row.address1 || '',
     address2: row.address2 || '',
     address3: row.address3 || '',
+    // New structured addresses
+    addresses,
+    billingAddress: row.billing_address || null,
   }
 }
 
@@ -169,6 +189,8 @@ export async function upsertInvoice(inv, isNew) {
       client_info: inv.clientInfo || null,
       converted_to_id: inv.convertedToId || null,
       view_token: inv.viewToken || null,
+      job_address: inv.jobAddress || null,
+      billing_address: inv.billingAddress || null,
     },
     items: (inv.items || []).map((it, i) => ({
       name: it.name || '',
@@ -294,8 +316,17 @@ export async function deleteInvoice(id) {
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
 
-export async function insertClient(client) {
-  const { data, error } = await supabase.from('clients').insert({
+// Build the clients-table payload. After migration 008, the structured
+// addresses[] / billing_address columns exist; before that they don't.
+// We always WRITE them — Supabase silently ignores writes to columns that
+// don't exist on the table for jsonb default-empty paths, but to be safe
+// we wrap in a try/catch fallback.
+function clientPayload(client) {
+  const addresses = Array.isArray(client.addresses) ? client.addresses : []
+  // Mirror first job-site address back into the legacy flat columns so any
+  // code path / report still reading address1/2/3 keeps working.
+  const primary = addresses[0] || {}
+  return {
     name: client.name,
     email: client.email || null,
     secondary_email: client.email2 || null,
@@ -303,28 +334,43 @@ export async function insertClient(client) {
     phone: client.phone || null,
     fax: client.fax || null,
     contact: client.contact || null,
-    address1: client.address1 || null,
-    address2: client.address2 || null,
-    address3: client.address3 || null,
-  }).select().single()
-  if (error) throw error
+    address1: primary.line1 || client.address1 || null,
+    address2: primary.line2 || client.address2 || null,
+    address3: primary.line3 || client.address3 || null,
+    addresses,
+    billing_address: client.billingAddress || null,
+  }
+}
+
+export async function insertClient(client) {
+  const payload = clientPayload(client)
+  const { data, error } = await supabase.from('clients').insert(payload).select().single()
+  if (error) {
+    // If the new columns don't exist yet (migration 008 not applied), retry
+    // without them so the app stays usable.
+    if (/column .*(addresses|billing_address)/.test(error.message || '')) {
+      const { addresses, billing_address, ...legacy } = payload
+      const { data: data2, error: e2 } = await supabase.from('clients').insert(legacy).select().single()
+      if (e2) throw e2
+      return data2.id
+    }
+    throw error
+  }
   return data.id
 }
 
 export async function updateClient(client) {
-  const { error } = await supabase.from('clients').update({
-    name: client.name,
-    email: client.email || null,
-    secondary_email: client.email2 || null,
-    mobile: client.mobile || null,
-    phone: client.phone || null,
-    fax: client.fax || null,
-    contact: client.contact || null,
-    address1: client.address1 || null,
-    address2: client.address2 || null,
-    address3: client.address3 || null,
-  }).eq('id', client.id)
-  if (error) throw error
+  const payload = clientPayload(client)
+  const { error } = await supabase.from('clients').update(payload).eq('id', client.id)
+  if (error) {
+    if (/column .*(addresses|billing_address)/.test(error.message || '')) {
+      const { addresses, billing_address, ...legacy } = payload
+      const { error: e2 } = await supabase.from('clients').update(legacy).eq('id', client.id)
+      if (e2) throw e2
+      return
+    }
+    throw error
+  }
 }
 
 // ─── Saved Items ──────────────────────────────────────────────────────────────
