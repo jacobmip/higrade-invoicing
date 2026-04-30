@@ -2044,14 +2044,30 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
+  const tabIndex = TABS.indexOf(tab);
+  // dragX is the live finger offset (px) during an in-progress swipe.
+  // animating=true while the slide settles to its final position.
   const [dragX, setDragX] = useState(0);
-  const touchRef = useRef({ x: 0, y: 0, active: false, locked: null });
+  const [animating, setAnimating] = useState(false);
+  const trackRef = useRef(null);
+  const touchRef = useRef({ x: 0, y: 0, active: false, locked: null, width: 0 });
+
+  const goToTab = (next) => {
+    if (next === tab) { setDragX(0); return; }
+    setAnimating(true);
+    setTab(next);
+    setDragX(0);
+    // Match the CSS transition duration below.
+    setTimeout(() => setAnimating(false), 260);
+  };
 
   // Horizontal swipe between tabs (left/right). Only treated as a swipe when
   // horizontal travel dominates — vertical movement still scrolls.
   const onTouchStart = (e) => {
+    if (animating) return;
     const t = e.touches[0];
-    touchRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null };
+    const width = trackRef.current?.offsetWidth || window.innerWidth;
+    touchRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null, width };
     setDragX(0);
   };
   const onTouchMove = (e) => {
@@ -2064,22 +2080,31 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
         touchRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
       }
     }
-    if (touchRef.current.locked === "x") setDragX(dx);
+    if (touchRef.current.locked === "x") {
+      // Resist past the edges so it feels like a rubber-band, not infinite.
+      let clamped = dx;
+      if ((tabIndex === 0 && dx > 0) || (tabIndex === TABS.length - 1 && dx < 0)) {
+        clamped = dx * 0.3;
+      }
+      setDragX(clamped);
+    }
   };
   const onTouchEnd = () => {
     if (touchRef.current.locked === "x") {
-      const threshold = 60;
-      const idx = TABS.indexOf(tab);
-      if (dragX < -threshold && idx < TABS.length - 1) setTab(TABS[idx + 1]);
-      else if (dragX > threshold && idx > 0) setTab(TABS[idx - 1]);
+      const width = touchRef.current.width || 1;
+      const ratio = dragX / width;
+      const threshold = 0.18; // need to drag at least ~18% of viewport width
+      let next = tabIndex;
+      if (ratio < -threshold && tabIndex < TABS.length - 1) next = tabIndex + 1;
+      else if (ratio > threshold && tabIndex > 0) next = tabIndex - 1;
+      goToTab(TABS[next]);
+    } else {
+      setDragX(0);
     }
-    touchRef.current = { x: 0, y: 0, active: false, locked: null };
-    setDragX(0);
+    touchRef.current = { x: 0, y: 0, active: false, locked: null, width: 0 };
   };
 
-  const filtered = invoices.filter(inv => tab === "all" ? true : tab === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === tab);
-  const years = [...new Set(filtered.map(i => i.year || new Date(i.date).getFullYear()))].sort((a, b) => b - a);
-  const yearTotal = yr => filtered.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).reduce((s, i) => s + calcTotals(i).total, 0);
+  const filterFor = (key) => invoices.filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === key);
   const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
@@ -2094,7 +2119,7 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
         </div>
         <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
           {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
+            <button key={t} onClick={() => goToTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
           ))}
         </div>
       </>
@@ -2102,42 +2127,80 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
     return () => setSubHeader?.(null);
   }, [tab, outstanding, paidThisYear, setSubHeader]);
 
-  return (
-    <div>
-      <div
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        style={{ padding: "12px 12px 0", transform: `translateX(${Math.max(-80, Math.min(80, dragX * 0.3))}px)`, transition: dragX === 0 ? "transform 0.2s" : "none", touchAction: "pan-y" }}
-      >
-        {years.map(yr => (
-          <div key={yr}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 4px", marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#8899bb", letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{yr}</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#555" }}>{fmt(yearTotal(yr))}</span>
-            </div>
-            {filtered.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).map(inv => {
-              const t = calcTotals(inv);
-              const { label: statusLabel, color: pillColor } = statusDisplay(inv);
-              const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
-              const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
-              const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
-              return (
-                <div key={inv.id} onClick={() => onSelect(inv)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client}</div>
-                    <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: amountColor }}>{displayAmt}</div>
-                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", alignItems: "center", marginTop: 2 }}>
-                      {lastMethod && <span style={{ fontSize: 9, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{lastMethod}</span>}
-                      <span style={S.pill(pillColor)}>{statusLabel}</span>
-                    </div>
-                  </div>
+  // Render one column per tab inside a flex track, then translate the track.
+  // This produces a real carousel feel: the next/previous tab visibly slides
+  // in from the side as you drag, and snaps with a smooth animation on release.
+  const renderColumn = (key) => {
+    const list = filterFor(key);
+    const yrs = [...new Set(list.map(i => i.year || new Date(i.date).getFullYear()))].sort((a, b) => b - a);
+    const yrTotal = (yr) => list.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).reduce((s, i) => s + calcTotals(i).total, 0);
+    if (list.length === 0) {
+      return (
+        <div style={{ padding: "48px 24px", textAlign: "center" }}>
+          <Icon name="invoice" size={48} color="#dde2ee" />
+          <div style={{ fontSize: 16, fontWeight: 600, color: "#888", marginTop: 16, marginBottom: 8 }}>No {key === "all" ? "" : key + " "}invoices</div>
+          <div style={{ fontSize: 13, color: "#aaa" }}>{key === "paid" ? "Paid invoices will show up here." : key === "outstanding" ? "Unpaid invoices will show up here." : "Tap + to create your first invoice"}</div>
+        </div>
+      );
+    }
+    return yrs.map(yr => (
+      <div key={yr}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 4px", marginBottom: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#8899bb", letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{yr}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#555" }}>{fmt(yrTotal(yr))}</span>
+        </div>
+        {list.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).map(inv => {
+          const t = calcTotals(inv);
+          const { label: statusLabel, color: pillColor } = statusDisplay(inv);
+          const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
+          const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
+          const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
+          return (
+            <div key={inv.id} onClick={() => onSelect(inv)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client}</div>
+                <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: amountColor }}>{displayAmt}</div>
+                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", alignItems: "center", marginTop: 2 }}>
+                  {lastMethod && <span style={{ fontSize: 9, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{lastMethod}</span>}
+                  <span style={S.pill(pillColor)}>{statusLabel}</span>
                 </div>
-              );
-            })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    ));
+  };
+
+  // Translate the 3-column track. Each column is exactly the viewport width,
+  // so we shift by `-tabIndex * 100% + dragX px`.
+  const trackTransform = `translate3d(calc(${-tabIndex * 100}% + ${dragX}px), 0, 0)`;
+  const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (touchRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
+
+  return (
+    <div
+      ref={trackRef}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
+      style={{ overflow: "hidden", touchAction: "pan-y", minHeight: "60vh" }}
+    >
+      <div
+        style={{
+          display: "flex",
+          width: "300%",
+          transform: trackTransform,
+          transition: trackTransition,
+          willChange: "transform",
+        }}
+      >
+        {TABS.map(key => (
+          <div key={key} style={{ width: "33.3333%", flexShrink: 0, padding: "12px 12px 0", boxSizing: "border-box" }}>
+            {renderColumn(key)}
           </div>
         ))}
       </div>
