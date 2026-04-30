@@ -1634,7 +1634,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Convert estimate ↔ invoice (creates a copy, doesn't replace original).
   const handleConvert = () => {
     const targetType = isEstimate ? "invoice" : "estimate";
-    if (!confirm(`Create a copy of this as a${targetType === "estimate" ? "n" : ""} ${targetType}? The original ${form.type} will be kept.`)) return;
+    const msg = targetType === "estimate"
+      ? `Convert this invoice back to an estimate? The original invoice will be DELETED — only the new estimate will remain.`
+      : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
+    if (!confirm(msg)) return;
     onConvert?.(form, targetType);
   };
 
