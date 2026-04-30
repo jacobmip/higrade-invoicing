@@ -351,7 +351,7 @@ const S = {
     cursor: "pointer",
   }),
   input: {
-    width: "100%", border: "1.5px solid #dde2ee", borderRadius: 8,
+    width: "100%", minWidth: 0, maxWidth: "100%", border: "1.5px solid #dde2ee", borderRadius: 8,
     padding: "9px 12px", fontSize: 14, fontFamily: "'Barlow', sans-serif",
     outline: "none", background: "#fff", boxSizing: "border-box",
   },

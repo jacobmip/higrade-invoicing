@@ -42,6 +42,12 @@
 
       @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+      /* iOS Safari sets min-width: -webkit-min-content on <input type="date">
+         and <input type="time">, which overrides flex/grid 1fr columns and
+         pushes the right cell off the edge of the screen. Force inputs to
+         shrink to their parent. */
+      input, select, textarea { min-width: 0; max-width: 100%; box-sizing: border-box; }
+
       /* Strip the iOS "cancel" X and pill rounding from chat search inputs */
       input[type="search"]::-webkit-search-decoration,
       input[type="search"]::-webkit-search-cancel-button,
