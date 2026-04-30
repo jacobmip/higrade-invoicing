@@ -355,8 +355,44 @@ function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobal
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [vv, setVV] = useState(() => ({
+    height: typeof window !== "undefined" ? window.innerHeight : 0,
+    top: 0,
+  }));
   const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading]);
+  useEffect(() => {
+    const v = window.visualViewport;
+    if (!v) return;
+    const update = () => setVV({ height: v.height, top: v.offsetTop || 0 });
+    update();
+    v.addEventListener("resize", update);
+    v.addEventListener("scroll", update);
+    return () => { v.removeEventListener("resize", update); v.removeEventListener("scroll", update); };
+  }, []);
+  // Lock body scroll only while the input is focused so iOS can't scroll the page.
+  useEffect(() => {
+    if (!focused) return;
+    const prev = {
+      overflow: document.body.style.overflow,
+      position: document.body.style.position,
+      width: document.body.style.width,
+      top: document.body.style.top,
+    };
+    const scrollY = window.scrollY;
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.width = "100%";
+    document.body.style.top = `-${scrollY}px`;
+    return () => {
+      document.body.style.overflow = prev.overflow;
+      document.body.style.position = prev.position;
+      document.body.style.width = prev.width;
+      document.body.style.top = prev.top;
+      window.scrollTo(0, scrollY);
+    };
+  }, [focused]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, vv.height, focused]);
 
   const startListening = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -413,8 +449,14 @@ function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobal
     setLoading(false);
   };
 
+  // When the input is focused, promote the panel to a fixed overlay sized to
+  // the visible viewport so the iOS keyboard can never cover the chat.
+  const containerStyle = focused
+    ? { position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 350, background: "#f4f6fa", overflow: "hidden", border: "none", borderRadius: 0, maxWidth: 480, margin: "0 auto" }
+    : { position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
+
   return (
-    <div style={{ position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" }}>
+    <div style={containerStyle}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 62, overflowY: "auto", padding: 14 }}>
         {msgs.map((m, i) => (
@@ -454,6 +496,8 @@ function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobal
           aria-label="Job description"
           style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none" }}
           value={input}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && send()}
           placeholder={listening ? "Listening…" : "Describe a job…"}
@@ -682,24 +726,48 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const ttsRef = useRef(false);
   const lastSpokenIdxRef = useRef(-1);
   const endRef = useRef(null);
-  // Track the iOS keyboard inset so the input bar can sit above the keyboard
-  // without breaking the rest of the modal layout. We compute:
-  //   keyboardInset = window.innerHeight - (visualViewport.height + visualViewport.offsetTop)
-  // which is the number of CSS pixels the keyboard is covering at the bottom.
-  const [kbInset, setKbInset] = useState(0);
+  // Resize the modal to fit exactly inside the visible viewport so when the
+  // iOS keyboard opens the chat shrinks (instead of being pushed off-screen).
+  // We track both the viewport height AND its offsetTop because iOS shifts the
+  // visual viewport down a bit when the address bar is visible.
+  const [vv, setVV] = useState(() => ({
+    height: typeof window !== "undefined" ? window.innerHeight : 0,
+    top: 0,
+  }));
   useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const update = () => {
-      const inset = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-      setKbInset(inset);
-    };
+    const v = window.visualViewport;
+    if (!v) return;
+    const update = () => setVV({ height: v.height, top: v.offsetTop || 0 });
     update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+    v.addEventListener("resize", update);
+    v.addEventListener("scroll", update);
+    return () => { v.removeEventListener("resize", update); v.removeEventListener("scroll", update); };
   }, []);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, kbInset]);
+
+  // Lock the underlying page scroll while the chat is open so iOS can't
+  // scroll the body when the input is focused.
+  useEffect(() => {
+    const prev = {
+      overflow: document.body.style.overflow,
+      position: document.body.style.position,
+      width: document.body.style.width,
+      top: document.body.style.top,
+    };
+    const scrollY = window.scrollY;
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.width = "100%";
+    document.body.style.top = `-${scrollY}px`;
+    return () => {
+      document.body.style.overflow = prev.overflow;
+      document.body.style.position = prev.position;
+      document.body.style.width = prev.width;
+      document.body.style.top = prev.top;
+      window.scrollTo(0, scrollY);
+    };
+  }, []);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, vv.height]);
 
   // Pick the most natural-sounding English voice available. iOS exposes
   // "Samantha", "Ava", "Allison", "Karen" — Apple's enhanced/premium voices —
@@ -874,7 +942,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
 
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, top: 0, bottom: 0, zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden", paddingBottom: kbInset }}>
+    <div style={{ position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
