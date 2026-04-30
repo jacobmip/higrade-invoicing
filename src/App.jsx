@@ -2175,9 +2175,10 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
     ));
   };
 
-  // Translate the 3-column track. Each column is exactly the viewport width,
-  // so we shift by `-tabIndex * 100% + dragX px`.
-  const trackTransform = `translate3d(calc(${-tabIndex * 100}% + ${dragX}px), 0, 0)`;
+  // Translate the 3-column track. The track is 300% wide and translateX %
+  // is relative to the *element's own width*, so to advance by one column
+  // (one viewport width) we shift by 1/3 of the track = 33.3333%.
+  const trackTransform = `translate3d(calc(${(-tabIndex * 100) / 3}% + ${dragX}px), 0, 0)`;
   const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (touchRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
 
   return (
