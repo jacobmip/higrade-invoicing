@@ -269,7 +269,7 @@ function stripActionBlocks(text) {
   return result.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-async function sendInvoiceEmail(invoice, client) {
+async function sendInvoiceEmail(invoice, client, message) {
   const t = calcTotals(invoice);
   const itemsHtml = invoice.items.map(it => {
     const title = it.name || it.desc || "";
@@ -293,7 +293,7 @@ async function sendInvoiceEmail(invoice, client) {
   const res = await fetch(api("/api/send-email"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ to: client.email, clientName: client.name, invoiceId: invoice.id, total: t.total.toFixed(2), invoiceHtml }),
+    body: JSON.stringify({ to: client.email, clientName: client.name, invoiceId: invoice.id, total: t.total.toFixed(2), invoiceHtml, message: message || "" }),
   });
   return res.json();
 }
@@ -577,6 +577,25 @@ function PaymentModal({ invoice, onClose, onSave }) {
 }
 
 // ─── Confirm Send Modal ─────────────────────────────────────────────────────
+// Default email message templates. {name} is replaced live with the recipient.
+const DEFAULT_INVOICE_MESSAGE = `Aloha {name},
+
+Please find your invoice attached for the completed work. Payment is due upon receipt. Kindly submit payment at your earliest convenience.
+
+If you have any questions or need assistance with payment, please feel free to reach out.
+
+Mahalo,
+HI Grade Plumbing`;
+
+const DEFAULT_ESTIMATE_MESSAGE = `Aloha {name},
+
+Mahalo for the opportunity to provide an estimate for your project. Please review the details below and tap "Review & Sign" when you're ready to approve the work.
+
+Let me know if you have any questions or would like to discuss any adjustments.
+
+Mahalo,
+HI Grade Plumbing`;
+
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
   // kind: "invoice" | "estimate"
   const [email, setEmail] = useState(client?.email || "");
@@ -585,10 +604,23 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   const isEstimate = kind === "estimate";
   const valid = /\S+@\S+\.\S+/.test(email);
   const docNum = invoice?.id || (isEstimate ? "EST0000" : "INV0000");
+  const defaultTemplate = isEstimate ? DEFAULT_ESTIMATE_MESSAGE : DEFAULT_INVOICE_MESSAGE;
+  // Track whether the user has manually edited the message. Until they do,
+  // we keep regenerating the template with the latest recipient name.
+  const [message, setMessage] = useState(defaultTemplate.replace("{name}", name || "there"));
+  const [edited, setEdited] = useState(false);
+  // When the recipient name changes and the user hasn't customized the
+  // message yet, refresh the salutation. Once they edit the textarea, we
+  // stop touching it so we don't blow away their edits.
+  useEffect(() => {
+    if (!edited) setMessage(defaultTemplate.replace("{name}", name || "there"));
+  }, [name, edited, defaultTemplate]);
 
-  return (
+  // Portal to document.body — InvoiceForm's carousel uses CSS transform,
+  // which would otherwise capture our position:fixed and shift the modal.
+  return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "6px 0 max(20px, env(safe-area-inset-bottom))" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "6px 0 max(20px, env(safe-area-inset-bottom))", maxHeight: "92vh", overflowY: "auto" }}>
         <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "6px auto 14px" }} />
         <div style={{ padding: "0 20px 6px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
           Confirm send
@@ -615,16 +647,35 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
           <label style={{ ...S.label, marginTop: 10 }}>Send to email</label>
           <input value={email} onChange={e => setEmail(e.target.value)} style={S.input} placeholder="name@example.com" type="email" autoCapitalize="none" autoCorrect="off" />
           {!valid && email.length > 0 && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 4 }}>That doesn't look like a valid email.</div>}
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 4 }}>
+            <label style={{ ...S.label, marginBottom: 0 }}>Message</label>
+            {edited && (
+              <button
+                type="button"
+                onClick={() => { setEdited(false); setMessage(defaultTemplate.replace("{name}", name || "there")); }}
+                style={{ background: "none", border: "none", color: ORANGE, fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", padding: 0, fontFamily: "'Barlow Condensed', sans-serif" }}
+              >Reset to default</button>
+            )}
+          </div>
+          <textarea
+            value={message}
+            onChange={e => { setEdited(true); setMessage(e.target.value); }}
+            rows={9}
+            style={{ ...S.input, resize: "vertical", minHeight: 160, fontFamily: "inherit", lineHeight: 1.5, fontSize: 14, whiteSpace: "pre-wrap" }}
+          />
+          <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>This appears at the top of the email.</div>
         </div>
 
         <div style={{ display: "flex", gap: 10, padding: "16px 20px 0" }}>
           <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
-          <button onClick={() => valid && onConfirm({ name, email })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
+          <button onClick={() => valid && onConfirm({ name, email, message })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
             {sending ? "Sending…" : (isEstimate ? "Send Estimate" : "Send Invoice")}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1584,7 +1635,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
 
   // Called after user confirms recipient details in ConfirmSendModal.
-  const handleConfirmedSend = async ({ name, email }) => {
+  const handleConfirmedSend = async ({ name, email, message }) => {
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
     setSending(true);
     try {
@@ -1594,7 +1645,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         const params = new URLSearchParams({ id: form.id || "EST0000", client: form.client || "", total: t2.total.toFixed(2), job });
         const signingLink = `${window.location.origin}/sign?${params.toString()}`;
         const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
-        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
+        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items, message: message || "" }) });
         // Snapshot the version that was sent (best-effort — don't block on failure).
         if (form.id) {
           try { await db.recordInvoiceVersion(form, email, "Estimate sent"); }
@@ -1602,7 +1653,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         }
         alert("Estimate sent. Client will receive a signing link by email.");
       } else {
-        const result = await sendInvoiceEmail(form, client);
+        const result = await sendInvoiceEmail(form, client, message);
         if (result?.error) {
           setEmailStatus("Failed");
         } else {

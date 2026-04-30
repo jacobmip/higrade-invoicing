@@ -4,7 +4,7 @@ export default async function handler(req) {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
   try {
-    const { to, clientName, estimateId, total, signingLink, items } = await req.json();
+    const { to, clientName, estimateId, total, signingLink, items, message } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) return new Response(JSON.stringify({ error: 'Email not configured' }), {
@@ -15,6 +15,17 @@ export default async function handler(req) {
       `<tr><td style="padding: 9px 14px; border-bottom: 1px solid #eee; color: #333;">${it.name || it.desc || ''}</td><td style="padding: 9px 14px; border-bottom: 1px solid #eee; text-align: right; font-weight: bold; color: #E8622A;">$${it.total || ''}</td></tr>`
     ).join('');
 
+    // Escape HTML in the user-edited message and convert newlines to <br>.
+    const escapeHtml = (s) => String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    const messageHtml = message && message.trim()
+      ? escapeHtml(message).replace(/\n/g, '<br>')
+      : `Hi ${escapeHtml(clientName || '')},<br><br>We've prepared estimate <strong>${escapeHtml(estimateId || '')}</strong> for your review. Please look over the details below and click the button to approve.`;
+
     const body = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: #0a1628; padding: 24px; text-align: center;">
@@ -22,8 +33,7 @@ export default async function handler(req) {
           <p style="color: #8899bb; margin: 4px 0 0; font-size: 12px; letter-spacing: 1px;">HONOLULU, HAWAII · (808) 393-0015</p>
         </div>
         <div style="padding: 32px; background: #f4f6fa;">
-          <p style="color: #444; font-size: 16px;">Hi ${clientName},</p>
-          <p style="color: #444;">We've prepared estimate <strong>${estimateId}</strong> for your review. Please look over the details below and click the button to approve.</p>
+          <div style="color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 16px;">${messageHtml}</div>
           ${itemsHtml ? `<table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #fff; border-radius: 8px; overflow: hidden;"><tbody>${itemsHtml}</tbody></table>` : ''}
           <div style="background: #0a1628; color: #E8622A; padding: 16px; border-radius: 8px; text-align: center; margin: 24px 0;">
             <div style="color: #8899bb; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 4px;">Estimate Total</div>

@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, clientName, invoiceId, total, invoiceHtml } = await req.json();
+    const { to, clientName, invoiceId, total, invoiceHtml, message } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
@@ -15,6 +15,19 @@ export default async function handler(req) {
       });
     }
 
+    // Escape HTML entities then convert newlines to <br>. We accept a
+    // user-edited multi-line message and want it to render as the user
+    // typed it without re-introducing XSS via the recipient's email view.
+    const escapeHtml = (s) => String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    const messageHtml = message && message.trim()
+      ? escapeHtml(message).replace(/\n/g, '<br>')
+      : `Hi ${escapeHtml(clientName || '')},<br><br>Please find your invoice <strong>${escapeHtml(invoiceId || '')}</strong> attached below.`;
+
     const emailBody = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: #0a1628; padding: 24px; text-align: center;">
@@ -22,8 +35,7 @@ export default async function handler(req) {
           <p style="color: #8899bb; margin: 4px 0 0; font-size: 12px; letter-spacing: 1px;">HONOLULU, HAWAII · LIC PJ-13579</p>
         </div>
         <div style="padding: 32px; background: #f4f6fa;">
-          <p style="color: #444; font-size: 16px;">Hi ${clientName},</p>
-          <p style="color: #444;">Please find your invoice <strong>${invoiceId}</strong> attached below.</p>
+          <div style="color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 16px;">${messageHtml}</div>
           ${invoiceHtml}
           <div style="background: #0a1628; color: #E8622A; padding: 16px; border-radius: 8px; text-align: center; margin-top: 24px;">
             <strong style="font-size: 20px;">Total Due: $${total}</strong>
