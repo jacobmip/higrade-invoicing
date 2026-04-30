@@ -1383,6 +1383,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   formRef.current = form;
   const autoSaveTimerRef = useRef(null);
   const skipFirstRef = useRef(true);
+  // When the parent swaps in a different invoice/estimate (e.g. after Convert
+  // or after the AI creates a new doc), reset the form to the new record so we
+  // don't keep editing the previous doc's data — which would otherwise get
+  // auto-saved back into the new record's row and clobber its type/fields.
+  useEffect(() => {
+    if (invoice?.id && invoice.id !== autoSavedId) {
+      setForm({ discountType: "$", ...invoice });
+      setAutoSavedId(invoice.id);
+      skipFirstRef.current = true; // suppress the auto-save triggered by this reset
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoice?.id]);
   const flushAutoSaveRef = useRef(async () => {});
   flushAutoSaveRef.current = async () => {
     if (autoSaveTimerRef.current) {
