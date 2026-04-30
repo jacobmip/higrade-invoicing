@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
 import { api } from './apiBase.js';
@@ -2086,77 +2086,50 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
   const tabIndex = TABS.indexOf(tab);
-  // dragX is the live finger offset (px) during an in-progress swipe.
-  // animating=true while the slide settles to its final position.
-  const [dragX, setDragX] = useState(0);
-  const [animating, setAnimating] = useState(false);
-  // Measured viewport width for pixel-based track translation. Pixel-based
-  // is more reliable than `%` because the track is `width:300%` and percentage
-  // translateX is relative to the *element's own width*, which on iOS Safari
-  // can briefly mis-measure during sticky-header transitions.
-  const [viewportW, setViewportW] = useState(0);
+  // Native CSS scroll-snap carousel. Each column is `width: 100%` of the
+  // scroll container, and the container has `scroll-snap-type: x mandatory`
+  // so swipes snap exactly to the next column. No JS measurement, no manual
+  // translate math — the browser handles everything correctly regardless of
+  // page scroll position or sticky-header state.
   const trackRef = useRef(null);
-  const touchRef = useRef({ x: 0, y: 0, active: false, locked: null, width: 0 });
-
-  // Measure parent width on mount and on resize. trackRef is the overflow
-  // container; its offsetWidth is the visible viewport (one column wide).
-  useEffect(() => {
-    const measure = () => { if (trackRef.current) setViewportW(trackRef.current.offsetWidth); };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+  const programmaticScrollRef = useRef(false);
+  // After mount, do a layout-effect scroll to the active column without
+  // animation so column 0 always starts visible (avoids browsers restoring
+  // a stale scrollLeft on remount).
+  useLayoutEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollLeft = el.clientWidth * tabIndex;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const goToTab = (next) => {
-    if (next === tab) { setDragX(0); return; }
-    setAnimating(true);
-    setTab(next);
-    setDragX(0);
-    // Match the CSS transition duration below.
-    setTimeout(() => setAnimating(false), 260);
+  // When the active tab changes (e.g. user tapped a tab button), scroll the
+  // container to that column. Smooth scroll triggers the native snap.
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const target = el.clientWidth * tabIndex;
+    if (Math.abs(el.scrollLeft - target) < 2) return;
+    programmaticScrollRef.current = true;
+    el.scrollTo({ left: target, behavior: "smooth" });
+    setTimeout(() => { programmaticScrollRef.current = false; }, 400);
+  }, [tabIndex]);
+
+  // When the user manually swipes, the container's scrollLeft changes. Detect
+  // which column is most-visible and update `tab` so the highlighted indicator
+  // tracks the swipe.
+  const onScroll = () => {
+    if (programmaticScrollRef.current) return;
+    const el = trackRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    const clamped = Math.max(0, Math.min(TABS.length - 1, idx));
+    if (TABS[clamped] !== tab) setTab(TABS[clamped]);
   };
 
-  // Horizontal swipe between tabs (left/right). Only treated as a swipe when
-  // horizontal travel dominates — vertical movement still scrolls.
-  const onTouchStart = (e) => {
-    if (animating) return;
-    const t = e.touches[0];
-    const width = trackRef.current?.offsetWidth || window.innerWidth;
-    touchRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null, width };
-    setDragX(0);
-  };
-  const onTouchMove = (e) => {
-    if (!touchRef.current.active) return;
-    const t = e.touches[0];
-    const dx = t.clientX - touchRef.current.x;
-    const dy = t.clientY - touchRef.current.y;
-    if (touchRef.current.locked === null) {
-      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-        touchRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-      }
-    }
-    if (touchRef.current.locked === "x") {
-      // Resist past the edges so it feels like a rubber-band, not infinite.
-      let clamped = dx;
-      if ((tabIndex === 0 && dx > 0) || (tabIndex === TABS.length - 1 && dx < 0)) {
-        clamped = dx * 0.3;
-      }
-      setDragX(clamped);
-    }
-  };
-  const onTouchEnd = () => {
-    if (touchRef.current.locked === "x") {
-      const width = touchRef.current.width || 1;
-      const ratio = dragX / width;
-      const threshold = 0.18; // need to drag at least ~18% of viewport width
-      let next = tabIndex;
-      if (ratio < -threshold && tabIndex < TABS.length - 1) next = tabIndex + 1;
-      else if (ratio > threshold && tabIndex > 0) next = tabIndex - 1;
-      goToTab(TABS[next]);
-    } else {
-      setDragX(0);
-    }
-    touchRef.current = { x: 0, y: 0, active: false, locked: null, width: 0 };
+  const goToTab = (next) => {
+    if (next === tab) return;
+    setTab(next); // useEffect above will scroll to the new column
   };
 
   const filterFor = (key) => invoices.filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === key);
@@ -2179,7 +2152,9 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
         </div>
       </>
     );
-    return () => setSubHeader?.(null);
+    // No cleanup that nulls subHeader — the App-level useEffect on `tab`
+    // already clears it when switching bottom-nav tabs. A cleanup here would
+    // race with the next tab's effect and blank out the just-pushed header.
   }, [tab, outstanding, paidThisYear, setSubHeader]);
 
   // Render one column per tab inside a flex track, then translate the track.
@@ -2230,31 +2205,32 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
     ));
   };
 
-  // Translate the 3-column track in pixels (more reliable than %). Each tab
-  // step shifts by one viewport width to the left.
-  const trackTransform = `translate3d(${-tabIndex * viewportW + dragX}px, 0, 0)`;
-  const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (touchRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
-
   return (
-    <div
-      ref={trackRef}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
-      style={{ overflow: "hidden", touchAction: "pan-y", minHeight: "60vh" }}
-    >
+    <div style={{ minHeight: "60vh" }}>
       <div
+        ref={trackRef}
+        onScroll={onScroll}
         style={{
           display: "flex",
-          width: viewportW ? viewportW * TABS.length : "300%",
-          transform: trackTransform,
-          transition: trackTransition,
-          willChange: "transform",
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollSnapType: "x mandatory",
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
         }}
       >
         {TABS.map(key => (
-          <div key={key} style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, padding: "12px 12px 0", boxSizing: "border-box" }}>
+          <div
+            key={key}
+            style={{
+              flex: "0 0 100%",
+              width: "100%",
+              scrollSnapAlign: "start",
+              scrollSnapStop: "always",
+              padding: "12px 12px 0",
+              boxSizing: "border-box",
+            }}
+          >
             {renderColumn(key)}
           </div>
         ))}
@@ -2275,7 +2251,7 @@ function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
         <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{invoices.length} total</div>
       </div>
     );
-    return () => setSubHeader?.(null);
+    // No cleanup — see InvoiceList. App-level useEffect on `tab` clears it.
   }, [invoices.length, setSubHeader]);
 
   return (
