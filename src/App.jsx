@@ -2396,9 +2396,6 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
           </div>
         ))}
       </div>
-      <button onClick={onNew} style={{ position: "fixed", bottom: 158, right: 20, width: 52, height: 52, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.45)", zIndex: 150 }}>
-        <Icon name="plus" size={24} color="#fff" />
-      </button>
     </div>
   );
 }
@@ -2545,9 +2542,6 @@ function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
           </div>
         ))}
       </div>
-      <button onClick={onNew} style={{ position: "fixed", bottom: 158, right: 20, width: 52, height: 52, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.45)", zIndex: 150 }}>
-        <Icon name="plus" size={24} color="#fff" />
-      </button>
     </div>
   );
 }
@@ -3223,9 +3217,18 @@ function ExpenseModal({ expense, onClose, onSave }) {
 }
 
 // ─── Expenses Tab ─────────────────────────────────────────────────────────────
-function ExpensesTab({ expenses, onSave, onDelete }) {
+function ExpensesTab({ expenses, onSave, onDelete, newToken }) {
   const [showModal, setShowModal] = useState(false);
   const [editExp, setEditExp] = useState(null);
+  // Header "+" button bumps newToken, which we treat as a request to open
+  // the expense entry modal. We skip the initial mount value so the modal
+  // doesn't auto-open on first render.
+  const firstRunRef = useRef(true);
+  useEffect(() => {
+    if (firstRunRef.current) { firstRunRef.current = false; return; }
+    setEditExp(null);
+    setShowModal(true);
+  }, [newToken]);
 
   const sorted = [...expenses].sort((a, b) => (b.date > a.date ? 1 : -1));
   const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
@@ -3295,9 +3298,6 @@ function ExpensesTab({ expenses, onSave, onDelete }) {
           );
         })}
       </div>
-      <button onClick={() => { setEditExp(null); setShowModal(true); }} style={{ position: "fixed", bottom: 158, right: 20, width: 52, height: 52, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.45)", zIndex: 150 }}>
-        <Icon name="plus" size={24} color="#fff" />
-      </button>
     </div>
   );
 }
@@ -3518,6 +3518,10 @@ export default function App() {
   const [showGlobalAI, setShowGlobalAI] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
+  // Counter bumped by the header "+" button when on the Expenses tab. The
+  // ExpensesTab watches this with useEffect and opens its modal in response.
+  // (Invoices/Estimates have direct onNew handlers, so they don't need this.)
+  const [expenseNewToken, setExpenseNewToken] = useState(0);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
   // Per-tab sub-header slot. Tab components render their KPI strip / filter
   // tabs into this so brand header + sub-header sit together inside a single
@@ -3939,13 +3943,32 @@ export default function App() {
 
       {view === "list" && (
         <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
-          <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
+          <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
               <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
               <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>LLC · HONOLULU</span>
             </div>
-            <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {(tab === "invoices" || tab === "estimates" || tab === "expenses") && (
+                <button
+                  onClick={() => {
+                    if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setView("form"); }
+                    else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setView("form"); }
+                    else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
+                  }}
+                  aria-label="New"
+                  style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                >
+                  <Icon name="plus" size={20} color="#fff" />
+                </button>
+              )}
+              <button
+                onClick={() => setShowGlobalAI(true)}
+                aria-label="AI assistant"
+                style={{ width: 36, height: 36, background: "transparent", borderRadius: 8, border: `2px solid ${ORANGE}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+              >
+                <Icon name="ai" size={18} color={ORANGE} />
+              </button>
             </div>
           </div>
           {subHeader.key === tab ? subHeader.content : null}
@@ -3987,19 +4010,14 @@ export default function App() {
           {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
-          {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} />}
+          {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
           {tab === "reports"   && <ReportsTab invoices={data.invoices} expenses={data.expenses || []} />}
           {tab === "calendar"  && <CalendarTab invoices={data.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
         </>
       )}
 
-      {!showGlobalAI && (
-        <button onClick={() => setShowGlobalAI(true)} style={{ position: "fixed", bottom: view === "form" ? 24 : 90, right: 20, width: 52, height: 52, borderRadius: "50%", background: NAVY, border: `2.5px solid ${ORANGE}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 20px rgba(10,22,40,0.45)", zIndex: 150 }}>
-          <Icon name="ai" size={22} color={ORANGE} />
-        </button>
-      )}
-
       {view === "list" && (
+
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
