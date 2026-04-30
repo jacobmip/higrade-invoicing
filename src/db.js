@@ -25,6 +25,10 @@ function toInvoice(row, items = [], payments = []) {
     clientInfo: row.client_info || null,
     convertedToId: row.converted_to_id || null,
     viewToken: row.view_token || null,
+    // Optimistic-lock token. The server returns this on every save and we
+    // pass it back on the next save so a concurrent edit on another device
+    // can be detected before it overwrites changes.
+    updatedAt: row.updated_at || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -131,70 +135,77 @@ export async function loadAll() {
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 
+// Save an invoice atomically via the save_invoice_with_items Postgres RPC.
+// All three writes (invoice header, line items, payments) happen inside one
+// transaction so a network drop can't leave you with an invoice that has
+// zero line items.
+//
+// Optimistic locking: we send the updated_at the client last loaded. If the
+// row in the database has a different updated_at, the RPC raises
+// 'CONCURRENT_EDIT' and we surface that as a tagged error.
+//
+// Returns the new updated_at so the caller can store it on the local copy.
 export async function upsertInvoice(inv, isNew) {
-  const { error: invErr } = await supabase.from('invoices').upsert({
-    id: inv.id,
-    type: inv.type || 'invoice',
-    client_id: inv.client_id || null,
-    client_name: inv.client || '',
-    date: inv.date || null,
-    due_date: inv.dueDate || null,
-    status: inv.status || 'outstanding',
-    tax: inv.tax ?? 4.712,
-    discount: inv.discount ?? 0,
-    discount_type: inv.discountType || '$',
-    notes: inv.notes || '',
-    year: inv.year,
-    gcal_date: inv.gcalDate || null,
-    gcal_event_id: inv.gcalEventId || null,
-    follow_up_date: inv.followUpDate || null,
-    follow_up_event_id: inv.followUpEventId || null,
-    signature_data: inv.signatureData || null,
-    signed_at: inv.signedAt || null,
-    client_info: inv.clientInfo || null,
-    converted_to_id: inv.convertedToId || null,
-    view_token: inv.viewToken || null,
-    updated_at: new Date().toISOString(),
-  })
-  if (invErr) throw invErr
-
-  await supabase.from('invoice_items').delete().eq('invoice_id', inv.id)
-  if (inv.items?.length) {
-    const { error: itemErr } = await supabase.from('invoice_items').insert(
-      inv.items.map((it, i) => ({
-        invoice_id: inv.id,
-        name: it.name || '',
-        // server column is `description`
-        description: it.desc || '',
-        qty: it.qty ?? 1,
-        price: it.price ?? 0,
-        unit: it.unit || 'ea',
-        discount: it.discount ?? 0,
-        discount_type: it.discountType || '%',
-        taxable: it.taxable !== false,
-        sort_order: i,
-      }))
-    )
-    if (itemErr) throw itemErr
+  const payload = {
+    inv: {
+      id: inv.id,
+      type: inv.type || 'invoice',
+      client_id: inv.client_id || null,
+      client_name: inv.client || '',
+      date: inv.date || null,
+      due_date: inv.dueDate || null,
+      status: inv.status || 'outstanding',
+      tax: inv.tax ?? 4.712,
+      discount: inv.discount ?? 0,
+      discount_type: inv.discountType || '$',
+      notes: inv.notes || '',
+      year: inv.year ?? null,
+      gcal_date: inv.gcalDate || null,
+      gcal_event_id: inv.gcalEventId || null,
+      follow_up_date: inv.followUpDate || null,
+      follow_up_event_id: inv.followUpEventId || null,
+      signature_data: inv.signatureData || null,
+      signed_at: inv.signedAt || null,
+      client_info: inv.clientInfo || null,
+      converted_to_id: inv.convertedToId || null,
+      view_token: inv.viewToken || null,
+    },
+    items: (inv.items || []).map((it, i) => ({
+      name: it.name || '',
+      description: it.desc || '',
+      qty: it.qty ?? 1,
+      price: it.price ?? 0,
+      unit: it.unit || 'ea',
+      discount: it.discount ?? 0,
+      discount_type: it.discountType || '%',
+      taxable: it.taxable !== false,
+      sort_order: i,
+    })),
+    payments: (inv.payments || []).map(p => ({
+      amount: p.amount ?? 0,
+      method: p.method || '',
+      date: p.date || null,
+      note: p.note || '',
+    })),
+    expected_updated_at: isNew ? null : (inv.updatedAt || null),
+    is_new: !!isNew,
   }
 
-  await supabase.from('payments').delete().eq('invoice_id', inv.id)
-  if (inv.payments?.length) {
-    const { error: payErr } = await supabase.from('payments').insert(
-      inv.payments.map(p => ({
-        invoice_id: inv.id,
-        amount: p.amount,
-        method: p.method || '',
-        date: p.date || null,
-        note: p.note || '',
-      }))
-    )
-    if (payErr) throw payErr
+  const { data, error } = await supabase.rpc('save_invoice_with_items', payload)
+  if (error) {
+    // Surface concurrent edit as a typed error the UI can handle distinctly.
+    if ((error.message || '').includes('CONCURRENT_EDIT')) {
+      const conflict = new Error('CONCURRENT_EDIT')
+      conflict.code = 'CONCURRENT_EDIT'
+      conflict.detail = error.message
+      throw conflict
+    }
+    throw error
   }
 
-  if (isNew) {
-    const next = parseInt(inv.id.replace('INV', '')) + 1
-    await supabase.from('settings').upsert({ key: 'next_num', value: String(next) })
+  return {
+    id: data?.id || inv.id,
+    updatedAt: data?.updated_at || null,
   }
 }
 

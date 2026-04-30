@@ -3775,20 +3775,22 @@ export default function App() {
       const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
       // Persist FIRST so we don't show success in the UI for records that fail
       // to land in Supabase. If the write throws we surface the error.
+      let saveResult;
       try {
-        await db.upsertInvoice(newInvoice, true);
+        saveResult = await db.upsertInvoice(newInvoice, true);
       } catch (e) {
         console.error('DB write failed for', id, e);
         // Roll back the synchronous counter so the next call reuses this number
         if (nextNumRef.current === num + 1) nextNumRef.current = num;
         throw e;
       }
+      const stamped = { ...newInvoice, updatedAt: saveResult?.updatedAt || null };
       setData(d => ({
         ...d,
-        invoices: [newInvoice, ...d.invoices],
+        invoices: [stamped, ...d.invoices],
         nextNum: Math.max(d.nextNum, num + 1),
       }));
-      return newInvoice;
+      return stamped;
     }
     if (parsed.action === "add_items") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
@@ -4025,11 +4027,20 @@ export default function App() {
   const partialSaveInvoice = async (updated) => {
     if (!selected?.id) return;
     const year = new Date(updated.date || today()).getFullYear();
-    const withMeta = { ...updated, id: selected.id, year };
+    // Carry updatedAt from the loaded copy so the RPC's optimistic-lock check
+    // can detect concurrent edits from another device.
+    const withMeta = { ...updated, id: selected.id, year, updatedAt: updated.updatedAt ?? selected.updatedAt };
     try {
-      await db.upsertInvoice(withMeta, false);
-      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? withMeta : inv) }));
-    } catch (e) { console.error('Auto-save failed:', e); }
+      const res = await db.upsertInvoice(withMeta, false);
+      const stamped = { ...withMeta, updatedAt: res?.updatedAt || withMeta.updatedAt };
+      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? stamped : inv) }));
+    } catch (e) {
+      if (e?.code === 'CONCURRENT_EDIT') {
+        alert('This invoice was updated on another device. Reload to see the latest version, then re-apply your changes.');
+      } else {
+        console.error('Auto-save failed:', e);
+      }
+    }
   };
 
   // Silent auto-save — persists the form without navigating away. Creates a
@@ -4040,26 +4051,45 @@ export default function App() {
     // Existing record — just update.
     if (form.id || selected?.id) {
       const id = form.id || selected.id;
-      const updated = { ...form, id, year };
+      // Preserve the updatedAt token from whichever copy has the freshest one.
+      const carriedUpdatedAt = form.updatedAt ?? selected?.updatedAt ?? null;
+      const updated = { ...form, id, year, updatedAt: carriedUpdatedAt };
       setData(d => ({
         ...d,
         invoices: d.invoices.some(inv => inv.id === id)
           ? d.invoices.map(inv => inv.id === id ? updated : inv)
           : [updated, ...d.invoices],
       }));
-      try { await db.upsertInvoice(updated, false); }
-      catch (e) { console.error('Auto-save failed (kept local copy):', e); }
-      if (!selected || selected.id !== id) setSelected(updated);
-      return updated;
+      let stamped = updated;
+      try {
+        const res = await db.upsertInvoice(updated, false);
+        stamped = { ...updated, updatedAt: res?.updatedAt || updated.updatedAt };
+        setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === id ? stamped : inv) }));
+      } catch (e) {
+        if (e?.code === 'CONCURRENT_EDIT') {
+          alert('This invoice was updated on another device. Reload to see the latest version, then re-apply your changes.');
+        } else {
+          console.error('Auto-save failed (kept local copy):', e);
+        }
+      }
+      if (!selected || selected.id !== id) setSelected(stamped);
+      return stamped;
     }
     // New record — mint an ID using the existing nextNum counter.
     const id = `INV${String(data.nextNum).padStart(4, "0")}`;
     const created = { ...form, id, year };
     setData(d => ({ ...d, invoices: [created, ...d.invoices], nextNum: d.nextNum + 1 }));
     setSelected(created);
-    try { await db.upsertInvoice(created, true); }
-    catch (e) { console.error('Auto-save (create) failed (kept local copy):', e); }
-    return created;
+    let stamped = created;
+    try {
+      const res = await db.upsertInvoice(created, true);
+      stamped = { ...created, updatedAt: res?.updatedAt || null };
+      setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === id ? stamped : inv) }));
+      setSelected(stamped);
+    } catch (e) {
+      console.error('Auto-save (create) failed (kept local copy):', e);
+    }
+    return stamped;
   };
 
   const removeClient = async (id) => {
