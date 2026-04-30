@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -3118,7 +3118,296 @@ function normalizeClientDraft(draft) {
   };
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, openClientId, onOpenedClient }) {
+// ─── CSV Importer (Invoice Simple → HI Grade) ─────────────────────────────────
+// RFC 4180-ish CSV parser. Handles quoted fields, escaped quotes (""),
+// CRLF line endings, and commas inside quotes. Returns { headers, rows }.
+function parseCSV(text) {
+  const rows = [];
+  let cur = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+  // Strip BOM
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"') { inQuotes = true; i++; continue; }
+    if (c === ',') { cur.push(field); field = ""; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = ""; i++; continue; }
+    field += c; i++;
+  }
+  // Flush last field/row
+  if (field.length > 0 || cur.length > 0) { cur.push(field); rows.push(cur); }
+  // Drop trailing empty rows
+  while (rows.length && rows[rows.length - 1].every(f => !f.trim())) rows.pop();
+  if (rows.length === 0) return { headers: [], rows: [] };
+  const headers = rows[0].map(h => h.trim());
+  const data = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, idx) => { obj[h] = (r[idx] || "").trim(); });
+    return obj;
+  });
+  return { headers, rows: data };
+}
+
+// Find the first matching column name (case-insensitive, trimmed) from a list
+// of candidate names. Returns the actual header string from `headers` or "".
+function matchHeader(headers, candidates) {
+  const lower = headers.map(h => h.toLowerCase().trim());
+  for (const cand of candidates) {
+    const idx = lower.indexOf(cand.toLowerCase());
+    if (idx >= 0) return headers[idx];
+  }
+  return "";
+}
+
+// Auto-detect column mapping from CSV headers. Covers Invoice Simple's
+// likely column names plus common variants from QuickBooks, Bookipi, etc.
+function autoMapColumns(headers) {
+  return {
+    name:    matchHeader(headers, ["name", "client name", "customer name", "customer", "client", "contact name", "company name", "company", "display name", "display_name", "displayname", "full name"]),
+    email:   matchHeader(headers, ["email", "email address", "primary email", "e-mail"]),
+    email2:  matchHeader(headers, ["email 2", "secondary email", "alt email", "email2", "other email"]),
+    phone:   matchHeader(headers, ["phone", "phone number", "primary phone", "mobile", "mobile phone", "telephone", "contact phone", "phonenumber"]),
+    fax:     matchHeader(headers, ["fax", "fax number", "faxnumber"]),
+    line1:   matchHeader(headers, ["address", "address 1", "address1", "street", "street address", "address line 1", "billing address", "billing address 1", "billing street", "shipping address", "shipping street"]),
+    line2:   matchHeader(headers, ["address 2", "address2", "address line 2", "billing address 2", "shipping address 2", "unit", "apt", "suite"]),
+    city:    matchHeader(headers, ["city", "town", "billing city", "shipping city"]),
+    state:   matchHeader(headers, ["state", "province", "region", "billing state", "billing state or province", "shipping state"]),
+    zip:     matchHeader(headers, ["zip", "zip code", "postal code", "post code", "postcode", "billing zip", "billing postal code", "shipping zip", "shipping postal code"]),
+    country: matchHeader(headers, ["country", "billing country", "shipping country"]),
+    notes:   matchHeader(headers, ["notes", "note", "memo", "comments"]),
+  };
+}
+
+// Build a HI Grade client object from a parsed CSV row + the chosen mapping.
+// City/State/Zip are folded into a single "line3" (matches the existing schema).
+function csvRowToClient(row, m) {
+  const get = (k) => (m[k] && row[m[k]]) ? row[m[k]].trim() : "";
+  const line1 = get("line1");
+  const line2 = get("line2");
+  const city = get("city");
+  const state = get("state");
+  const zip = get("zip");
+  // Compose "City, ST Zip" — only include parts present.
+  let line3 = "";
+  if (city || state || zip) {
+    const cs = [city, state].filter(Boolean).join(", ");
+    line3 = [cs, zip].filter(Boolean).join(" ").trim();
+  }
+  const addresses = [];
+  if (line1 || line2 || line3) {
+    addresses.push({ id: newAddressId(), label: "", line1, line2, line3 });
+  }
+  return {
+    name: get("name"),
+    email: get("email"),
+    email2: get("email2"),
+    phone: get("phone"),
+    fax: get("fax"),
+    contact: "",
+    addresses,
+    billingAddress: null,
+    address1: "", address2: "", address3: "",
+  };
+}
+
+function ImportClientsModal({ existingClients, onClose, onImport }) {
+  // step: "pick" → choose file, "map" → review/adjust column mapping + preview,
+  //       "importing" → progress bar, "done" → summary
+  const [step, setStep] = useState("pick");
+  const [headers, setHeaders] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [mapping, setMapping] = useState({});
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState({ done: 0, total: 0, errors: [] });
+  const [skipDuplicates, setSkipDuplicates] = useState(true);
+
+  const fileRef = useRef(null);
+
+  const onFile = async (file) => {
+    setError("");
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { setError("File is over 5 MB. Try a smaller export."); return; }
+    try {
+      const text = await file.text();
+      const { headers: hs, rows: rs } = parseCSV(text);
+      if (hs.length === 0 || rs.length === 0) {
+        setError("No rows found in this CSV. Make sure the first line is column headers.");
+        return;
+      }
+      setHeaders(hs);
+      setRows(rs);
+      setMapping(autoMapColumns(hs));
+      setStep("map");
+    } catch (e) {
+      setError("Could not read this file: " + (e.message || e));
+    }
+  };
+
+  const previewClients = useMemo(() => rows.map(r => csvRowToClient(r, mapping)), [rows, mapping]);
+  const validPreview = previewClients.filter(c => c.name && c.name.trim());
+  const skippedNoName = previewClients.length - validPreview.length;
+
+  const existingNames = useMemo(() => new Set((existingClients || []).map(c => (c.name || "").trim().toLowerCase())), [existingClients]);
+  const duplicates = validPreview.filter(c => existingNames.has(c.name.trim().toLowerCase()));
+  const toImport = skipDuplicates ? validPreview.filter(c => !existingNames.has(c.name.trim().toLowerCase())) : validPreview;
+
+  const runImport = async () => {
+    setStep("importing");
+    setProgress({ done: 0, total: toImport.length, errors: [] });
+    const errors = [];
+    let done = 0;
+    for (const c of toImport) {
+      try {
+        await onImport(c);
+      } catch (e) {
+        errors.push({ name: c.name, message: e.message || String(e) });
+      }
+      done++;
+      setProgress({ done, total: toImport.length, errors: [...errors] });
+    }
+    setStep("done");
+  };
+
+  const fieldLabels = {
+    name: "Name *",
+    email: "Email",
+    email2: "Secondary Email",
+    phone: "Phone",
+    fax: "Fax",
+    line1: "Address Line 1",
+    line2: "Address Line 2",
+    city: "City",
+    state: "State",
+    zip: "Zip",
+    country: "Country (ignored)",
+    notes: "Notes (ignored)",
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: "#fff", width: "100%", maxWidth: 480, maxHeight: "92vh", borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Header */}
+        <div style={{ background: NAVY2, color: "#fff", padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", fontSize: 22, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>Import Clients from CSV</span>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+          {step === "pick" && (
+            <div>
+              <div style={{ fontSize: 13, color: "#444", marginBottom: 14, lineHeight: 1.4 }}>
+                Export your clients from Invoice Simple as a CSV file, then choose it here. Common columns (Name, Email, Phone, Address, City, State, Zip) are detected automatically — you can adjust the mapping on the next screen.
+              </div>
+              <button onClick={() => fileRef.current?.click()} style={{ ...S.btn("primary"), width: "100%", padding: 14, fontSize: 15 }}>Choose CSV File</button>
+              <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={e => onFile(e.target.files?.[0])} />
+              {error && <div style={{ marginTop: 12, padding: 10, background: "#fdecec", color: "#cc4444", borderRadius: 6, fontSize: 13 }}>{error}</div>}
+            </div>
+          )}
+
+          {step === "map" && (
+            <div>
+              <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Found <b>{rows.length}</b> rows · <b>{headers.length}</b> columns. Review the mapping and preview below.</div>
+
+              <div style={{ marginBottom: 14 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Column Mapping</span>
+              </div>
+              {Object.keys(fieldLabels).map(field => (
+                <div key={field} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <div style={{ width: 130, fontSize: 12, color: "#444" }}>{fieldLabels[field]}</div>
+                  <select value={mapping[field] || ""} onChange={e => setMapping({ ...mapping, [field]: e.target.value })} style={{ ...S.input, flex: 1, fontSize: 13, padding: "8px 10px" }}>
+                    <option value="">— skip —</option>
+                    {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </div>
+              ))}
+
+              <div style={{ marginTop: 18, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Preview ({validPreview.length} valid)</span>
+              </div>
+              <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 8, maxHeight: 240, overflowY: "auto" }}>
+                {validPreview.slice(0, 10).map((c, i) => {
+                  const isDup = existingNames.has(c.name.trim().toLowerCase());
+                  const a = c.addresses[0];
+                  return (
+                    <div key={i} style={{ padding: "8px 6px", borderBottom: i < Math.min(9, validPreview.length - 1) ? "1px solid #eef0f5" : "none", fontSize: 12 }}>
+                      <div style={{ fontWeight: 700, color: isDup ? "#cc8844" : "#222" }}>
+                        {c.name} {isDup && <span style={{ fontSize: 10, color: "#cc8844", fontWeight: 600 }}>(already exists)</span>}
+                      </div>
+                      {(c.email || c.phone) && <div style={{ color: "#666", marginTop: 1 }}>{[c.email, c.phone].filter(Boolean).join(" · ")}</div>}
+                      {a && (a.line1 || a.line3) && <div style={{ color: "#888", marginTop: 1 }}>{[a.line1, a.line3].filter(Boolean).join(", ")}</div>}
+                    </div>
+                  );
+                })}
+                {validPreview.length === 0 && <div style={{ padding: 12, color: "#888", fontSize: 12, textAlign: "center" }}>No rows have a Name yet. Map the Name column above.</div>}
+                {validPreview.length > 10 && <div style={{ padding: "6px 6px", color: "#888", fontSize: 11, fontStyle: "italic" }}>…and {validPreview.length - 10} more.</div>}
+              </div>
+
+              {(skippedNoName > 0 || duplicates.length > 0) && (
+                <div style={{ marginTop: 10, fontSize: 12, color: "#888" }}>
+                  {skippedNoName > 0 && <div>{skippedNoName} row{skippedNoName === 1 ? "" : "s"} skipped (no name).</div>}
+                  {duplicates.length > 0 && <div>{duplicates.length} duplicate{duplicates.length === 1 ? "" : "s"} found.</div>}
+                </div>
+              )}
+              {duplicates.length > 0 && (
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 13, color: "#444" }}>
+                  <input type="checkbox" checked={skipDuplicates} onChange={e => setSkipDuplicates(e.target.checked)} />
+                  Skip clients whose name already exists
+                </label>
+              )}
+
+              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button onClick={() => { setStep("pick"); setHeaders([]); setRows([]); }} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Back</button>
+                <button onClick={runImport} disabled={toImport.length === 0} style={{ ...S.btn("primary"), flex: 2, fontSize: 14, opacity: toImport.length === 0 ? 0.5 : 1 }}>
+                  Import {toImport.length} client{toImport.length === 1 ? "" : "s"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === "importing" && (
+            <div style={{ padding: 20, textAlign: "center" }}>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, marginBottom: 12 }}>Importing…</div>
+              <div style={{ background: "#eef0f5", borderRadius: 8, height: 12, overflow: "hidden", marginBottom: 8 }}>
+                <div style={{ background: ORANGE, height: "100%", width: progress.total ? `${Math.round((progress.done / progress.total) * 100)}%` : "0%", transition: "width 0.2s" }} />
+              </div>
+              <div style={{ fontSize: 13, color: "#666" }}>{progress.done} of {progress.total}</div>
+            </div>
+          )}
+
+          {step === "done" && (
+            <div style={{ padding: 14 }}>
+              <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, color: "#27ae60", marginBottom: 8 }}>Import complete</div>
+              <div style={{ fontSize: 14, marginBottom: 12 }}>
+                <b>{progress.done - progress.errors.length}</b> clients added.
+                {progress.errors.length > 0 && <span style={{ color: "#cc4444" }}> {progress.errors.length} failed.</span>}
+              </div>
+              {progress.errors.length > 0 && (
+                <div style={{ background: "#fdecec", border: "1px solid #f5c6cb", borderRadius: 8, padding: 10, fontSize: 12, color: "#7a2222", marginBottom: 12, maxHeight: 180, overflowY: "auto" }}>
+                  {progress.errors.slice(0, 20).map((e, i) => (
+                    <div key={i} style={{ marginBottom: 4 }}>{e.name}: {e.message}</div>
+                  ))}
+                </div>
+              )}
+              <button onClick={onClose} style={{ ...S.btn("primary"), width: "100%", padding: 12 }}>Done</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -3126,6 +3415,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, open
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(emptyClient());
   const [search, setSearch] = useState("");
+  const [showImport, setShowImport] = useState(false);
 
   const startEdit = (c) => {
     setEditId(c?.id ?? "new");
@@ -3307,10 +3597,20 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onSelectInvoice, open
   return (
     <div>
       <SearchBar value={search} onChange={setSearch} placeholder="Search clients" />
+      {showImport && (
+        <ImportClientsModal
+          existingClients={clients}
+          onClose={() => setShowImport(false)}
+          onImport={(c) => onImportClient ? onImportClient(c) : onSave(c, "new")}
+        />
+      )}
       <div style={{ padding: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
-          <button onClick={() => startEdit(null)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 13 }}>+ Add</button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setShowImport(true)} style={{ ...S.btn("ghost"), padding: "8px 12px", fontSize: 12 }}>Import</button>
+            <button onClick={() => startEdit(null)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 13 }}>+ Add</button>
+          </div>
         </div>
         {filtered.map(c => {
           const propCount = (c.addresses || []).length;
@@ -4716,6 +5016,16 @@ export default function App() {
     }
   };
 
+  // Bulk-insert path used by the CSV importer. Same as saveClient(form, "new")
+  // but exposed as its own handler so the importer can call it per-row
+  // sequentially. Each call updates state immediately, so the Clients list
+  // animates as rows land.
+  const importClient = async (form) => {
+    const id = await db.insertClient(form);
+    setData(d => ({ ...d, clients: [...d.clients, { ...form, id }] }));
+    return id;
+  };
+
   const saveItemToLibrary = async (item) => {
     const id = await db.insertSavedItem({ category: "Custom", name: item.name, price: item.price });
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
@@ -5006,7 +5316,7 @@ export default function App() {
         <>
           {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
           {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
-          {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
+          {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
           {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
