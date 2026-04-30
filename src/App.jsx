@@ -2041,7 +2041,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 }
 
 // ─── Invoice List ─────────────────────────────────────────────────────────────
-function InvoiceList({ invoices, onNew, onSelect }) {
+function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
   const [dragX, setDragX] = useState(0);
@@ -2083,10 +2083,11 @@ function InvoiceList({ invoices, onNew, onSelect }) {
   const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
-  return (
-    <div>
-      {/* Sticky sub-header: KPI strip + filter tabs pin under the brand header */}
-      <div style={{ position: "sticky", top: "var(--brand-h, 56px)", zIndex: 90, background: "#fff", boxShadow: "0 2px 8px rgba(10,22,40,0.08)" }}>
+  // Render KPI strip + filter tabs into the App-level sticky slot so they
+  // sit flush under the brand header inside one sticky container.
+  useEffect(() => {
+    setSubHeader?.(
+      <>
         <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
           <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(outstanding)}</div></div>
           <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>2026 Paid</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(paidThisYear)}</div></div>
@@ -2096,7 +2097,13 @@ function InvoiceList({ invoices, onNew, onSelect }) {
             <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
           ))}
         </div>
-      </div>
+      </>
+    );
+    return () => setSubHeader?.(null);
+  }, [tab, outstanding, paidThisYear, setSubHeader]);
+
+  return (
+    <div>
       <div
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -2142,15 +2149,19 @@ function InvoiceList({ invoices, onNew, onSelect }) {
 }
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
-function EstimatesTab({ invoices, onNew, onSelect }) {
+function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
+  useEffect(() => {
+    setSubHeader?.(
+      <div style={{ background: NAVY2, padding: "12px 16px" }}>
+        <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Estimates</div>
+        <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{invoices.length} total</div>
+      </div>
+    );
+    return () => setSubHeader?.(null);
+  }, [invoices.length, setSubHeader]);
+
   return (
     <div>
-      <div style={{ position: "sticky", top: "var(--brand-h, 56px)", zIndex: 90, background: NAVY2, boxShadow: "0 2px 8px rgba(10,22,40,0.08)" }}>
-        <div style={{ background: NAVY2, padding: "12px 16px" }}>
-          <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Estimates</div>
-          <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{invoices.length} total</div>
-        </div>
-      </div>
       <div style={{ padding: "12px 12px 0" }}>
         {invoices.length === 0 ? (
           <div style={{ padding: "48px 24px", textAlign: "center" }}>
@@ -3029,30 +3040,27 @@ export default function App() {
   const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
-  // Measure the sticky brand header so child screens can pin their own headers
-  // directly underneath it (e.g. KPI strip + filter tabs on the Invoices list).
+  // Per-tab sub-header slot. Tab components render their KPI strip / filter
+  // tabs into this so brand header + sub-header sit together inside a single
+  // sticky container at App level (no offset math, no jitter on iOS Safari).
+  const [subHeader, setSubHeader] = useState(null);
+  // Reset the slot whenever we leave list view or change tab — stale content
+  // from the previous screen would otherwise show under the brand header.
+  useEffect(() => { if (view !== "list") setSubHeader(null); }, [view]);
+  useEffect(() => { setSubHeader(null); }, [tab]);
+  // Sticky-header layout uses a CSS-only stack: brand header + tab sub-header
+  // are siblings inside one sticky container, both with `top: 0`, glued
+  // together by `display: flex; flex-direction: column`. No JS measurement —
+  // measurement-based offsets caused micro-jitter on iOS Safari during scroll
+  // because the brand header's getBoundingClientRect height changes by ~1px
+  // when transitioning to sticky.
   const rootRef = useRef(null);
-  const brandHeaderRef = useRef(null);
   // Synchronous counter for invoice IDs. setData's functional updater is
   // deferred, so when handleGlobalAIAction runs 20 times in a tight loop
   // (bulk-create) the closure-captured `newInvoice` race-conditions and only
   // one ends up persisted. Using a ref lets each call grab a unique ID and
   // build the full record up-front, before any state update or DB write.
   const nextNumRef = useRef(753);
-  useEffect(() => {
-    const el = brandHeaderRef.current;
-    const root = rootRef.current;
-    if (!el || !root) return;
-    const apply = () => {
-      const h = el.getBoundingClientRect().height;
-      if (h > 0) root.style.setProperty("--brand-h", `${Math.round(h)}px`);
-    };
-    apply();
-    const ro = new ResizeObserver(apply);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [view]);
-
   // Keep the synchronous counter aligned with state whenever state advances
   // (e.g. after a load from Supabase or after a single-doc create updates state).
   useEffect(() => {
@@ -3394,14 +3402,17 @@ export default function App() {
       {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
-        <div ref={brandHeaderRef} style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
-          <div>
-            <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
-            <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>LLC · HONOLULU</span>
+        <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+          <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
+              <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>LLC · HONOLULU</span>
+            </div>
+            <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            </div>
           </div>
-          <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-          </div>
+          {subHeader}
         </div>
       )}
 
@@ -3435,8 +3446,8 @@ export default function App() {
         />
       ) : (
         <>
-          {tab === "invoices"  && <InvoiceList invoices={invoices} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
-          {tab === "estimates" && <EstimatesTab invoices={estimates} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
+          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
+          {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
           {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
