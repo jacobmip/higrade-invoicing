@@ -27,6 +27,13 @@
       /* Disable iOS pull-to-refresh & rubber-banding side scroll */
       body { position: relative; }
 
+      /* Strip the iOS "cancel" X and pill rounding from chat search inputs */
+      input[type="search"]::-webkit-search-decoration,
+      input[type="search"]::-webkit-search-cancel-button,
+      input[type="search"]::-webkit-search-results-button,
+      input[type="search"]::-webkit-search-results-decoration { -webkit-appearance: none; appearance: none; display: none; }
+      input[type="search"] { -webkit-appearance: none; appearance: none; }
+
       /* Print styles — used by the "Print / PDF" button. We hide everything
          except elements marked with .print-area, which is the PDFPreview. */
       @media print {

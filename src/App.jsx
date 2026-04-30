@@ -440,7 +440,24 @@ function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobal
       </div>
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "center", gap: 8, padding: "0 10px" }}>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
-        <input style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc" }} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder={listening ? "Listening…" : "Describe a job…"} />
+        <input
+          type="search"
+          name="prompt"
+          autoComplete="off"
+          autoCorrect="on"
+          autoCapitalize="sentences"
+          spellCheck={true}
+          inputMode="text"
+          enterKeyHint="send"
+          data-form-type="other"
+          data-lpignore="true"
+          aria-label="Job description"
+          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none" }}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && send()}
+          placeholder={listening ? "Listening…" : "Describe a job…"}
+        />
         <button onClick={send} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: NAVY, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={17} /></button>
       </div>
     </div>
@@ -903,8 +920,8 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
       <div style={{ background: "#fff", borderTop: "1px solid #dde2ee", padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="mic" size={18} color={listening ? "#fff" : "#666"} /></button>
         <input
-          type="text"
-          name="ai-chat-message"
+          type="search"
+          name="prompt"
           autoComplete="off"
           autoCorrect="on"
           autoCapitalize="sentences"
@@ -914,7 +931,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
           data-form-type="other"
           data-lpignore="true"
           aria-label="Chat message"
-          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0 }}
+          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none" }}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && send()}
