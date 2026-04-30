@@ -665,18 +665,24 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const ttsRef = useRef(false);
   const lastSpokenIdxRef = useRef(-1);
   const endRef = useRef(null);
-  // Track the visual viewport height so the modal shrinks when the iOS keyboard opens
-  const [vh, setVh] = useState(typeof window !== "undefined" ? window.innerHeight : 0);
+  // Track the iOS keyboard inset so the input bar can sit above the keyboard
+  // without breaking the rest of the modal layout. We compute:
+  //   keyboardInset = window.innerHeight - (visualViewport.height + visualViewport.offsetTop)
+  // which is the number of CSS pixels the keyboard is covering at the bottom.
+  const [kbInset, setKbInset] = useState(0);
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
-    const update = () => setVh(vv.height);
+    const update = () => {
+      const inset = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+      setKbInset(inset);
+    };
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
     return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
   }, []);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, vh]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, kbInset]);
 
   // Pick the most natural-sounding English voice available. iOS exposes
   // "Samantha", "Ava", "Allison", "Karen" — Apple's enhanced/premium voices —
@@ -851,7 +857,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
 
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, top: 0, height: vh ? `${vh}px` : "100dvh", zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
+    <div style={{ position: "fixed", left: 0, right: 0, top: 0, bottom: 0, zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden", paddingBottom: kbInset }}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
@@ -896,7 +902,24 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
       </div>
       <div style={{ background: "#fff", borderTop: "1px solid #dde2ee", padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="mic" size={18} color={listening ? "#fff" : "#666"} /></button>
-        <input style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc" }} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder={listening ? "Listening…" : "Create invoice, add items, send email…"} />
+        <input
+          type="text"
+          name="ai-chat-message"
+          autoComplete="off"
+          autoCorrect="on"
+          autoCapitalize="sentences"
+          spellCheck={true}
+          inputMode="text"
+          enterKeyHint="send"
+          data-form-type="other"
+          data-lpignore="true"
+          aria-label="Chat message"
+          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0 }}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && send()}
+          placeholder={listening ? "Listening…" : "Create invoice, add items, send email…"}
+        />
         <button onClick={send} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: NAVY, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="send" size={17} color="#fff" /></button>
       </div>
     </div>
