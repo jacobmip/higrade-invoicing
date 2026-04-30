@@ -26,6 +26,17 @@
       #root { width: 100%; max-width: 100vw; overflow-x: hidden; }
       /* Disable iOS pull-to-refresh & rubber-banding side scroll */
       body { position: relative; }
+
+      /* Print styles — used by the "Print / PDF" button. We hide everything
+         except elements marked with .print-area, which is the PDFPreview. */
+      @media print {
+        @page { margin: 12mm; }
+        html, body { background: #fff !important; overflow: visible !important; height: auto !important; max-width: none !important; }
+        body * { visibility: hidden; }
+        .print-area, .print-area * { visibility: visible !important; }
+        .print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none !important; padding: 0 !important; }
+        .no-print { display: none !important; }
+      }
     </style>
   </head>
   <body>

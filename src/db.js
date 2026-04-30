@@ -28,7 +28,8 @@ function toInvoice(row, items = [], payments = []) {
       .sort((a, b) => a.sort_order - b.sort_order)
       .map(it => ({
         name: it.name || '',
-        desc: it.desc || '',
+        // server column is `description`; older code used `desc` — accept both
+        desc: it.description ?? it.desc ?? '',
         qty: parseFloat(it.qty ?? 1),
         price: parseFloat(it.price ?? 0),
         unit: it.unit || 'ea',
@@ -69,7 +70,11 @@ function toSavedItem(row) {
     id: row.id,
     category: row.category || 'Custom',
     name: row.name,
+    // server column is `description`
+    desc: row.description ?? row.desc ?? '',
     price: parseFloat(row.price ?? 0),
+    taxable: row.taxable !== false,
+    unit: row.unit || '',
   }
 }
 
@@ -155,7 +160,8 @@ export async function upsertInvoice(inv, isNew) {
       inv.items.map((it, i) => ({
         invoice_id: inv.id,
         name: it.name || '',
-        desc: it.desc || '',
+        // server column is `description`
+        description: it.desc || '',
         qty: it.qty ?? 1,
         price: it.price ?? 0,
         unit: it.unit || 'ea',
@@ -186,6 +192,39 @@ export async function upsertInvoice(inv, isNew) {
     const next = parseInt(inv.id.replace('INV', '')) + 1
     await supabase.from('settings').upsert({ key: 'next_num', value: String(next) })
   }
+}
+
+// ─── Invoice version snapshots ────────────────────────────────────────────────
+
+export async function recordInvoiceVersion(inv, sentTo, note) {
+  // Get next version number for this invoice
+  const { data: existing } = await supabase
+    .from('invoice_versions')
+    .select('version_number')
+    .eq('invoice_id', inv.id)
+    .order('version_number', { ascending: false })
+    .limit(1)
+  const nextVersion = (existing?.[0]?.version_number || 0) + 1
+
+  const { error } = await supabase.from('invoice_versions').insert({
+    invoice_id: inv.id,
+    version_number: nextVersion,
+    snapshot: inv,
+    sent_to: sentTo || null,
+    note: note || null,
+  })
+  if (error) throw error
+  return nextVersion
+}
+
+export async function loadInvoiceVersions(invoiceId) {
+  const { data, error } = await supabase
+    .from('invoice_versions')
+    .select('*')
+    .eq('invoice_id', invoiceId)
+    .order('version_number', { ascending: false })
+  if (error) throw error
+  return data || []
 }
 
 export async function deleteInvoice(id) {
@@ -234,7 +273,10 @@ export async function insertSavedItem(item) {
   const { data, error } = await supabase.from('saved_items').insert({
     category: item.category || 'Custom',
     name: item.name,
+    description: item.desc || '',
     price: item.price ?? 0,
+    taxable: item.taxable !== false,
+    unit: item.unit || null,
   }).select().single()
   if (error) throw error
   return data.id
@@ -244,7 +286,10 @@ export async function updateSavedItem(item) {
   const { error } = await supabase.from('saved_items').update({
     category: item.category || 'Custom',
     name: item.name,
+    description: item.desc || '',
     price: item.price ?? 0,
+    taxable: item.taxable !== false,
+    unit: item.unit || null,
   }).eq('id', item.id)
   if (error) throw error
 }

@@ -312,6 +312,10 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     person:    <svg {...p}><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>,
     speaker:   <svg {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>,
     speakerOff:<svg {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>,
+    more:      <svg {...p}><circle cx="5" cy="12" r="1.6" fill={color} stroke="none"/><circle cx="12" cy="12" r="1.6" fill={color} stroke="none"/><circle cx="19" cy="12" r="1.6" fill={color} stroke="none"/></svg>,
+    print:     <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/><line x1="9" y1="17" x2="15" y2="17"/></svg>,
+    swap:      <svg {...p}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>,
+    history:   <svg {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg>,
   };
   return icons[name] || null;
 };
@@ -477,6 +481,58 @@ function PaymentModal({ invoice, onClose, onSave }) {
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
           <button onClick={save} style={{ ...S.btn("green"), flex: 2 }}>Save Payment</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Confirm Send Modal ─────────────────────────────────────────────────────
+function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
+  // kind: "invoice" | "estimate"
+  const [email, setEmail] = useState(client?.email || "");
+  const [name, setName]   = useState(client?.name  || invoice?.client || "");
+  const t = calcTotals(invoice);
+  const isEstimate = kind === "estimate";
+  const valid = /\S+@\S+\.\S+/.test(email);
+  const docNum = invoice?.id || (isEstimate ? "EST0000" : "INV0000");
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "6px 0 max(20px, env(safe-area-inset-bottom))" }}>
+        <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "6px auto 14px" }} />
+        <div style={{ padding: "0 20px 6px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
+          Confirm send
+        </div>
+        <div style={{ padding: "0 20px", fontSize: 12, color: "#888", marginBottom: 14 }}>
+          Double-check the recipient before {isEstimate ? "sending the estimate" : "emailing the invoice"}.
+        </div>
+
+        <div style={{ padding: "0 20px" }}>
+          <div style={{ background: LIGHT, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 11, color: "#8899bb", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>{isEstimate ? "Estimate" : "Invoice"}</span>
+              <span style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>{docNum}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: NAVY }}>{name || "—"}</span>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: ORANGE }}>{fmt(t.total)}</span>
+            </div>
+          </div>
+
+          <label style={S.label}>Recipient name</label>
+          <input value={name} onChange={e => setName(e.target.value)} style={S.input} placeholder="Client name" />
+
+          <label style={{ ...S.label, marginTop: 10 }}>Send to email</label>
+          <input value={email} onChange={e => setEmail(e.target.value)} style={S.input} placeholder="name@example.com" type="email" autoCapitalize="none" autoCorrect="off" />
+          {!valid && email.length > 0 && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 4 }}>That doesn't look like a valid email.</div>}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, padding: "16px 20px 0" }}>
+          <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+          <button onClick={() => valid && onConfirm({ name, email })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
+            {sending ? "Sending…" : (isEstimate ? "Send Estimate" : "Send Invoice")}
+          </button>
         </div>
       </div>
     </div>
@@ -926,7 +982,7 @@ function PDFPreview({ form, clients }) {
   const isEstimate = form.type === "estimate";
 
   return (
-    <div style={{ padding: "16px 12px 40px" }}>
+    <div className="print-area" style={{ padding: "16px 12px 40px" }}>
       <div style={{ background: "#fff", borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,0.12)", maxWidth: 440, margin: "0 auto" }}>
         <div style={{ background: NAVY, padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
@@ -1142,7 +1198,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, data, onAIAction }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -1159,6 +1215,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [editingClient, setEditingClient] = useState(false);
   const [saveToProfile, setSaveToProfile] = useState(false);
   const [showClientPicker, setShowClientPicker] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
+  const [sending, setSending] = useState(false);
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -1258,29 +1316,74 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const setClientInfoField = (k, v) => setField("clientInfo", { ...(effectiveClientInfo || {}), [k]: v });
   const categories = [...new Set(savedItems.map(i => i.category))];
 
-  const handleEmail = async () => {
+  // Pop the confirm-before-send sheet — actual send happens in handleConfirmedSend.
+  const handleEmail = () => {
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
-    if (!client?.email) { alert("No email on file for this client."); return; }
-    setEmailStatus("Sending…");
-    try {
-      const result = await sendInvoiceEmail(form, client);
-      setEmailStatus(result.error ? "Failed" : "✓ Sent!");
-    } catch { setEmailStatus("Failed"); }
-    setTimeout(() => setEmailStatus(""), 4000);
+    if (!client?.email) {
+      // Still open the modal so the user can type one in.
+      setConfirmSend("invoice");
+      return;
+    }
+    setConfirmSend("invoice");
   };
 
-  const handleSendEstimate = async () => {
-    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
-    if (!client?.email) { alert("No email on file for this client."); return; }
-    const t2 = calcTotals(form);
-    const job = form.items[0]?.name || "Plumbing Work";
-    const params = new URLSearchParams({ id: form.id || "EST0000", client: form.client || "", total: t2.total.toFixed(2), job });
-    const signingLink = `${window.location.origin}/sign?${params.toString()}`;
-    const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
+  const handleSendEstimate = () => {
+    setConfirmSend("estimate");
+  };
+
+  // Called after user confirms recipient details in ConfirmSendModal.
+  const handleConfirmedSend = async ({ name, email }) => {
+    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
+    setSending(true);
     try {
-      await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: client.email, clientName: client.name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
-      alert("Estimate sent! Client will receive signing link by email.");
-    } catch (e) { alert("Failed to send: " + e.message); }
+      if (confirmSend === "estimate") {
+        const t2 = calcTotals(form);
+        const job = form.items[0]?.name || "Plumbing Work";
+        const params = new URLSearchParams({ id: form.id || "EST0000", client: form.client || "", total: t2.total.toFixed(2), job });
+        const signingLink = `${window.location.origin}/sign?${params.toString()}`;
+        const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
+        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), signingLink, items }) });
+        // Snapshot the version that was sent (best-effort — don't block on failure).
+        if (form.id) {
+          try { await db.recordInvoiceVersion(form, email, "Estimate sent"); }
+          catch (e) { console.warn('Version snapshot failed:', e); }
+        }
+        alert("Estimate sent. Client will receive a signing link by email.");
+      } else {
+        const result = await sendInvoiceEmail(form, client);
+        if (result?.error) {
+          setEmailStatus("Failed");
+        } else {
+          setEmailStatus("✓ Sent!");
+          if (form.id) {
+            try { await db.recordInvoiceVersion(form, email, "Invoice sent"); }
+            catch (e) { console.warn('Version snapshot failed:', e); }
+          }
+        }
+        setTimeout(() => setEmailStatus(""), 4000);
+      }
+      setConfirmSend(null);
+    } catch (e) {
+      alert("Failed to send: " + (e.message || e));
+      setEmailStatus("Failed");
+      setTimeout(() => setEmailStatus(""), 4000);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // Print / Save as PDF — uses native browser print on the Preview tab.
+  const handlePrint = () => {
+    setActiveTab("preview");
+    // Wait a tick for the preview to render before opening the print dialog.
+    setTimeout(() => window.print(), 250);
+  };
+
+  // Convert estimate ↔ invoice (creates a copy, doesn't replace original).
+  const handleConvert = () => {
+    const targetType = isEstimate ? "invoice" : "estimate";
+    if (!confirm(`Create a copy of this as a${targetType === "estimate" ? "n" : ""} ${targetType}? The original ${form.type} will be kept.`)) return;
+    onConvert?.(form, targetType);
   };
 
   const handleSave = async () => {
@@ -1300,6 +1403,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
+      {confirmSend && <ConfirmSendModal kind={confirmSend} invoice={form} client={{ ...(selectedClient || {}), ...(effectiveClientInfo || {}) }} sending={sending} onClose={() => !sending && setConfirmSend(null)} onConfirm={handleConfirmedSend} />}
       {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { const updated = { ...form, signatureData: sigData, signedAt: new Date().toISOString(), status: "approved" }; setForm(updated); setShowSignature(false); onPartialSave?.(updated); }} />}
@@ -1602,6 +1706,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               {!isEstimate && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> Record Payment</button>}
               <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
             </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={handlePrint} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="print" size={16} color="#444" /> Print / PDF</button>
+              {invoice && onConvert && (
+                <button onClick={handleConvert} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <Icon name="swap" size={16} color="#444" /> {isEstimate ? "→ Invoice" : "→ Estimate"}
+                </button>
+              )}
+            </div>
+            {/* TODO PayPal integration — add a "Send via PayPal" button here */}
           </div>
         </div>
       )}
@@ -1648,7 +1761,41 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
 // ─── Invoice List ─────────────────────────────────────────────────────────────
 function InvoiceList({ invoices, onNew, onSelect }) {
+  const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
+  const [dragX, setDragX] = useState(0);
+  const touchRef = useRef({ x: 0, y: 0, active: false, locked: null });
+
+  // Horizontal swipe between tabs (left/right). Only treated as a swipe when
+  // horizontal travel dominates — vertical movement still scrolls.
+  const onTouchStart = (e) => {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null };
+    setDragX(0);
+  };
+  const onTouchMove = (e) => {
+    if (!touchRef.current.active) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchRef.current.x;
+    const dy = t.clientY - touchRef.current.y;
+    if (touchRef.current.locked === null) {
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        touchRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      }
+    }
+    if (touchRef.current.locked === "x") setDragX(dx);
+  };
+  const onTouchEnd = () => {
+    if (touchRef.current.locked === "x") {
+      const threshold = 60;
+      const idx = TABS.indexOf(tab);
+      if (dragX < -threshold && idx < TABS.length - 1) setTab(TABS[idx + 1]);
+      else if (dragX > threshold && idx > 0) setTab(TABS[idx - 1]);
+    }
+    touchRef.current = { x: 0, y: 0, active: false, locked: null };
+    setDragX(0);
+  };
+
   const filtered = invoices.filter(inv => tab === "all" ? true : tab === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === tab);
   const years = [...new Set(filtered.map(i => i.year || new Date(i.date).getFullYear()))].sort((a, b) => b - a);
   const yearTotal = yr => filtered.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).reduce((s, i) => s + calcTotals(i).total, 0);
@@ -1662,11 +1809,16 @@ function InvoiceList({ invoices, onNew, onSelect }) {
         <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>2026 Paid</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(paidThisYear)}</div></div>
       </div>
       <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
-        {["all", "outstanding", "paid"].map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer" }}>{t}</button>
+        {TABS.map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
         ))}
       </div>
-      <div style={{ padding: "12px 12px 0" }}>
+      <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{ padding: "12px 12px 0", transform: `translateX(${Math.max(-80, Math.min(80, dragX * 0.3))}px)`, transition: dragX === 0 ? "transform 0.2s" : "none", touchAction: "pan-y" }}
+      >
         {years.map(yr => (
           <div key={yr}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 4px", marginBottom: 6 }}>
@@ -2588,6 +2740,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [newDocType, setNewDocType] = useState("invoice");
   const [showGlobalAI, setShowGlobalAI] = useState(false);
+  const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
 
@@ -2757,14 +2910,19 @@ export default function App() {
     const year = new Date(form.date || today()).getFullYear();
     if (selected) {
       const updated = { ...form, id: selected.id, year };
-      await db.upsertInvoice(updated, false);
+      // Update local state first so the UI is always responsive,
+      // even if the Supabase write later throws.
       setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? updated : inv) }));
+      try { await db.upsertInvoice(updated, false); }
+      catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     } else {
       const id = `INV${String(data.nextNum).padStart(4, "0")}`;
       const newInv = { ...form, id, year };
-      await db.upsertInvoice(newInv, true);
       setData(d => ({ ...d, invoices: [newInv, ...d.invoices], nextNum: d.nextNum + 1 }));
+      try { await db.upsertInvoice(newInv, true); }
+      catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     }
+    // Always return to the list, regardless of cloud sync result.
     setView("list"); setSelected(null);
   };
 
@@ -2787,6 +2945,38 @@ export default function App() {
   const saveItemToLibrary = async (item) => {
     const id = await db.insertSavedItem({ category: "Custom", name: item.name, price: item.price });
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
+  };
+
+  // Convert estimate ↔ invoice. Creates a NEW document (separate ID) so the
+  // original is preserved (change-order friendly).
+  const convertInvoice = async (form, targetType) => {
+    const year = new Date(form.date || today()).getFullYear();
+    // Both invoices and estimates use the INV#### scheme — the `type` field
+    // is what distinguishes them throughout the app.
+    const newId = `INV${String(data.nextNum).padStart(4, "0")}`;
+    const copy = {
+      ...form,
+      id: newId,
+      type: targetType,
+      year,
+      // Reset payment + signature state on the new doc so it starts clean.
+      payments: [],
+      signatureData: null,
+      signedAt: null,
+      status: targetType === "estimate" ? "outstanding" : "outstanding",
+      gcalEventId: null,
+      gcalDate: null,
+      followUpEventId: null,
+      followUpDate: null,
+      notes: form.notes ? form.notes : "",
+    };
+    setData(d => ({ ...d, invoices: [copy, ...d.invoices], nextNum: d.nextNum + 1 }));
+    try { await db.upsertInvoice(copy, true); }
+    catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
+    // Open the new doc immediately.
+    setSelected(copy);
+    setView("form");
+    setTab(targetType === "estimate" ? "estimates" : "invoices");
   };
 
   const partialSaveInvoice = async (updated) => {
@@ -2821,15 +3011,21 @@ export default function App() {
   const invoices = data.invoices.filter(i => i.type !== "estimate");
   const estimates = data.invoices.filter(i => i.type === "estimate");
 
-  const navItems = [
+  // 4 main tabs visible in the bottom bar; the rest live inside a “More” sheet.
+  const mainNavItems = [
     { id: "invoices",  label: "Invoices",  icon: "invoice"   },
     { id: "estimates", label: "Estimates", icon: "estimates" },
-    { id: "clients",   label: "Clients",   icon: "clients"   },
-    { id: "payments",  label: "Payments",  icon: "dollar"    },
     { id: "expenses",  label: "Expenses",  icon: "receipt"   },
-    { id: "reports",   label: "Reports",   icon: "chart"     },
-    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
+    { id: "payments",  label: "Payments",  icon: "dollar"    },
   ];
+  const moreNavItems = [
+    { id: "clients",  label: "Clients",  icon: "clients"  },
+    { id: "items",    label: "Items",    icon: "items"    },
+    { id: "reports",  label: "Reports",  icon: "chart"    },
+    { id: "calendar", label: "Calendar", icon: "calendar" },
+  ];
+  // Highlight “More” when the active tab lives inside the sheet.
+  const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
     <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", overflowX: "hidden", paddingBottom: view === "list" ? 80 : 0 }}>
@@ -2872,6 +3068,7 @@ export default function App() {
             return newClient;
           }}
           onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
+          onConvert={convertInvoice}
         />
       ) : (
         <>
@@ -2893,14 +3090,35 @@ export default function App() {
       )}
 
       {view === "list" && (
-        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200 }}>
-          {navItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 8, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
+          {mainNavItems.map(n => (
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
               {n.label}
             </button>
           ))}
+          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: isMoreTab ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <Icon name="more" size={20} color={isMoreTab ? ORANGE : "#8899bb"} />
+            More
+          </button>
         </nav>
+      )}
+
+      {showMore && (
+        <div onClick={() => setShowMore(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "10px 0 max(20px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" }}>
+            <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "4px auto 12px" }} />
+            <div style={{ padding: "0 18px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#8899bb", letterSpacing: 1.5, textTransform: "uppercase" }}>More</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, padding: "4px 8px 8px" }}>
+              {moreNavItems.map(n => (
+                <button key={n.id} onClick={() => { setTab(n.id); setShowMore(false); }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                  <Icon name={n.icon} size={26} color={tab === n.id ? ORANGE : NAVY} />
+                  {n.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
