@@ -1473,10 +1473,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
+  const [refreshingEvents, setRefreshingEvents] = useState(false);
   const refreshEvents = async () => {
     if (!form.id) return;
+    setRefreshingEvents(true);
     try { setEvents(await db.loadInvoiceEvents(form.id)); }
     catch (e) { console.warn('loadInvoiceEvents failed:', e); }
+    // Tiny minimum spinner so the user sees something happen even if the
+    // request comes back instantly.
+    setTimeout(() => setRefreshingEvents(false), 450);
   };
   useEffect(() => { refreshEvents(); /* eslint-disable-next-line */ }, [form.id]);
   // Refresh events when the History tab is opened (catches opens that happened
@@ -2167,8 +2172,19 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
         <div style={{ padding: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Activity Log</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Activity Log</span>
+              <button
+                onClick={refreshEvents}
+                aria-label="Refresh"
+                style={{ background: "#fff", border: "1px solid #e8ecf4", borderRadius: 999, width: 28, height: 28, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+              >
+                <span style={{ display: "inline-flex", animation: refreshingEvents ? "spin 0.7s linear infinite" : "none" }}>
+                  <Icon name="history" size={14} color="#6677aa" />
+                </span>
+              </button>
+            </div>
             <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
           </div>
           <div style={{ position: "relative" }}>
