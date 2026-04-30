@@ -2136,10 +2136,10 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
   const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
-  // Render KPI strip + filter tabs into the App-level sticky slot so they
-  // sit flush under the brand header inside one sticky container.
+  // Render KPI strip + filter tabs into the App-level sticky slot. Slot is
+  // keyed by tab name ("invoices") so stale pushes can't blank a new tab.
   useEffect(() => {
-    setSubHeader?.(
+    setSubHeader?.("invoices",
       <>
         <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
           <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(outstanding)}</div></div>
@@ -2152,9 +2152,6 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
         </div>
       </>
     );
-    // No cleanup that nulls subHeader — the App-level useEffect on `tab`
-    // already clears it when switching bottom-nav tabs. A cleanup here would
-    // race with the next tab's effect and blank out the just-pushed header.
   }, [tab, outstanding, paidThisYear, setSubHeader]);
 
   // Render one column per tab inside a flex track, then translate the track.
@@ -2244,37 +2241,143 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
 function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
-  useEffect(() => {
-    setSubHeader?.(
-      <div style={{ background: NAVY2, padding: "12px 16px" }}>
-        <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Estimates</div>
-        <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{invoices.length} total</div>
-      </div>
-    );
-    // No cleanup — see InvoiceList. App-level useEffect on `tab` clears it.
-  }, [invoices.length, setSubHeader]);
+  const TABS = ["all", "open", "closed"];
+  const [tab, setTab] = useState("all");
+  const tabIndex = TABS.indexOf(tab);
+  // Native scroll-snap carousel — same pattern as InvoiceList.
+  const trackRef = useRef(null);
+  const programmaticScrollRef = useRef(false);
 
-  return (
-    <div>
-      <div style={{ padding: "12px 12px 0" }}>
-        {invoices.length === 0 ? (
-          <div style={{ padding: "48px 24px", textAlign: "center" }}>
-            <Icon name="estimates" size={48} color="#dde2ee" />
-            <div style={{ fontSize: 16, fontWeight: 600, color: "#888", marginTop: 16, marginBottom: 8 }}>No Estimates Yet</div>
-            <div style={{ fontSize: 13, color: "#aaa", marginBottom: 24 }}>Tap + to create your first estimate</div>
-          </div>
-        ) : invoices.map(inv => {
+  useLayoutEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollLeft = el.clientWidth * tabIndex;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const target = el.clientWidth * tabIndex;
+    if (Math.abs(el.scrollLeft - target) < 2) return;
+    programmaticScrollRef.current = true;
+    el.scrollTo({ left: target, behavior: "smooth" });
+    setTimeout(() => { programmaticScrollRef.current = false; }, 400);
+  }, [tabIndex]);
+
+  const onScroll = () => {
+    if (programmaticScrollRef.current) return;
+    const el = trackRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    const clamped = Math.max(0, Math.min(TABS.length - 1, idx));
+    if (TABS[clamped] !== tab) setTab(TABS[clamped]);
+  };
+
+  const goToTab = (next) => {
+    if (next === tab) return;
+    setTab(next);
+  };
+
+  // Closed = signed/approved OR converted to invoice (Jake's definition)
+  const isClosed = (inv) => inv.status === "approved" || !!inv.convertedToId;
+  const filterFor = (key) => invoices.filter(inv =>
+    key === "all" ? true : key === "open" ? !isClosed(inv) : isClosed(inv)
+  );
+
+  const openTotal = invoices.filter(i => !isClosed(i)).reduce((s, i) => s + calcTotals(i).total, 0);
+  const closedTotal = invoices.filter(isClosed).reduce((s, i) => s + calcTotals(i).total, 0);
+  const closeRate = invoices.length === 0 ? 0 : Math.round(invoices.filter(isClosed).length / invoices.length * 100);
+
+  // Render KPI strip + filter tabs into the App-level sticky slot. Slot is
+  // keyed by tab name ("estimates") so stale pushes can't blank a new tab.
+  useEffect(() => {
+    setSubHeader?.("estimates",
+      <>
+        <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
+          <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Open</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(openTotal)}</div></div>
+          <div style={{ textAlign: "center" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Close Rate</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{closeRate}%</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Closed</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(closedTotal)}</div></div>
+        </div>
+        <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
+          {TABS.map(t => (
+            <button key={t} onClick={() => goToTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
+          ))}
+        </div>
+      </>
+    );
+  }, [tab, openTotal, closedTotal, closeRate, setSubHeader]);
+
+  const renderColumn = (key) => {
+    const list = filterFor(key);
+    const yrs = [...new Set(list.map(i => i.year || new Date(i.date).getFullYear()))].sort((a, b) => b - a);
+    const yrTotal = (yr) => list.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).reduce((s, i) => s + calcTotals(i).total, 0);
+    if (list.length === 0) {
+      return (
+        <div style={{ padding: "48px 24px", textAlign: "center" }}>
+          <Icon name="estimates" size={48} color="#dde2ee" />
+          <div style={{ fontSize: 16, fontWeight: 600, color: "#888", marginTop: 16, marginBottom: 8 }}>No {key === "all" ? "" : key + " "}estimates</div>
+          <div style={{ fontSize: 13, color: "#aaa" }}>{key === "closed" ? "Approved or converted estimates will show up here." : key === "open" ? "Pending estimates will show up here." : "Tap + to create your first estimate"}</div>
+        </div>
+      );
+    }
+    return yrs.map(yr => (
+      <div key={yr}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 4px", marginBottom: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#8899bb", letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{yr}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#555" }}>{fmt(yrTotal(yr))}</span>
+        </div>
+        {list.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).map(inv => {
           const t = calcTotals(inv);
+          const closed = isClosed(inv);
+          const pillLabel = inv.convertedToId ? "→ Invoice" : inv.status === "approved" ? "✓ Approved" : "Open";
+          const pillColor = closed ? "#27ae60" : "#8899bb";
           return (
             <div key={inv.id} onClick={() => onSelect(inv)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div><div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client || "No client"}</div><div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div></div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client || "No client"}</div>
+                <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
+              </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE }}>{fmt(t.total)}</div>
-                <span style={inv.status === "approved" ? S.pill("#27ae60") : S.pill("#8899bb")}>{inv.status === "approved" ? "✓ Approved" : "estimate"}</span>
+                <span style={S.pill(pillColor)}>{pillLabel}</span>
               </div>
             </div>
           );
         })}
+      </div>
+    ));
+  };
+
+  return (
+    <div style={{ minHeight: "60vh" }}>
+      <div
+        ref={trackRef}
+        onScroll={onScroll}
+        style={{
+          display: "flex",
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollSnapType: "x mandatory",
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
+        }}
+      >
+        {TABS.map(key => (
+          <div
+            key={key}
+            style={{
+              flex: "0 0 100%",
+              width: "100%",
+              scrollSnapAlign: "start",
+              scrollSnapStop: "always",
+              padding: "12px 12px 0",
+              boxSizing: "border-box",
+            }}
+          >
+            {renderColumn(key)}
+          </div>
+        ))}
       </div>
       <button onClick={onNew} style={{ position: "fixed", bottom: 158, right: 20, width: 52, height: 52, borderRadius: "50%", background: ORANGE, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 16px rgba(232,98,42,0.45)", zIndex: 150 }}>
         <Icon name="plus" size={24} color="#fff" />
@@ -3137,11 +3240,15 @@ export default function App() {
   // Per-tab sub-header slot. Tab components render their KPI strip / filter
   // tabs into this so brand header + sub-header sit together inside a single
   // sticky container at App level (no offset math, no jitter on iOS Safari).
-  const [subHeader, setSubHeader] = useState(null);
-  // Reset the slot whenever we leave list view or change tab — stale content
-  // from the previous screen would otherwise show under the brand header.
-  useEffect(() => { if (view !== "list") setSubHeader(null); }, [view]);
-  useEffect(() => { setSubHeader(null); }, [tab]);
+  // Slot is keyed by tab name so stale pushes from a previous tab can't blank
+  // out the new tab's header. We render `content` only when `key` matches the
+  // currently active tab. (Previously: a parent useEffect on [tab] nulled the
+  // slot AFTER children's mount effects ran, which blanked the new header.)
+  const [subHeader, setSubHeaderState] = useState({ key: null, content: null });
+  const setSubHeader = (key, content) => {
+    if (content === null || content === undefined) setSubHeaderState({ key: null, content: null });
+    else setSubHeaderState({ key, content });
+  };
   // Sticky-header layout uses a CSS-only stack: brand header + tab sub-header
   // are siblings inside one sticky container, both with `top: 0`, glued
   // together by `display: flex; flex-direction: column`. No JS measurement —
@@ -3404,9 +3511,19 @@ export default function App() {
       followUpDate: null,
       notes: form.notes ? form.notes : "",
     };
-    setData(d => ({ ...d, invoices: [copy, ...d.invoices], nextNum: d.nextNum + 1 }));
-    try { await db.upsertInvoice(copy, true); }
-    catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
+    // Mark the source as converted (estimate → invoice or invoice → estimate)
+    // by stamping a `convertedToId` on the original. This is a normal field
+    // we surface in the UI to count an estimate as "closed".
+    const sourceUpdated = { ...form, convertedToId: newId };
+    setData(d => ({
+      ...d,
+      invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
+      nextNum: d.nextNum + 1,
+    }));
+    try {
+      await db.upsertInvoice(copy, true);
+      await db.upsertInvoice(sourceUpdated, false);
+    } catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
     // Open the new doc immediately.
     setSelected(copy);
     setView("form");
@@ -3506,7 +3623,7 @@ export default function App() {
               <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             </div>
           </div>
-          {subHeader}
+          {subHeader.key === tab ? subHeader.content : null}
         </div>
       )}
 
