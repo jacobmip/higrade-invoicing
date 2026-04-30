@@ -1487,6 +1487,14 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
+  // The optimistic-lock token. Tracked in a ref (not state) so the latest
+  // value is always available inside flushAutoSaveRef without re-creating
+  // the ref on every render. Initialized from the loaded invoice and
+  // refreshed after every successful save.
+  const updatedAtRef = useRef(invoice?.updatedAt || null);
+  // When set, suppresses the unmount-flush autosave. Used by Delete so the
+  // form doesn't re-create the row we just deleted.
+  const skipFlushRef = useRef(false);
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
@@ -1519,6 +1527,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     if (invoice?.id && invoice.id !== autoSavedId) {
       setForm({ discountType: "$", ...invoice });
       setAutoSavedId(invoice.id);
+      updatedAtRef.current = invoice.updatedAt || null;
       skipFirstRef.current = true; // suppress the auto-save triggered by this reset
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1530,10 +1539,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       autoSaveTimerRef.current = null;
     }
     if (!onAutoSave) return null;
+    if (skipFlushRef.current) return null; // Delete in progress — don't re-create
     setAutoSaving(true);
     try {
-      const saved = await onAutoSave({ ...formRef.current, id: autoSavedId || formRef.current.id });
+      // Always send the freshest updatedAt token we know about so the RPC's
+      // optimistic-lock check passes after the very first save.
+      const saved = await onAutoSave({
+        ...formRef.current,
+        id: autoSavedId || formRef.current.id,
+        updatedAt: updatedAtRef.current,
+      });
       if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
+      if (saved?.updatedAt) updatedAtRef.current = saved.updatedAt;
       return saved;
     } catch (e) {
       console.error('Auto-save failed (kept local):', e);
@@ -1882,7 +1899,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
           {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
         </span>
-        {(invoice || autoSavedId) && onDelete && <button onClick={() => { if (confirm("Delete this?")) onDelete((invoice && invoice.id) || autoSavedId); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
+        {(invoice || autoSavedId) && onDelete && <button onClick={() => {
+          if (!confirm("Delete this?")) return;
+          // Cancel any pending debounced autosave AND block the unmount-flush.
+          // Without this, the unmount handler would re-insert the row we're
+          // about to delete, which is exactly what made delete look broken.
+          skipFlushRef.current = true;
+          if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+          onDelete((invoice && invoice.id) || autoSavedId);
+        }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
         <button onClick={handleSave} style={S.btn("primary")}>Done</button>
       </div>
 
