@@ -558,7 +558,7 @@ function PaymentModal({ invoice, onClose, onSave }) {
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>{isEstimate ? "Record Down Payment" : "Record Payment"}</div>
         <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.id} · {isEstimate ? `Estimate Total: ${fmt(t.total)} · Remaining: ${fmt(Math.max(0, t.balance))}` : `Balance: ${fmt(Math.max(0, t.balance))}`}</div>
         <div style={{ marginBottom: 12 }}>
@@ -721,13 +721,13 @@ function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4, color: NAVY }}>Schedule Job</div>
         <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.client || "No client"} · {jobTitle}</div>
         <div style={{ marginBottom: 12 }}><label style={S.label}>Date</label><input type="date" style={S.input} value={date} onChange={e => setDate(e.target.value)} /></div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-          <div><label style={S.label}>Start Time</label><input type="time" style={S.input} value={time} onChange={e => setTime(e.target.value)} /></div>
-          <div><label style={S.label}>Duration</label>
+          <div style={{ minWidth: 0 }}><label style={S.label}>Start Time</label><input type="time" style={S.input} value={time} onChange={e => setTime(e.target.value)} /></div>
+          <div style={{ minWidth: 0 }}><label style={S.label}>Duration</label>
             <select style={S.input} value={duration} onChange={e => setDuration(e.target.value)}>
               {["1","2","3","4","6","8"].map(h => <option key={h} value={h}>{h} hr{h !== "1" ? "s" : ""}</option>)}
             </select>
@@ -777,7 +777,7 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 16, color: NAVY }}>Set Follow-Up Reminder</div>
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
           {[["Tomorrow", 1], ["3 Days", 3], ["1 Week", 7]].map(([label, days]) => (
@@ -1951,8 +1951,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
           {/* Dates */}
           <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div><label style={S.label}>Invoice Date</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>
-            <div><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
+            <div style={{ minWidth: 0 }}><label style={S.label}>Invoice Date</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>
+            <div style={{ minWidth: 0 }}><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
           </div>
 
           {/* Line Items */}
