@@ -1283,9 +1283,13 @@ function PDFPreview({ form, clients }) {
           </div>
           {form.items.map((item, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 36px 84px", padding: "11px 24px", borderBottom: "1px solid #f4f6fa" }}>
-              <div style={{ paddingRight: 8 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#222" }}>{item.name || item.desc || <span style={{ color: "#ccc" }}>—</span>}</div>
-                {item.name && item.desc && <div style={{ fontSize: 11, color: "#999", marginTop: 2, lineHeight: 1.4 }}>{item.desc.split("\n").slice(0, 3).join(" · ")}</div>}
+              <div style={{ paddingRight: 8, minWidth: 0, overflowWrap: "break-word", wordBreak: "break-word" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#222", overflowWrap: "break-word", wordBreak: "break-word" }}>{item.name || item.desc || <span style={{ color: "#ccc" }}>—</span>}</div>
+                {item.name && item.desc && (
+                  <div style={{ fontSize: 11, color: "#999", marginTop: 2, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "break-word", wordBreak: "break-word" }}>
+                    {item.desc}
+                  </div>
+                )}
                 {item.discount > 0 && <div style={{ fontSize: 11, color: "#e74c3c", marginTop: 2 }}>Discount: {item.discountType === "%" ? `${item.discount}%` : fmt(item.discount)}</div>}
               </div>
               <div style={{ fontSize: 13, color: "#666", textAlign: "center" }}>{item.qty}</div>
