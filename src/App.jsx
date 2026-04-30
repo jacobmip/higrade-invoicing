@@ -1609,6 +1609,34 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }];
 
+  // Swipe between Edit / Preview / History tabs. Horizontal-dominant swipes
+  // change tab; vertical movement still scrolls normally.
+  const swipeRef = useRef({ x: 0, y: 0, active: false, locked: null });
+  const onTabsTouchStart = (e) => {
+    const t = e.touches[0];
+    swipeRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null };
+  };
+  const onTabsTouchMove = (e) => {
+    if (!swipeRef.current.active) return;
+    const t = e.touches[0];
+    const dx = t.clientX - swipeRef.current.x;
+    const dy = t.clientY - swipeRef.current.y;
+    if (swipeRef.current.locked === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      swipeRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    }
+  };
+  const onTabsTouchEnd = (e) => {
+    if (swipeRef.current.locked === "x") {
+      const t = e.changedTouches[0];
+      const dx = t.clientX - swipeRef.current.x;
+      const threshold = 60;
+      const idx = TABS.findIndex(tt => tt.id === activeTab);
+      if (dx < -threshold && idx < TABS.length - 1) setActiveTab(TABS[idx + 1].id);
+      else if (dx > threshold && idx > 0) setActiveTab(TABS[idx - 1].id);
+    }
+    swipeRef.current = { x: 0, y: 0, active: false, locked: null };
+  };
+
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
@@ -1644,6 +1672,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         ))}
       </div>
 
+      <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} style={{ touchAction: "pan-y" }}>
       {activeTab === "edit" && (
         <div>
           {/* Bill To */}
@@ -1956,7 +1985,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             ))}
           </div>
           {(form.payments || []).length > 0 && (
-            <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginTop: 8, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+            <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginTop: 8, boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }} data-marker="history-totals">
               {[["Invoice Total", fmt(t.total), "#222"], ["Total Paid", fmt(t.paid), "#27ae60"], ["Balance Due", fmt(Math.max(0, t.balance)), t.balance <= 0 ? "#27ae60" : ORANGE]].map(([label, val, color]) => (
                 <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f4f6fa" }}>
                   <span style={{ fontSize: 13, color: "#777" }}>{label}</span>
@@ -1967,6 +1996,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
