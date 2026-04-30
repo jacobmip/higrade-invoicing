@@ -427,8 +427,7 @@ const S = {
 };
 
 // ─── AI Chat Panel (per-invoice with full app control) ───────────────────────
-function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobalAction }) {
-  const [msgs, setMsgs] = useState([{ role: "assistant", text: "Hey Jake! Describe a job and I'll build the estimate, or tell me to change the client, set the date, mark this paid, etc." }]);
+function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -535,6 +534,13 @@ function AIChatPanel({ onAddItems, data, currentInvoice, onLocalAction, onGlobal
   return (
     <div style={containerStyle}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
+      {msgs.length > 1 && onResetChat && (
+        <button
+          onClick={() => { if (confirm("Clear this invoice's chat history?")) onResetChat(); }}
+          title="Clear chat"
+          style={{ position: "absolute", top: 8, right: 10, zIndex: 5, background: "rgba(255,255,255,0.92)", border: "1px solid #dde2ee", borderRadius: 16, padding: "4px 10px", fontSize: 11, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, color: "#888", letterSpacing: 1, cursor: "pointer", textTransform: "uppercase", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}
+        >Clear</button>
+      )}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 62, overflowY: "auto", padding: 14 }}>
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 10, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
@@ -852,8 +858,7 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
 }
 
 // ─── Global AI Modal ──────────────────────────────────────────────────────────
-function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
-  const [msgs, setMsgs] = useState([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
+function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, onOpenDoc, onOpenClient }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -1105,6 +1110,7 @@ function GlobalAIModal({ data, onClose, onAction, onOpenDoc, onOpenClient }) {
           <div style={{ color: "#8899bb", fontSize: 11 }}>{data.invoices.length} invoices · {data.clients.length} clients</div>
         </div>
         <button onClick={toggleTts} title={ttsOn ? "Mute" : "Unmute"} style={{ width: 34, height: 34, borderRadius: 8, border: "none", background: ttsOn ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={ttsOn ? "speaker" : "speakerOff"} size={16} color={ttsOn ? "#fff" : "#556688"} /></button>
+        <button onClick={() => { if (confirm("Clear all chat history?")) { window.speechSynthesis?.cancel(); onResetChat?.(); } }} title="Clear chat" style={{ width: 34, height: 34, borderRadius: 8, border: "none", background: "rgba(255,255,255,0.04)", cursor: "pointer", color: "#8899bb", fontSize: 11, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1 }}>CLR</button>
         <button onClick={() => { window.speechSynthesis?.cancel(); onClose(); }} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "14px 14px 0", minHeight: 0 }}>
@@ -1592,6 +1598,61 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
+  // Per-invoice AI chat history. Lives on the form so toggling the panel
+  // closed/open preserves the conversation. Each invoice gets its own bucket
+  // in localStorage keyed by id; an unsaved draft uses "draft" until autosave
+  // assigns a real id, then we migrate the history to that id's bucket.
+  const aiChatGreeting = { role: "assistant", text: "Hey Jake! Describe a job and I'll build the estimate, or tell me to change the client, set the date, mark this paid, etc." };
+  const aiChatKey = `higrade_inv_chat_${autoSavedId || "draft"}`;
+  const [aiMsgs, setAiMsgs] = useState(() => {
+    try {
+      const raw = localStorage.getItem(aiChatKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch {}
+    return [aiChatGreeting];
+  });
+  // When the form switches to a different invoice (autoSavedId changes), load
+  // that invoice's chat history. This also handles the draft → saved-id
+  // transition: if there's no history under the new id but there IS under
+  // "draft", carry the draft history over so the user doesn't lose context
+  // the first time their invoice is autosaved.
+  const aiChatKeyRef = useRef(aiChatKey);
+  useEffect(() => {
+    if (aiChatKeyRef.current === aiChatKey) return;
+    const prevKey = aiChatKeyRef.current;
+    aiChatKeyRef.current = aiChatKey;
+    try {
+      const raw = localStorage.getItem(aiChatKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) { setAiMsgs(parsed); return; }
+      }
+      // No history under the new key. If we just got an id for what was a
+      // draft, migrate the draft history to the new id-keyed slot.
+      if (prevKey === "higrade_inv_chat_draft" && aiChatKey !== "higrade_inv_chat_draft") {
+        const draftRaw = localStorage.getItem("higrade_inv_chat_draft");
+        if (draftRaw) {
+          localStorage.setItem(aiChatKey, draftRaw);
+          localStorage.removeItem("higrade_inv_chat_draft");
+          setAiMsgs(JSON.parse(draftRaw));
+          return;
+        }
+      }
+    } catch {}
+    setAiMsgs([aiChatGreeting]);
+  }, [aiChatKey]);
+  // Persist this invoice's chat history on every change. Cap at 200 messages.
+  useEffect(() => {
+    if (!Array.isArray(aiMsgs)) return;
+    try {
+      const trimmed = aiMsgs.length > 200 ? aiMsgs.slice(-200) : aiMsgs;
+      localStorage.setItem(aiChatKey, JSON.stringify(trimmed));
+    } catch {}
+  }, [aiMsgs, aiChatKey]);
+  const resetAiChat = () => setAiMsgs([aiChatGreeting]);
   // The optimistic-lock token. Tracked in a ref (not state) so the latest
   // value is always available inside flushAutoSaveRef without re-creating
   // the ref on every render. Initialized from the loaded invoice and
@@ -2107,7 +2168,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               </div>
             </div>
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} /></div>}
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} /></div>}
 
             {showSaved && (
               <div style={{ background: "#fff", borderRadius: 10, marginBottom: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxHeight: 280, overflowY: "auto" }}>
@@ -3825,6 +3886,20 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [newDocType, setNewDocType] = useState("invoice");
   const [showGlobalAI, setShowGlobalAI] = useState(false);
+  // Persistent chat history for the global AI Assistant. Lives on the App
+  // so closing/reopening the modal preserves history. Also mirrored to
+  // localStorage so it survives a page reload. The greeting is added on
+  // first mount only when there's no saved history.
+  const [globalAIMsgs, setGlobalAIMsgs] = useState(() => {
+    try {
+      const raw = localStorage.getItem("higrade_global_ai_chat");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch {}
+    return null; // null means "not yet seeded — seed once data is available"
+  });
   const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
   // Counter bumped by the header "+" button when on the Expenses tab. The
@@ -3886,6 +3961,30 @@ export default function App() {
   useEffect(() => {
     if (!dbLoading) try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch {}
   }, [data, dbLoading]);
+
+  // Seed the global AI greeting once data has loaded for the first time, but
+  // only if there's no saved chat history. After this, the user's full chat
+  // history is preserved across closes and reloads.
+  useEffect(() => {
+    if (globalAIMsgs == null && !dbLoading) {
+      setGlobalAIMsgs([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
+    }
+  }, [globalAIMsgs, dbLoading, data.invoices.length, data.clients.length]);
+
+  // Persist the global AI chat history to localStorage on every change so it
+  // survives page reloads. Cap at 200 messages to keep the payload small.
+  useEffect(() => {
+    if (!Array.isArray(globalAIMsgs)) return;
+    try {
+      const trimmed = globalAIMsgs.length > 200 ? globalAIMsgs.slice(-200) : globalAIMsgs;
+      localStorage.setItem("higrade_global_ai_chat", JSON.stringify(trimmed));
+    } catch {}
+  }, [globalAIMsgs]);
+
+  // Reset the global AI chat: clears history and restores the greeting.
+  const resetGlobalAIChat = () => {
+    setGlobalAIMsgs([{ role: "assistant", text: `Hey Jake! I can see ${data.invoices.length} invoices and ${data.clients.length} clients. I can create invoices, add items, send emails, or build estimates. What do you need?` }]);
+  };
 
   const addExpense = async (exp) => {
     const id = await db.upsertExpense(exp);
@@ -4078,6 +4177,9 @@ export default function App() {
       alert('Could not delete this invoice: ' + (e.message || e));
       return;
     }
+    // Clean up the per-invoice AI chat history so we don't accumulate
+    // orphan localStorage keys for invoices that no longer exist.
+    try { localStorage.removeItem(`higrade_inv_chat_${id}`); } catch {}
     setData(d => ({ ...d, invoices: d.invoices.filter(inv => inv.id !== id) }));
     setView("list"); setSelected(null);
   };
@@ -4314,7 +4416,7 @@ export default function App() {
 
   return (
     <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
-      {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
+      {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
         <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
