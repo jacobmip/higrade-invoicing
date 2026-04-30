@@ -1647,13 +1647,38 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
 
   const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }];
+  const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
 
-  // Swipe between Edit / Preview / History tabs. Horizontal-dominant swipes
-  // change tab; vertical movement still scrolls normally.
-  const swipeRef = useRef({ x: 0, y: 0, active: false, locked: null });
+  // Real carousel swipe between Edit / Preview / History. All three panels
+  // render side-by-side in a 300%-wide flex track that translates by pixel
+  // amounts (pixel-based is more reliable than %, see InvoiceList).
+  const [dragX, setDragX] = useState(0);
+  const [animating, setAnimating] = useState(false);
+  const [viewportW, setViewportW] = useState(0);
+  const trackRef = useRef(null);
+  const swipeRef = useRef({ x: 0, y: 0, active: false, locked: null, width: 0 });
+
+  useEffect(() => {
+    const measure = () => { if (trackRef.current) setViewportW(trackRef.current.offsetWidth); };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  const goToTab = (nextId) => {
+    if (nextId === activeTab) { setDragX(0); return; }
+    setAnimating(true);
+    setActiveTab(nextId);
+    setDragX(0);
+    setTimeout(() => setAnimating(false), 260);
+  };
+
   const onTabsTouchStart = (e) => {
+    if (animating) return;
     const t = e.touches[0];
-    swipeRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null };
+    const width = trackRef.current?.offsetWidth || window.innerWidth;
+    swipeRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null, width };
+    setDragX(0);
   };
   const onTabsTouchMove = (e) => {
     if (!swipeRef.current.active) return;
@@ -1663,18 +1688,31 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     if (swipeRef.current.locked === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
       swipeRef.current.locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
     }
-  };
-  const onTabsTouchEnd = (e) => {
     if (swipeRef.current.locked === "x") {
-      const t = e.changedTouches[0];
-      const dx = t.clientX - swipeRef.current.x;
-      const threshold = 60;
-      const idx = TABS.findIndex(tt => tt.id === activeTab);
-      if (dx < -threshold && idx < TABS.length - 1) setActiveTab(TABS[idx + 1].id);
-      else if (dx > threshold && idx > 0) setActiveTab(TABS[idx - 1].id);
+      let clamped = dx;
+      if ((tabIdx === 0 && dx > 0) || (tabIdx === TABS.length - 1 && dx < 0)) {
+        clamped = dx * 0.3; // rubber-band past edges
+      }
+      setDragX(clamped);
     }
-    swipeRef.current = { x: 0, y: 0, active: false, locked: null };
   };
+  const onTabsTouchEnd = () => {
+    if (swipeRef.current.locked === "x") {
+      const width = swipeRef.current.width || 1;
+      const ratio = dragX / width;
+      const threshold = 0.18;
+      let nextIdx = tabIdx;
+      if (ratio < -threshold && tabIdx < TABS.length - 1) nextIdx = tabIdx + 1;
+      else if (ratio > threshold && tabIdx > 0) nextIdx = tabIdx - 1;
+      goToTab(TABS[nextIdx].id);
+    } else {
+      setDragX(0);
+    }
+    swipeRef.current = { x: 0, y: 0, active: false, locked: null, width: 0 };
+  };
+
+  const trackTransform = `translate3d(${-tabIdx * viewportW + dragX}px, 0, 0)`;
+  const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (swipeRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
 
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
@@ -1705,14 +1743,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0", position: "sticky", top: 54, zIndex: 90 }}>
         {TABS.map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ flex: 1, padding: "10px 4px 9px", background: "none", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent", color: activeTab === tab.id ? ORANGE : "#999", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          <button key={tab.id} onClick={() => goToTab(tab.id)} style={{ flex: 1, padding: "10px 4px 9px", background: "none", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent", color: activeTab === tab.id ? ORANGE : "#999", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
             <Icon name={tab.icon} size={15} color={activeTab === tab.id ? ORANGE : "#bbb"} />{tab.label}
           </button>
         ))}
       </div>
 
-      <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} style={{ touchAction: "pan-y" }}>
-      {activeTab === "edit" && (
+      <div ref={trackRef} onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ overflow: "hidden", touchAction: "pan-y" }}>
+      <div style={{ display: "flex", width: viewportW ? viewportW * TABS.length : "300%", transform: trackTransform, transition: trackTransition, willChange: "transform", alignItems: "flex-start" }}>
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
         <div>
           {/* Bill To */}
           <div style={{ padding: "16px 16px 0" }}>
@@ -1997,11 +2036,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             {/* TODO PayPal integration — add a "Send via PayPal" button here */}
           </div>
         </div>
-      )}
 
-      {activeTab === "preview" && <PDFPreview form={form} clients={clients} />}
-
-      {activeTab === "history" && (
+      </div>
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
+        <PDFPreview form={form} clients={clients} />
+      </div>
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
         <div style={{ padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Activity Log</span>
@@ -2034,7 +2074,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             </div>
           )}
         </div>
-      )}
+      </div>
+      </div>
       </div>
     </div>
   );
