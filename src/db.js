@@ -58,15 +58,16 @@ function toInvoice(row, items = [], payments = []) {
 }
 
 function toClient(row) {
-  // Promote legacy flat address1/2/3 into a single "Primary" entry in
+  // Promote legacy flat address1/2/3 into a single unlabeled entry in
   // addresses[] when addresses is empty/missing. Keeps old data usable
-  // even before migration 008 is applied.
+  // even before migration 008 is applied. Label is blank — a single
+  // address with no nickname is implicitly the primary one.
   let addresses = Array.isArray(row.addresses) ? row.addresses : []
   const hasFlat = !!(row.address1 || row.address2 || row.address3)
   if (addresses.length === 0 && hasFlat) {
     addresses = [{
       id: 'primary',
-      label: 'Primary',
+      label: '',
       line1: row.address1 || '',
       line2: row.address2 || '',
       line3: row.address3 || '',

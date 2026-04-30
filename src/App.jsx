@@ -2277,7 +2277,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                       phone: effectiveClientInfo.phone || "",
                       addresses: (effectiveClientInfo.address1 || effectiveClientInfo.address2 || effectiveClientInfo.address3) ? [{
                         id: newAddressId(),
-                        label: "Primary",
+                        label: "",
                         line1: effectiveClientInfo.address1 || "",
                         line2: effectiveClientInfo.address2 || "",
                         line3: effectiveClientInfo.address3 || "",
