@@ -332,6 +332,16 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
   return icons[name] || null;
 };
 
+// When a numeric field's value is the placeholder "0" (or any value really)
+// the cursor lands AFTER the digit on tap, so typing produces "01", "02" etc.
+// Selecting the contents on focus lets the user just start typing to replace.
+// Use a tiny timeout because iOS Safari resets the selection right after
+// focusing if you don't.
+const selectOnFocus = (e) => {
+  const el = e.target;
+  setTimeout(() => { try { el.select(); } catch {} }, 0);
+};
+
 const S = {
   btn: (v = "primary") => ({
     background: v === "primary" ? ORANGE : v === "navy" ? NAVY : v === "green" ? "#27ae60" : "#e8ecf4",
@@ -553,7 +563,7 @@ function PaymentModal({ invoice, onClose, onSave }) {
         <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.id} · {isEstimate ? `Estimate Total: ${fmt(t.total)} · Remaining: ${fmt(Math.max(0, t.balance))}` : `Balance: ${fmt(Math.max(0, t.balance))}`}</div>
         <div style={{ marginBottom: 12 }}>
           <label style={S.label}>Amount</label>
-          <input type="number" style={{ ...S.input, borderColor: willOverpay ? "#cc4444" : undefined }} value={amount} onChange={e => setAmount(e.target.value)} step="0.01" />
+          <input type="number" style={{ ...S.input, borderColor: willOverpay ? "#cc4444" : undefined }} value={amount} onChange={e => setAmount(e.target.value)} onFocus={selectOnFocus} step="0.01" />
           {willOverpay && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 3 }}>⚠ Overpayment — exceeds balance by {fmt(newPaid - t.total)}</div>}
         </div>
         <div style={{ marginBottom: 12 }}><label style={S.label}>Method</label><select style={S.input} value={method} onChange={e => setMethod(e.target.value)}>{["Cash","Check","Venmo","Zelle","Credit Card","PayPal","Bank Transfer","Other"].map(m => <option key={m}>{m}</option>)}</select></div>
@@ -625,10 +635,10 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
           <div style={{ background: LIGHT, borderRadius: 10, padding: 12, marginBottom: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
               <span style={{ fontSize: 11, color: "#8899bb", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>{isEstimate ? "Estimate" : "Invoice"}</span>
-              <span style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>{docNum}</span>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 13, color: "#555", fontWeight: 700, letterSpacing: 1 }}>{docNum}</span>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: NAVY }}>{name || "—"}</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18, fontWeight: 700, color: NAVY, letterSpacing: 0.5, textTransform: "uppercase" }}>{name || "—"}</span>
               <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: ORANGE }}>{fmt(t.total)}</span>
             </div>
           </div>
@@ -654,7 +664,7 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
             value={message}
             onChange={e => { setEdited(true); setMessage(e.target.value); }}
             rows={9}
-            style={{ ...S.input, resize: "vertical", minHeight: 160, fontFamily: "inherit", lineHeight: 1.5, fontSize: 14, whiteSpace: "pre-wrap" }}
+            style={{ ...S.input, resize: "vertical", minHeight: 160, fontFamily: "'Barlow', sans-serif", lineHeight: 1.5, fontSize: 14, whiteSpace: "pre-wrap" }}
           />
           <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>This appears at the top of the email.</div>
         </div>
@@ -1157,7 +1167,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
         <div style={{ display: "grid", gridTemplateColumns: "72px 100px 1fr", gap: 10, marginBottom: 12 }}>
           <div>
             <label style={S.label}>Qty</label>
-            <input type="number" style={S.input} value={form.qty} onChange={e => set("qty", parseFloat(e.target.value) || 1)} min={1} />
+            <input type="number" style={S.input} value={form.qty} onChange={e => set("qty", parseFloat(e.target.value) || 1)} onFocus={selectOnFocus} min={1} />
           </div>
           <div>
             <label style={S.label}>Unit</label>
@@ -1167,7 +1177,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
           </div>
           <div>
             <label style={S.label}>Unit Price</label>
-            <input type="number" style={S.input} value={form.price} onChange={e => set("price", parseFloat(e.target.value) || 0)} step={0.01} />
+            <input type="number" style={S.input} value={form.price} onChange={e => set("price", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} step={0.01} />
           </div>
         </div>
 
@@ -1181,7 +1191,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
               ))}
             </div>
           </div>
-          <input type="number" style={S.input} value={form.discount || 0} onChange={e => set("discount", parseFloat(e.target.value) || 0)} min={0} placeholder="0" />
+          <input type="number" style={S.input} value={form.discount || 0} onChange={e => set("discount", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} min={0} placeholder="0" />
         </div>
 
         {/* Line Total */}
@@ -2025,7 +2035,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
           {/* Tax & Discount */}
           <div style={{ padding: "4px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div><label style={S.label}>Tax %</label><input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} step={0.001} /></div>
+            <div><label style={S.label}>Tax %</label><input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} step={0.001} /></div>
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <label style={S.label}>Discount</label>
@@ -2035,7 +2045,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   ))}
                 </div>
               </div>
-              <input type="number" style={S.input} value={form.discount} onChange={e => setField("discount", parseFloat(e.target.value) || 0)} min={0} />
+              <input type="number" style={S.input} value={form.discount} onChange={e => setField("discount", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} min={0} />
             </div>
           </div>
 
@@ -3192,7 +3202,7 @@ function ExpenseModal({ expense, onClose, onSave }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
             <div><label style={S.label}>Date</label><input type="date" style={S.input} value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></div>
-            <div><label style={S.label}>Amount $</label><input type="number" style={S.input} value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} step="0.01" min="0" placeholder="0.00" /></div>
+            <div><label style={S.label}>Amount $</label><input type="number" style={S.input} value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} onFocus={selectOnFocus} step="0.01" min="0" placeholder="0.00" /></div>
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={S.label}>Category</label>
