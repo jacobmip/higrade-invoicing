@@ -2077,14 +2077,17 @@ function InvoiceList({ invoices, onNew, onSelect }) {
 
   return (
     <div>
-      <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
-        <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(outstanding)}</div></div>
-        <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>2026 Paid</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(paidThisYear)}</div></div>
-      </div>
-      <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
-        {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
-        ))}
+      {/* Sticky sub-header: KPI strip + filter tabs pin under the brand header */}
+      <div style={{ position: "sticky", top: "var(--brand-h, 56px)", zIndex: 90, background: "#fff", boxShadow: "0 2px 8px rgba(10,22,40,0.08)" }}>
+        <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
+          <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(outstanding)}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>2026 Paid</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(paidThisYear)}</div></div>
+        </div>
+        <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
+          {TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 4px", background: "none", border: "none", borderBottom: tab === t ? `2px solid ${ORANGE}` : "2px solid transparent", color: tab === t ? ORANGE : "#888", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", transition: "border-color 0.15s, color 0.15s" }}>{t}</button>
+          ))}
+        </div>
       </div>
       <div
         onTouchStart={onTouchStart}
@@ -2134,9 +2137,11 @@ function InvoiceList({ invoices, onNew, onSelect }) {
 function EstimatesTab({ invoices, onNew, onSelect }) {
   return (
     <div>
-      <div style={{ background: NAVY2, padding: "12px 16px" }}>
-        <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Estimates</div>
-        <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{invoices.length} total</div>
+      <div style={{ position: "sticky", top: "var(--brand-h, 56px)", zIndex: 90, background: NAVY2, boxShadow: "0 2px 8px rgba(10,22,40,0.08)" }}>
+        <div style={{ background: NAVY2, padding: "12px 16px" }}>
+          <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Estimates</div>
+          <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{invoices.length} total</div>
+        </div>
       </div>
       <div style={{ padding: "12px 12px 0" }}>
         {invoices.length === 0 ? (
@@ -3016,6 +3021,23 @@ export default function App() {
   const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
+  // Measure the sticky brand header so child screens can pin their own headers
+  // directly underneath it (e.g. KPI strip + filter tabs on the Invoices list).
+  const rootRef = useRef(null);
+  const brandHeaderRef = useRef(null);
+  useEffect(() => {
+    const el = brandHeaderRef.current;
+    const root = rootRef.current;
+    if (!el || !root) return;
+    const apply = () => {
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) root.style.setProperty("--brand-h", `${Math.round(h)}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
 
   useEffect(() => {
     db.loadAll()
@@ -3331,11 +3353,11 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", overflowX: "hidden", paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", overflowX: "hidden", paddingBottom: view === "list" ? 80 : 0 }}>
       {showGlobalAI && <GlobalAIModal data={data} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
-        <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+        <div ref={brandHeaderRef} style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
           <div>
             <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
             <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>LLC · HONOLULU</span>
