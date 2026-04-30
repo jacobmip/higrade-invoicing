@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
 import { api } from './apiBase.js';
@@ -1312,8 +1313,13 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
     }
   };
 
+  // Render through a portal to document.body. The InvoiceForm carousel uses
+  // `transform` + `will-change`, which creates a containing block for any
+  // descendant `position: fixed` elements — that pinned this modal to one
+  // carousel column instead of the viewport, pushing it off-screen when
+  // the iOS keyboard appeared.
   if (creating) {
-    return (
+    return createPortal(
       <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
         <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", padding: "20px 18px 28px", maxHeight: "90vh", overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 14, gap: 10 }}>
@@ -1329,11 +1335,12 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
           ))}
           <button onClick={handleSaveNew} style={{ ...S.btn("primary"), width: "100%", marginTop: 8, fontSize: 15, padding: 12 }}>Save Client</button>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", padding: "18px 16px 24px", maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1386,7 +1393,8 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
           })}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -3543,18 +3551,35 @@ export default function App() {
       convertedToId: null,
       notes: form.notes ? form.notes : "",
     };
-    // Mark the source as converted (estimate → invoice or invoice → estimate)
-    // by stamping a `convertedToId` on the original. This is a normal field
-    // we surface in the UI to count an estimate as "closed".
-    const sourceUpdated = { ...form, convertedToId: newId };
-    setData(d => ({
-      ...d,
-      invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
-      nextNum: d.nextNum + 1,
-    }));
+    // Two flows:
+    //   estimate → invoice: KEEP the source estimate, stamp it with
+    //                       convertedToId so the Estimates list counts it
+    //                       as "closed" (records of every signed estimate).
+    //   invoice  → estimate: DELETE the source invoice. Going back to an
+    //                       estimate means the invoice was sent prematurely
+    //                       — we don't want two competing copies.
+    const deleteSource = targetType === "estimate";
+    if (deleteSource) {
+      setData(d => ({
+        ...d,
+        invoices: [copy, ...d.invoices.filter(inv => inv.id !== form.id)],
+        nextNum: d.nextNum + 1,
+      }));
+    } else {
+      const sourceUpdated = { ...form, convertedToId: newId };
+      setData(d => ({
+        ...d,
+        invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
+        nextNum: d.nextNum + 1,
+      }));
+    }
     try {
       await db.upsertInvoice(copy, true);
-      await db.upsertInvoice(sourceUpdated, false);
+      if (deleteSource) {
+        await db.deleteInvoice(form.id);
+      } else {
+        await db.upsertInvoice({ ...form, convertedToId: newId }, false);
+      }
     } catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
     // Open the new doc immediately.
     setSelected(copy);
