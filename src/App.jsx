@@ -2049,8 +2049,22 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
   // animating=true while the slide settles to its final position.
   const [dragX, setDragX] = useState(0);
   const [animating, setAnimating] = useState(false);
+  // Measured viewport width for pixel-based track translation. Pixel-based
+  // is more reliable than `%` because the track is `width:300%` and percentage
+  // translateX is relative to the *element's own width*, which on iOS Safari
+  // can briefly mis-measure during sticky-header transitions.
+  const [viewportW, setViewportW] = useState(0);
   const trackRef = useRef(null);
   const touchRef = useRef({ x: 0, y: 0, active: false, locked: null, width: 0 });
+
+  // Measure parent width on mount and on resize. trackRef is the overflow
+  // container; its offsetWidth is the visible viewport (one column wide).
+  useEffect(() => {
+    const measure = () => { if (trackRef.current) setViewportW(trackRef.current.offsetWidth); };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   const goToTab = (next) => {
     if (next === tab) { setDragX(0); return; }
@@ -2175,10 +2189,9 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
     ));
   };
 
-  // Translate the 3-column track. The track is 300% wide and translateX %
-  // is relative to the *element's own width*, so to advance by one column
-  // (one viewport width) we shift by 1/3 of the track = 33.3333%.
-  const trackTransform = `translate3d(calc(${(-tabIndex * 100) / 3}% + ${dragX}px), 0, 0)`;
+  // Translate the 3-column track in pixels (more reliable than %). Each tab
+  // step shifts by one viewport width to the left.
+  const trackTransform = `translate3d(${-tabIndex * viewportW + dragX}px, 0, 0)`;
   const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (touchRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
 
   return (
@@ -2193,14 +2206,14 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
       <div
         style={{
           display: "flex",
-          width: "300%",
+          width: viewportW ? viewportW * TABS.length : "300%",
           transform: trackTransform,
           transition: trackTransition,
           willChange: "transform",
         }}
       >
         {TABS.map(key => (
-          <div key={key} style={{ width: "33.3333%", flexShrink: 0, padding: "12px 12px 0", boxSizing: "border-box" }}>
+          <div key={key} style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, padding: "12px 12px 0", boxSizing: "border-box" }}>
             {renderColumn(key)}
           </div>
         ))}
