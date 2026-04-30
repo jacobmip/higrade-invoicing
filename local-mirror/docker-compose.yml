@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: higrade-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: higrade
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: higrade
+    ports:
+      - "5432:5432"
+    volumes:
+      - higrade-data:/var/lib/postgresql/data
+      # Schema and data are seeded by `seed_from_supabase.sh`, which runs
+      # pg_dump against the live Supabase project and restores it locally.
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: higrade-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: jacobmip@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: localdev
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5433:80"
+    depends_on:
+      - postgres
+
+volumes:
+  higrade-data:

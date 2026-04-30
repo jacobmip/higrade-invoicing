@@ -1,0 +1,4 @@
+# Dump files written by seed_from_supabase.sh
+.last_dump.sql
+sync.log
+backup-*.sql

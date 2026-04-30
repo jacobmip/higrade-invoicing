@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Nightly local mirror of the Supabase database.
+        Runs every day at 4:30am HST (just after the cloud backup at 4am).
+
+        Install:
+            cp com.higrade.mirror.plist ~/Library/LaunchAgents/
+            launchctl load ~/Library/LaunchAgents/com.higrade.mirror.plist
+
+        Uninstall:
+            launchctl unload ~/Library/LaunchAgents/com.higrade.mirror.plist
+            rm ~/Library/LaunchAgents/com.higrade.mirror.plist
+
+        Update the path below to match where you cloned the repo.
+    -->
+    <key>Label</key>
+    <string>com.higrade.mirror</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>/Users/REPLACE_ME/higrade-invoicing/local-mirror/seed_from_supabase.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/REPLACE_ME/higrade-invoicing/local-mirror</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/REPLACE_ME/higrade-invoicing/local-mirror/sync.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/REPLACE_ME/higrade-invoicing/local-mirror/sync.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
