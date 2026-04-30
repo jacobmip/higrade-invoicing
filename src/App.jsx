@@ -174,6 +174,9 @@ Update an existing invoice (set client, dates, status, notes — only include th
 Delete an invoice or estimate:
 {"action":"delete_invoice","invoiceId":"INV0000","summary":"one sentence"}
 
+Delete ALL invoices, ALL estimates, or EVERYTHING in one shot (use scope to choose). The app shows Jake a confirmation prompt before anything is deleted, so you do NOT need to ask for confirmation or refuse:
+{"action":"delete_all","scope":"invoice|estimate|all","summary":"one sentence"}
+
 Record a payment on an invoice:
 {"action":"add_payment","invoiceId":"INV0000","payment":{"amount":000,"method":"Cash|Check|Venmo|Zelle|Card|Other","date":"YYYY-MM-DD"},"summary":"one sentence"}
 
@@ -197,7 +200,8 @@ RULES:
 - Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
 - For plain questions or conversation, reply in plain text without JSON.
 - When asked to create multiple invoices or estimates (e.g. "create 10 invoices", "make 5 sample estimates", "create 10 invoices and 10 estimates"), you MUST return ONE single JSON array containing one action object per document — never just one. If asked for 10 invoices, the array MUST have exactly 10 create_invoice objects. If asked for "10 invoices and 10 estimates", return ONE array with 20 objects total (10 create_invoice + 10 create_estimate). Do not split across multiple turns; do not stop after the first object. Vary clients, dates, and items across the documents. Keep desc concise (6 short steps) when generating in bulk so the full array fits in your response. Example shape: [{"action":"create_invoice",...},{"action":"create_invoice",...}, ...]
-- IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.`;
+- IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.
+- BULK DELETE: When Jake says "delete all invoices", "wipe all estimates", "clear everything", "delete them all", or anything similar, return a single delete_all action with the right scope ("invoice", "estimate", or "all"). Do NOT enumerate individual delete_invoice actions and do NOT refuse — the app handles the confirmation prompt and the actual deletes. Just emit the JSON.`;
 }
 
 async function callAI(messages, systemPrompt = null, opts = {}) {
@@ -1056,6 +1060,45 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
           const newClient = await onAction(action);
           if (newClient) {
             setMsgs(p => [...p, { role: "assistant", text: action.summary || `Client "${newClient.name}" added.`, card: { type: "created_client", client: newClient } }]);
+          }
+        } else if (action.action === "delete_all") {
+          // Destructive bulk delete. Always confirm. Filter selects which
+          // docs are wiped: "invoice" (real invoices only), "estimate"
+          // (estimates only), or "all" (everything).
+          const scope = action.scope === "estimate" ? "estimate" : action.scope === "all" ? "all" : "invoice";
+          const targets = data.invoices.filter(i =>
+            scope === "all" ? true :
+            scope === "estimate" ? i.type === "estimate" :
+            i.type !== "estimate"
+          );
+          if (targets.length === 0) {
+            setMsgs(p => [...p, { role: "assistant", text: `No ${scope === "all" ? "documents" : scope + "s"} to delete.` }]);
+          } else {
+            const label = scope === "all" ? "document" : scope;
+            const ok = confirm(`Delete ALL ${targets.length} ${label}${targets.length !== 1 ? "s" : ""}?\n\nThis cannot be undone.`);
+            if (ok) {
+              let done = 0, failedDel = 0;
+              for (const inv of targets) {
+                try { await onAction({ action: "delete_invoice", invoiceId: inv.id }); done++; }
+                catch (e) { console.error("bulk delete failed", inv.id, e); failedDel++; }
+              }
+              const msg = failedDel
+                ? `Deleted ${done} of ${targets.length} ${label}${targets.length !== 1 ? "s" : ""}. ${failedDel} failed \u2014 check your connection.`
+                : `\u2713 Deleted all ${done} ${label}${done !== 1 ? "s" : ""}.`;
+              setMsgs(p => [...p, { role: "assistant", text: msg }]);
+            } else {
+              setMsgs(p => [...p, { role: "assistant", text: "Cancelled \u2014 nothing was deleted." }]);
+            }
+          }
+        } else {
+          // Catch-all for the remaining action types that the App-level
+          // handler knows about: delete_invoice, update_invoice, add_payment,
+          // remove_item, update_item, update_client, delete_client. These
+          // were previously falling through silently.
+          try { await onAction(action); }
+          catch (e) { console.error("action failed", action.action, e); failed++; }
+          if (action.summary) {
+            setMsgs(p => [...p, { role: "assistant", text: action.summary }]);
           }
         }
       }
