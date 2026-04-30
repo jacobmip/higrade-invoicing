@@ -1355,7 +1355,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
@@ -1374,6 +1374,46 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sending, setSending] = useState(false);
+  const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
+  const [autoSaving, setAutoSaving] = useState(false);
+  // Debounced auto-save — persists silently while the user edits so the back
+  // button and the Save button are interchangeable. We skip the very first
+  // render so we don't write the unchanged initial state back to the DB.
+  const formRef = useRef(form);
+  formRef.current = form;
+  const autoSaveTimerRef = useRef(null);
+  const skipFirstRef = useRef(true);
+  const flushAutoSaveRef = useRef(async () => {});
+  flushAutoSaveRef.current = async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    if (!onAutoSave) return null;
+    setAutoSaving(true);
+    try {
+      const saved = await onAutoSave({ ...formRef.current, id: autoSavedId || formRef.current.id });
+      if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
+      return saved;
+    } catch (e) {
+      console.error('Auto-save failed (kept local):', e);
+      return null;
+    } finally {
+      setAutoSaving(false);
+    }
+  };
+  useEffect(() => {
+    if (skipFirstRef.current) { skipFirstRef.current = false; return; }
+    if (!onAutoSave) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => { flushAutoSaveRef.current(); }, 800);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
+  // On unmount (back button, navigation away), flush any pending changes.
+  useEffect(() => {
+    return () => { flushAutoSaveRef.current(); };
+  }, []);
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -1543,11 +1583,23 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     onConvert?.(form, targetType);
   };
 
+  // Save button now means "save and exit". Auto-save already handles the
+  // persistence on its own — we just flush any pending change and close.
   const handleSave = async () => {
     if (saveToProfile && selectedClient && effectiveClientInfo) {
       try { await onUpdateClient?.({ ...effectiveClientInfo, id: selectedClient.id }); } catch (e) { console.error('Failed to update client profile:', e); }
     }
-    onSave(form);
+    if (onAutoSave) {
+      await flushAutoSaveRef.current();
+      onCancel?.();
+    } else {
+      onSave(form);
+    }
+  };
+  // Back arrow flushes pending edits then navigates away.
+  const handleBack = async () => {
+    await flushAutoSaveRef.current();
+    onCancel?.();
   };
 
   const historyEvents = [
@@ -1575,10 +1627,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       )}
 
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
-        <button onClick={onCancel} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
-        <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>{invoice ? invoice.id : isEstimate ? "New Estimate" : "New Invoice"}</span>
-        {invoice && onDelete && <button onClick={() => { if (confirm("Delete this?")) onDelete(invoice.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        <button onClick={handleSave} style={S.btn("primary")}>Save</button>
+        <button onClick={handleBack} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
+        <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+          {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
+          {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
+        </span>
+        {(invoice || autoSavedId) && onDelete && <button onClick={() => { if (confirm("Delete this?")) onDelete((invoice && invoice.id) || autoSavedId); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
+        <button onClick={handleSave} style={S.btn("primary")}>Done</button>
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0", position: "sticky", top: 54, zIndex: 90 }}>
@@ -1858,7 +1913,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
           {/* Actions */}
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            <button onClick={() => onSave(form)} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Save Estimate" : "Save Invoice"}</button>
+            <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
               {!isEstimate && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> Record Payment</button>}
               <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
@@ -3146,6 +3201,36 @@ export default function App() {
     } catch (e) { console.error('Auto-save failed:', e); }
   };
 
+  // Silent auto-save — persists the form without navigating away. Creates a
+  // new invoice on first call (assigning the next ID) and updates in place
+  // thereafter. Returns the saved record so the form can lock onto its ID.
+  const autoSaveInvoice = async (form) => {
+    const year = new Date(form.date || today()).getFullYear();
+    // Existing record — just update.
+    if (form.id || selected?.id) {
+      const id = form.id || selected.id;
+      const updated = { ...form, id, year };
+      setData(d => ({
+        ...d,
+        invoices: d.invoices.some(inv => inv.id === id)
+          ? d.invoices.map(inv => inv.id === id ? updated : inv)
+          : [updated, ...d.invoices],
+      }));
+      try { await db.upsertInvoice(updated, false); }
+      catch (e) { console.error('Auto-save failed (kept local copy):', e); }
+      if (!selected || selected.id !== id) setSelected(updated);
+      return updated;
+    }
+    // New record — mint an ID using the existing nextNum counter.
+    const id = `INV${String(data.nextNum).padStart(4, "0")}`;
+    const created = { ...form, id, year };
+    setData(d => ({ ...d, invoices: [created, ...d.invoices], nextNum: d.nextNum + 1 }));
+    setSelected(created);
+    try { await db.upsertInvoice(created, true); }
+    catch (e) { console.error('Auto-save (create) failed (kept local copy):', e); }
+    return created;
+  };
+
   const removeClient = async (id) => {
     await db.deleteClient(id);
     setData(d => ({ ...d, clients: d.clients.filter(c => c.id !== id) }));
@@ -3211,6 +3296,7 @@ export default function App() {
           onAIAction={handleGlobalAIAction}
           onSave={updateInvoice}
           onPartialSave={partialSaveInvoice}
+          onAutoSave={autoSaveInvoice}
           onCancel={() => { setView("list"); setSelected(null); }}
           onDelete={deleteInvoice}
           onSaveItem={saveItemToLibrary}
