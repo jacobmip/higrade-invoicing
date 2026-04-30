@@ -344,6 +344,59 @@ const selectOnFocus = (e) => {
   setTimeout(() => { try { el.select(); } catch {} }, 0);
 };
 
+// Long-press handler for iOS-style "hold to delete" interactions. Returns
+// the props you spread onto the target element. The handler fires only if
+// the user actually holds for the full duration without moving (cancels on
+// scroll). When it fires, we also suppress the next click so a long-press
+// doesn't double-trigger the tap action that's wired to the same element.
+function useLongPress(onLongPress, { ms = 500, moveTolerance = 8 } = {}) {
+  const timerRef = useRef(null);
+  const startRef = useRef({ x: 0, y: 0 });
+  const firedRef = useRef(false);
+
+  const cancel = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+  };
+
+  const start = (e) => {
+    firedRef.current = false;
+    const t = e.touches ? e.touches[0] : e;
+    startRef.current = { x: t.clientX, y: t.clientY };
+    cancel();
+    timerRef.current = setTimeout(() => {
+      firedRef.current = true;
+      // iOS haptic-ish: a 12ms vibration if the device supports it.
+      try { navigator.vibrate?.(12); } catch {}
+      onLongPress();
+    }, ms);
+  };
+
+  const move = (e) => {
+    if (!timerRef.current) return;
+    const t = e.touches ? e.touches[0] : e;
+    const dx = t.clientX - startRef.current.x;
+    const dy = t.clientY - startRef.current.y;
+    if (Math.abs(dx) > moveTolerance || Math.abs(dy) > moveTolerance) cancel();
+  };
+
+  return {
+    onPointerDown: start,
+    onPointerMove: move,
+    onPointerUp: cancel,
+    onPointerCancel: cancel,
+    onPointerLeave: cancel,
+    // Suppress the click that follows a successful long-press so the tap
+    // handler on the same element doesn't fire (e.g. opening the invoice).
+    onClickCapture: (e) => {
+      if (firedRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        firedRef.current = false;
+      }
+    },
+  };
+}
+
 const S = {
   btn: (v = "primary") => ({
     background: v === "primary" ? ORANGE : v === "navy" ? NAVY : v === "green" ? "#27ae60" : "#e8ecf4",
@@ -1467,6 +1520,58 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   );
 }
 
+// Single line-item row inside the invoice form. Extracted so we can call
+// the useLongPress hook per-row (hooks can't be called inside .map). Long-
+// press = confirm + remove. Long-press is disabled while reordering so it
+// doesn't conflict with the drag handles.
+function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem, moveItem, removeItem, descPreview, itemsLength }) {
+  const longPress = useLongPress(() => {
+    if (reordering) return;
+    if (confirm("Delete this line item?")) removeItem(i);
+  });
+  // Only attach the long-press handlers when not reordering, so the drag
+  // handles aren't blocked by pointer-down listeners on the parent.
+  const lpProps = reordering ? {} : longPress;
+  return (
+    <div
+      onClick={() => !reordering && setEditingItem(i)}
+      {...lpProps}
+      draggable={reordering}
+      onDragStart={() => setDragIdx(i)}
+      onDragOver={e => e.preventDefault()}
+      onDrop={() => { if (dragIdx !== null && dragIdx !== i) { moveItem(dragIdx, i); setDragIdx(null); } }}
+      style={{ background: "#fff", borderRadius: 10, padding: "11px 12px", marginBottom: 8, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", cursor: reordering ? "grab" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: dragIdx === i ? 0.5 : 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+    >
+      {reordering && <Icon name="grip" size={16} color="#ccc" />}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: (item.name || item.desc) ? "#1a1a1a" : "#bbb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {item.name || item.desc || "Tap to add item…"}
+        </div>
+        {descPreview && (
+          <div style={{ fontSize: 12, color: "#888", marginTop: 2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.4 }}>{descPreview}</div>
+        )}
+        <div style={{ fontSize: 12, color: "#aaa", marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
+          <span>{item.qty > 1 ? `${item.qty} × ${fmt(item.price)}` : `${fmt(item.price)}${item.unit && item.unit !== "ea" ? " / " + item.unit : ""}`}</span>
+          {item.discount > 0 && <span style={{ color: "#e74c3c", fontSize: 11 }}>{item.discountType === "%" ? `−${item.discount}%` : `−${fmt(item.discount)}`}</span>}
+        </div>
+      </div>
+      {reordering ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <button onClick={e => { e.stopPropagation(); i > 0 && moveItem(i, i - 1); }} style={{ width: 28, height: 28, background: i > 0 ? "#f0f2f8" : "#f8f9fc", border: "none", borderRadius: 6, cursor: i > 0 ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="arrowUp" size={14} color={i > 0 ? "#555" : "#ddd"} /></button>
+          <button onClick={e => { e.stopPropagation(); i < itemsLength - 1 && moveItem(i, i + 1); }} style={{ width: 28, height: 28, background: i < itemsLength - 1 ? "#f0f2f8" : "#f8f9fc", border: "none", borderRadius: 6, cursor: i < itemsLength - 1 ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="arrowDown" size={14} color={i < itemsLength - 1 ? "#555" : "#ddd"} /></button>
+        </div>
+      ) : (
+        <>
+          <div style={{ flexShrink: 0, textAlign: "right" }}>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: NAVY }}>{fmt(calcItemTotal(item))}</div>
+          </div>
+          <Icon name="chevron" size={16} color="#ccc" />
+        </>
+      )}
+    </div>
+  );
+}
+
 function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
@@ -2024,42 +2129,19 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             {form.items.map((item, i) => {
               const descPreview = item.desc?.replace(/\n/g, " · ") || "";
               return (
-                <div
+                <LineItemRow
                   key={i}
-                  onClick={() => !reordering && setEditingItem(i)}
-                  draggable={reordering}
-                  onDragStart={() => setDragIdx(i)}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={() => { if (dragIdx !== null && dragIdx !== i) { moveItem(dragIdx, i); setDragIdx(null); } }}
-                  style={{ background: "#fff", borderRadius: 10, padding: "11px 12px", marginBottom: 8, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", cursor: reordering ? "grab" : "pointer", display: "flex", alignItems: "center", gap: 8, opacity: dragIdx === i ? 0.5 : 1 }}
-                >
-                  {reordering && <Icon name="grip" size={16} color="#ccc" />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: (item.name || item.desc) ? "#1a1a1a" : "#bbb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {item.name || item.desc || "Tap to add item…"}
-                    </div>
-                    {descPreview && (
-                      <div style={{ fontSize: 12, color: "#888", marginTop: 2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.4 }}>{descPreview}</div>
-                    )}
-                    <div style={{ fontSize: 12, color: "#aaa", marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
-                      <span>{item.qty > 1 ? `${item.qty} × ${fmt(item.price)}` : `${fmt(item.price)}${item.unit && item.unit !== "ea" ? " / " + item.unit : ""}`}</span>
-                      {item.discount > 0 && <span style={{ color: "#e74c3c", fontSize: 11 }}>{item.discountType === "%" ? `−${item.discount}%` : `−${fmt(item.discount)}`}</span>}
-                    </div>
-                  </div>
-                  {reordering ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                      <button onClick={e => { e.stopPropagation(); i > 0 && moveItem(i, i - 1); }} style={{ width: 28, height: 28, background: i > 0 ? "#f0f2f8" : "#f8f9fc", border: "none", borderRadius: 6, cursor: i > 0 ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="arrowUp" size={14} color={i > 0 ? "#555" : "#ddd"} /></button>
-                      <button onClick={e => { e.stopPropagation(); i < form.items.length - 1 && moveItem(i, i + 1); }} style={{ width: 28, height: 28, background: i < form.items.length - 1 ? "#f0f2f8" : "#f8f9fc", border: "none", borderRadius: 6, cursor: i < form.items.length - 1 ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="arrowDown" size={14} color={i < form.items.length - 1 ? "#555" : "#ddd"} /></button>
-                    </div>
-                  ) : (
-                    <>
-                      <div style={{ flexShrink: 0, textAlign: "right" }}>
-                        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: NAVY }}>{fmt(calcItemTotal(item))}</div>
-                      </div>
-                      <Icon name="chevron" size={16} color="#ccc" />
-                    </>
-                  )}
-                </div>
+                  item={item}
+                  i={i}
+                  reordering={reordering}
+                  dragIdx={dragIdx}
+                  setDragIdx={setDragIdx}
+                  setEditingItem={setEditingItem}
+                  moveItem={moveItem}
+                  removeItem={removeItem}
+                  descPreview={descPreview}
+                  itemsLength={form.items.length}
+                />
               );
             })}
           </div>
@@ -2282,7 +2364,61 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 }
 
 // ─── Invoice List ─────────────────────────────────────────────────────────────
-function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
+// Single invoice card on the list screen. Extracted into its own component
+// so we can call the useLongPress hook per-card (hooks can't be called inside
+// a .map() callback). Long-press confirms + deletes; tap opens the invoice.
+function InvoiceListCard({ inv, onSelect, onDelete, statusLabel, pillColor, lastMethod, amountColor, displayAmt }) {
+  const longPress = useLongPress(() => {
+    if (!onDelete) return;
+    if (confirm(`Delete invoice ${inv.id}?\n\nThis cannot be undone.`)) onDelete(inv.id);
+  });
+  return (
+    <div
+      onClick={() => onSelect(inv)}
+      {...longPress}
+      style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+    >
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client}</div>
+        <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: amountColor }}>{displayAmt}</div>
+        <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", alignItems: "center", marginTop: 2 }}>
+          {lastMethod && <span style={{ fontSize: 9, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{lastMethod}</span>}
+          <span style={S.pill(pillColor)}>{statusLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Single estimate card on the list screen. Same long-press treatment as
+// invoices: hold to delete, tap to open.
+function EstimateListCard({ inv, onSelect, onDelete, pillLabel, pillColor, total }) {
+  const longPress = useLongPress(() => {
+    if (!onDelete) return;
+    if (confirm(`Delete estimate ${inv.id}?\n\nThis cannot be undone.`)) onDelete(inv.id);
+  });
+  return (
+    <div
+      onClick={() => onSelect(inv)}
+      {...longPress}
+      style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+    >
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client || "No client"}</div>
+        <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE }}>{fmt(total)}</div>
+        <span style={S.pill(pillColor)}>{pillLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
   const tabIndex = TABS.indexOf(tab);
@@ -2383,19 +2519,7 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
           const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
           const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
           return (
-            <div key={inv.id} onClick={() => onSelect(inv)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client}</div>
-                <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: amountColor }}>{displayAmt}</div>
-                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", alignItems: "center", marginTop: 2 }}>
-                  {lastMethod && <span style={{ fontSize: 9, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{lastMethod}</span>}
-                  <span style={S.pill(pillColor)}>{statusLabel}</span>
-                </div>
-              </div>
-            </div>
+            <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelect} onDelete={onDelete} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
           );
         })}
       </div>
@@ -2439,7 +2563,7 @@ function InvoiceList({ invoices, onNew, onSelect, setSubHeader }) {
 }
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
-function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
+function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
   const TABS = ["all", "open", "closed"];
   const [tab, setTab] = useState("all");
   const tabIndex = TABS.indexOf(tab);
@@ -2532,16 +2656,7 @@ function EstimatesTab({ invoices, onNew, onSelect, setSubHeader }) {
           const pillLabel = inv.convertedToId ? "→ Invoice" : inv.status === "approved" ? "✓ Approved" : "Open";
           const pillColor = closed ? "#27ae60" : "#8899bb";
           return (
-            <div key={inv.id} onClick={() => onSelect(inv)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{inv.client || "No client"}</div>
-                <div style={{ fontSize: 12, color: "#888" }}>{inv.id} · {inv.date}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE }}>{fmt(t.total)}</div>
-                <span style={S.pill(pillColor)}>{pillLabel}</span>
-              </div>
-            </div>
+            <EstimateListCard key={inv.id} inv={inv} onSelect={onSelect} onDelete={onDelete} pillLabel={pillLabel} pillColor={pillColor} total={t.total} />
           );
         })}
       </div>
@@ -4265,8 +4380,8 @@ export default function App() {
         />
       ) : (
         <>
-          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
-          {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} />}
+          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
+          {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
           {tab === "clients"   && <ClientsTab clients={data.clients} onSave={saveClient} onDelete={removeClient} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
