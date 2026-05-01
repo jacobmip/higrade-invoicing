@@ -509,44 +509,12 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const [vv, setVV] = useState(() => ({
-    height: typeof window !== "undefined" ? window.innerHeight : 0,
-    top: 0,
-  }));
   const endRef = useRef(null);
-  useEffect(() => {
-    const v = window.visualViewport;
-    if (!v) return;
-    const update = () => setVV({ height: v.height, top: v.offsetTop || 0 });
-    update();
-    v.addEventListener("resize", update);
-    v.addEventListener("scroll", update);
-    return () => { v.removeEventListener("resize", update); v.removeEventListener("scroll", update); };
-  }, []);
-  // Lock body scroll only while the input is focused so iOS can't scroll the page.
-  useEffect(() => {
-    if (!focused) return;
-    const prev = {
-      overflow: document.body.style.overflow,
-      position: document.body.style.position,
-      width: document.body.style.width,
-      top: document.body.style.top,
-    };
-    const scrollY = window.scrollY;
-    document.body.style.overflow = "hidden";
-    document.body.style.position = "fixed";
-    document.body.style.width = "100%";
-    document.body.style.top = `-${scrollY}px`;
-    return () => {
-      document.body.style.overflow = prev.overflow;
-      document.body.style.position = prev.position;
-      document.body.style.width = prev.width;
-      document.body.style.top = prev.top;
-      window.scrollTo(0, scrollY);
-    };
-  }, [focused]);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, vv.height, focused]);
+  // Only auto-scroll when new messages arrive or the loading indicator
+  // toggles. Earlier this also fired on every visualViewport change, which
+  // meant every keystroke (iOS keyboard animation tweaks the viewport)
+  // re-scrolled the panel and made the chat feel like it was jumping.
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading]);
 
   const startListening = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -603,11 +571,12 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
     setLoading(false);
   };
 
-  // When the input is focused, promote the panel to a fixed overlay sized to
-  // the visible viewport so the iOS keyboard can never cover the chat.
-  const containerStyle = focused
-    ? { position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 350, background: "#f4f6fa", overflow: "hidden", border: "none", borderRadius: 0, maxWidth: 480, margin: "0 auto" }
-    : { position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
+  // Keep the chat panel in normal page flow at a stable height. iOS handles
+  // scrolling the focused input into view on its own. Earlier versions tried
+  // to promote the panel to a fixed overlay tied to visualViewport metrics
+  // and lock body scroll on focus — that combination made the box visibly
+  // shift around on every keystroke as the keyboard animated.
+  const containerStyle = { position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
 
   return (
     <div data-no-swipe="true" style={containerStyle}>
@@ -644,7 +613,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "center", gap: 8, padding: "0 10px" }}>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
         <input
-          type="search"
+          type="text"
           name="prompt"
           autoComplete="off"
           autoCorrect="on"
@@ -657,8 +626,6 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           aria-label="Job description"
           style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none" }}
           value={input}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && send()}
           placeholder={listening ? "Listening…" : "Describe a job…"}
