@@ -280,11 +280,13 @@ function drawItemsTable(doc, form, startY) {
   return y;
 }
 
-function drawTotals(doc, form, startY) {
+function drawTotals(doc, form, startY, lateFee) {
   const t = calcTotals(form);
   const boxX = PAGE_W - MARGIN - 240;
   const boxW = 240;
   let y = startY + 18;
+  const fee = (lateFee && lateFee.fee) || 0;
+  const balanceWithFee = Math.max(0, t.balance + fee);
 
   const line = (label, val, opts = {}) => {
     setText(doc, opts.color || TEXT_MID);
@@ -324,18 +326,20 @@ function drawTotals(doc, form, startY) {
   doc.text(totalStr, boxX + boxW - doc.getTextWidth(totalStr), y);
   y += 22;
 
-  // Paid / balance only if a payment exists.
-  if (t.paid > 0) {
+  // Paid / Late fee / Balance Due — only if any apply.
+  if (t.paid > 0 || fee > 0) {
     setDraw(doc, RULE);
     doc.line(boxX, y - 8, boxX + boxW, y - 8);
-    line("Paid", "-" + fmtMoney(t.paid), { color: "#27ae60" });
-    line("BALANCE DUE", fmtMoney(Math.max(0, t.balance)), { bold: true, size: 13, color: "#27ae60" });
+    if (t.paid > 0) line("Paid", "-" + fmtMoney(t.paid), { color: "#27ae60" });
+    if (fee > 0) line(`Late fee (${lateFee.months}x ${lateFee.rate}%)`, "+" + fmtMoney(fee), { color: ORANGE, bold: true });
+    const balColor = balanceWithFee > 0 ? ORANGE : "#27ae60";
+    line(balanceWithFee > 0 ? "BALANCE DUE" : "PAID IN FULL", fmtMoney(balanceWithFee), { bold: true, size: 13, color: balColor });
   }
 
   return y;
 }
 
-function drawNotesAndFooter(doc, form, startY) {
+function drawNotesAndFooter(doc, form, startY, paymentInstructions) {
   let y = startY + 16;
   if (form.notes && form.notes.trim()) {
     setText(doc, "#6677aa");
@@ -349,6 +353,36 @@ function drawNotesAndFooter(doc, form, startY) {
     const lines = wrap(doc, form.notes, PAGE_W - 2 * MARGIN);
     lines.forEach(ln => { doc.text(ln, MARGIN, y); y += 14; });
     y += 8;
+  }
+
+  // Payment Instructions (invoices only, never on estimates).
+  const isEst = form.type === "estimate";
+  if (!isEst && paymentInstructions && paymentInstructions.trim()) {
+    // Make sure we have headroom before the navy footer band so the block
+    // doesn't crash through it. If not, we fall back to a second page.
+    const footerTop = PAGE_H - 64;
+    if (y + 18 > footerTop - 80) {
+      doc.addPage();
+      y = MARGIN;
+    }
+    setText(doc, NAVY);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("PAYMENT INSTRUCTIONS", MARGIN, y);
+    y += 14;
+    setText(doc, TEXT_MID);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    const blocks = paymentInstructions.split(/\n\n+/);
+    for (const block of blocks) {
+      const lines = wrap(doc, block, PAGE_W - 2 * MARGIN);
+      lines.forEach(ln => {
+        if (y > PAGE_H - 80) { doc.addPage(); y = MARGIN; }
+        doc.text(ln, MARGIN, y);
+        y += 13;
+      });
+      y += 6;
+    }
   }
 
   // Footer band.
@@ -372,14 +406,14 @@ function drawNotesAndFooter(doc, form, startY) {
 
 // ── Public API ────────────────────────────────────────────────────────────
 
-export function buildPrintablePdf(form) {
+export function buildPrintablePdf(form, opts = {}) {
   const doc = new jsPDF({ unit: "pt", format: "letter", compress: true });
 
   drawHeader(doc, form);
   const billY = drawBillTo(doc, form, 158);
   const itemsEndY = drawItemsTable(doc, form, billY + 12);
-  const totalsEndY = drawTotals(doc, form, itemsEndY);
-  drawNotesAndFooter(doc, form, totalsEndY);
+  const totalsEndY = drawTotals(doc, form, itemsEndY, opts.lateFee);
+  drawNotesAndFooter(doc, form, totalsEndY, opts.paymentInstructions);
 
   return doc.output("blob");
 }

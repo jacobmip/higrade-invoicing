@@ -807,16 +807,38 @@ Here is your estimate {id} from HI Grade Plumbing for {total}. Tap the link to r
 Mahalo,
 HI Grade Plumbing`;
 
+// Payment instructions printed on every invoice and estimate (public viewer +
+// printable PDF). Customizable in Settings. Mirrors the wording Jake had on
+// his old InvoiceSimple invoices.
+const DEFAULT_PAYMENT_INSTRUCTIONS = `Payment is due upon receipt unless otherwise agreed in writing. Accepted forms of payment include cash, check, or electronic payment.
+
+Any unpaid balance exceeding 30 days from the invoice date will be subject to a finance charge of {rate}% per month ({rateAnnual}% annually) applied to the outstanding balance until paid in full.
+
+Customer agrees to pay all costs associated with the collection of unpaid balances, including administrative fees, collection agency fees, and legal expenses if applicable.
+
+BY CHECK
+HI Grade Plumbing LLC
+
+VENMO
+@HIGP808`;
+
+// Default monthly finance-charge rate when an invoice goes >30 days past due.
+const DEFAULT_LATE_FEE_RATE = 1.5; // percent per month
+
 // Substitute the supported template variables. Missing values fall back to
 // sensible blanks so customer-facing copy never shows raw placeholders.
 function renderTemplate(tpl, vars) {
   if (!tpl) return "";
+  const rate = vars.rate != null ? Number(vars.rate).toString() : "";
+  const rateAnnual = vars.rate != null ? (Number(vars.rate) * 12).toString() : "";
   return tpl
     .replaceAll("{name}",  vars.name  || "there")
     .replaceAll("{id}",    vars.id    || "")
     .replaceAll("{total}", vars.total || "")
     .replaceAll("{link}",  vars.link  || "")
-    .replaceAll("{type}",  vars.type  || "document");
+    .replaceAll("{type}",  vars.type  || "document")
+    .replaceAll("{rate}",       rate)
+    .replaceAll("{rateAnnual}", rateAnnual);
 }
 
 // Lightweight global cache of saved template overrides so deep components
@@ -828,7 +850,38 @@ const messageTemplates = {
   email_estimate: null,
   text_invoice:   null,
   text_estimate:  null,
+  payment_instructions: null,
+  late_fee_rate:  null, // null = use DEFAULT_LATE_FEE_RATE
 };
+
+// Resolve the active payment-instructions template (saved override or
+// built-in default) with variables substituted. Used everywhere we render
+// the instructions: PDFPreview, public viewer, printable PDF.
+function resolvePaymentInstructions() {
+  const tpl = messageTemplates.payment_instructions || DEFAULT_PAYMENT_INSTRUCTIONS;
+  const rate = messageTemplates.late_fee_rate != null ? Number(messageTemplates.late_fee_rate) : DEFAULT_LATE_FEE_RATE;
+  return renderTemplate(tpl, { rate });
+}
+
+// Compute the late-fee surcharge for an invoice. Returns 0 unless the invoice
+// is past-due AND has an outstanding balance. We charge one full monthly
+// period for every 30 days past the due date (matches "per month" wording on
+// the instructions). Estimates never accrue a fee.
+function calcLateFee(form, t) {
+  if (!form || form.type === 'estimate') return { months: 0, fee: 0 };
+  if (!form.dueDate) return { months: 0, fee: 0 };
+  const baseBalance = Math.max(0, (t?.total || 0) - (t?.paid || 0));
+  if (baseBalance <= 0) return { months: 0, fee: 0 };
+  const due = new Date(form.dueDate);
+  if (isNaN(due)) return { months: 0, fee: 0 };
+  const now = new Date();
+  const ms = now - due;
+  if (ms <= 30 * 24 * 60 * 60 * 1000) return { months: 0, fee: 0 }; // grace 30 days
+  const months = Math.floor(ms / (30 * 24 * 60 * 60 * 1000));
+  const rate = messageTemplates.late_fee_rate != null ? Number(messageTemplates.late_fee_rate) : DEFAULT_LATE_FEE_RATE;
+  const fee = +(baseBalance * (rate / 100) * months).toFixed(2);
+  return { months, fee, rate };
+}
 
 // Sync the in-memory cache from the freshly loaded settings map. Called
 // after every db.loadAll() so the modals & SMS path always see the latest.
@@ -838,6 +891,11 @@ function hydrateTemplatesFromSettings(settings) {
   messageTemplates.email_estimate = settings.email_estimate_template || null;
   messageTemplates.text_invoice   = settings.text_invoice_template   || null;
   messageTemplates.text_estimate  = settings.text_estimate_template  || null;
+  messageTemplates.payment_instructions = settings.payment_instructions_template || null;
+  // Late-fee rate is stored as a numeric string. Empty/missing falls back to
+  // the built-in default so older backups still render correctly.
+  const r = settings.late_fee_rate;
+  messageTemplates.late_fee_rate = (r != null && r !== "" && !isNaN(Number(r))) ? Number(r) : null;
 }
 
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
@@ -1494,6 +1552,9 @@ function PDFPreview({ form, clients }) {
   const clientData = form.clientInfo || clientRecord;
   const addr = [clientData.address1, clientData.address2, clientData.address3].filter(Boolean).join(", ");
   const isEstimate = form.type === "estimate";
+  const lateFeeInfo = calcLateFee(form, t);
+  const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
+  const paymentInstructionsText = !isEstimate ? resolvePaymentInstructions() : "";
 
   return (
     <div className="print-area" style={{ padding: "16px 12px 40px" }}>
@@ -1564,9 +1625,21 @@ function PDFPreview({ form, clients }) {
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, color: ORANGE }}>{fmt(t.total)}</span>
           </div>
           {t.paid > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13, color: "#27ae60" }}>
+              <span>Paid</span>
+              <span>−{fmt(t.paid)}</span>
+            </div>
+          )}
+          {lateFeeInfo.fee > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 13, color: ORANGE, fontWeight: 600 }}>
+              <span>Late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)</span>
+              <span>+{fmt(lateFeeInfo.fee)}</span>
+            </div>
+          )}
+          {(t.paid > 0 || lateFeeInfo.fee > 0) && (
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid #eee" }}>
-              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: "#27ae60" }}>BALANCE DUE</span>
-              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: "#27ae60" }}>{fmt(Math.max(0, t.balance))}</span>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: balanceWithFee > 0 ? ORANGE : "#27ae60" }}>{balanceWithFee > 0 ? "BALANCE DUE" : "PAID IN FULL"}</span>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: balanceWithFee > 0 ? ORANGE : "#27ae60" }}>{fmt(balanceWithFee)}</span>
             </div>
           )}
         </div>
@@ -1574,6 +1647,12 @@ function PDFPreview({ form, clients }) {
           <div style={{ padding: "13px 24px", borderTop: "1px solid #f0f2f8" }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Notes</div>
             <div style={{ fontSize: 12, color: "#555", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{form.notes}</div>
+          </div>
+        )}
+        {paymentInstructionsText && (
+          <div style={{ padding: "13px 24px 16px", borderTop: "1px solid #f0f2f8" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Payment Instructions</div>
+            <div style={{ fontSize: 12, color: "#555", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{paymentInstructionsText}</div>
           </div>
         )}
         <div style={{ background: NAVY, padding: "13px 24px", textAlign: "center" }}>
@@ -4340,14 +4419,19 @@ function PublicViewerPage({ token }) {
   };
   const totals = calcTotals(invForm);
   const isEstimate = invForm.type === 'estimate';
-  const balance = Math.max(0, totals.balance);
+  const lateFeeInfo = calcLateFee(invForm, totals);
+  const balance = Math.max(0, totals.balance + (lateFeeInfo.fee || 0));
+  const paymentInstructionsText = resolvePaymentInstructions();
 
   const isDesktop = vw >= 900;
 
   const handlePrintPdf = async () => {
     try {
       const mod = await import('./printablePdf.js');
-      const blob = mod.buildPrintablePdf(invForm);
+      const blob = mod.buildPrintablePdf(invForm, {
+        lateFee: lateFeeInfo,
+        paymentInstructions: paymentInstructionsText,
+      });
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank', 'noopener,noreferrer');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -4499,25 +4583,39 @@ function PublicViewerPage({ token }) {
                 <span>${totals.total.toFixed(2)}</span>
               </div>
               {!isEstimate && totals.paid > 0 && (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#2ea66a', fontSize: 14, fontWeight: 600 }}>
-                    <span>Paid</span>
-                    <span>-${totals.paid.toFixed(2)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderTop: '1px solid #eef0f5', color: balance > 0 ? ORANGE : '#2ea66a', fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
-                    <span>{balance > 0 ? 'BALANCE DUE' : 'PAID IN FULL'}</span>
-                    <span>${balance.toFixed(2)}</span>
-                  </div>
-                </>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#2ea66a', fontSize: 14, fontWeight: 600 }}>
+                  <span>Paid</span>
+                  <span>-${totals.paid.toFixed(2)}</span>
+                </div>
+              )}
+              {!isEstimate && lateFeeInfo.fee > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: ORANGE, fontSize: 14, fontWeight: 600 }}>
+                  <span>Late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)</span>
+                  <span>+${lateFeeInfo.fee.toFixed(2)}</span>
+                </div>
+              )}
+              {!isEstimate && (totals.paid > 0 || lateFeeInfo.fee > 0) && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderTop: '1px solid #eef0f5', color: balance > 0 ? ORANGE : '#2ea66a', fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
+                  <span>{balance > 0 ? 'BALANCE DUE' : 'PAID IN FULL'}</span>
+                  <span>${balance.toFixed(2)}</span>
+                </div>
               )}
             </div>
           </div>
 
           {/* Notes */}
           {invForm.notes && (
-            <div style={{ padding: '8px 40px 24px' }}>
+            <div style={{ padding: '8px 40px 16px' }}>
               <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>NOTES</div>
               <div style={{ color: '#555', fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{invForm.notes}</div>
+            </div>
+          )}
+
+          {/* Payment Instructions */}
+          {paymentInstructionsText && (
+            <div style={{ padding: '8px 40px 24px', borderTop: '1px solid #eef0f5', marginTop: 8 }}>
+              <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: 1.5, marginBottom: 8, marginTop: 12 }}>PAYMENT INSTRUCTIONS</div>
+              <div style={{ color: '#555', fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{paymentInstructionsText}</div>
             </div>
           )}
 
@@ -4549,6 +4647,9 @@ function PublicViewerPage({ token }) {
           <div style={{ color: '#888', fontSize: 11, letterSpacing: 1.5, fontWeight: 700, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>{isEstimate ? `Estimate ${invForm.id}` : `Invoice ${invForm.id}`}</div>
           <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 1, lineHeight: 1.1, marginTop: 8 }}>${balance.toFixed(2)}</div>
           <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>{isEstimate ? 'Estimate total' : (balance > 0 ? 'Balance due' : 'Paid in full')}</div>
+          {!isEstimate && lateFeeInfo.fee > 0 && (
+            <div style={{ color: ORANGE, fontSize: 12, marginTop: 4, fontWeight: 600 }}>Includes ${lateFeeInfo.fee.toFixed(2)} late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)</div>
+          )}
           {!isEstimate && balance > 0 && (
             <a href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${balance.toFixed(2)}&currency_code=USD&item_name=Invoice%20${encodeURIComponent(invForm.id)}&no_note=1&no_shipping=1`} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', marginTop: 16, background: '#0070ba', color: '#fff', textDecoration: 'none', fontSize: 15, fontWeight: 700, padding: '13px 30px', borderRadius: 8 }}>
               Pay ${balance.toFixed(2)} Now
@@ -5073,6 +5174,120 @@ function ReportsTab({ invoices, expenses }) {
 }
 
 // ─── Settings Tab (Backup / Restore) ───────────────────────────────────────────
+// Payment Instructions card — controls the boilerplate payment terms that
+// print on every invoice and the monthly finance-charge rate that kicks in
+// 30 days after the due date. The {rate} and {rateAnnual} variables in the
+// instructions text are swapped out at render time using the saved rate, so
+// editing the rate updates the wording everywhere automatically.
+function PaymentInstructionsCard() {
+  const [text, setText] = useState(messageTemplates.payment_instructions || DEFAULT_PAYMENT_INSTRUCTIONS);
+  const [rate, setRate] = useState(
+    messageTemplates.late_fee_rate != null ? String(messageTemplates.late_fee_rate) : String(DEFAULT_LATE_FEE_RATE)
+  );
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+  const taRef = useRef(null);
+
+  const variables = [
+    { token: "{rate}",       hint: "Monthly rate (e.g., 1.5)" },
+    { token: "{rateAnnual}", hint: "Annual rate (rate × 12)" },
+  ];
+
+  const insertVar = (token) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart ?? text.length;
+    const end = ta.selectionEnd ?? start;
+    const next = text.slice(0, start) + token + text.slice(end);
+    setText(next);
+    setTimeout(() => {
+      ta.focus();
+      ta.setSelectionRange(start + token.length, start + token.length);
+    }, 0);
+  };
+
+  const resetToDefault = () => { setText(DEFAULT_PAYMENT_INSTRUCTIONS); setRate(String(DEFAULT_LATE_FEE_RATE)); setStatus(null); };
+
+  const save = async () => {
+    setSaving(true); setStatus(null);
+    try {
+      const isUnchangedText = text.trim() === DEFAULT_PAYMENT_INSTRUCTIONS.trim();
+      const parsedRate = Number(rate);
+      if (isNaN(parsedRate) || parsedRate < 0) throw new Error("Rate must be a positive number");
+      const isDefaultRate = parsedRate === DEFAULT_LATE_FEE_RATE;
+      await db.setSetting("payment_instructions_template", isUnchangedText ? null : text);
+      await db.setSetting("late_fee_rate", isDefaultRate ? null : String(parsedRate));
+      messageTemplates.payment_instructions = isUnchangedText ? null : text;
+      messageTemplates.late_fee_rate = isDefaultRate ? null : parsedRate;
+      setStatus({ kind: "ok", text: "Saved. New invoices will use these instructions." });
+    } catch (e) {
+      setStatus({ kind: "err", text: "Save failed: " + (e.message || e) });
+    }
+    setSaving(false);
+  };
+
+  const card = { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(10,22,40,0.06)" };
+  const heading = { fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, color: "#8899bb", textTransform: "uppercase", marginBottom: 8 };
+  const body = { fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 12 };
+
+  return (
+    <div style={card}>
+      <div style={heading}>Payment instructions</div>
+      <div style={body}>
+        Boilerplate terms that print at the bottom of every invoice. Includes the monthly finance charge that auto-applies 30 days after the due date — the rate below flows into the {"{rate}"} and {"{rateAnnual}"} placeholders in the text.
+      </div>
+
+      {/* Late-fee rate */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <label style={{ fontSize: 13, color: "#445", fontWeight: 600 }}>Late fee rate</label>
+        <input
+          type="number"
+          step="0.1"
+          min="0"
+          value={rate}
+          onChange={e => { setRate(e.target.value); setStatus(null); }}
+          style={{ ...S.input, width: 90, textAlign: "right" }}
+        />
+        <span style={{ fontSize: 13, color: "#666" }}>% per month</span>
+        <span style={{ fontSize: 12, color: "#999", marginLeft: "auto" }}>{rate ? `${(Number(rate) * 12).toFixed(1)}% annually` : ""}</span>
+      </div>
+
+      {/* Variable chips */}
+      <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, fontWeight: 700, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Tap to insert</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        {variables.map(v => (
+          <button
+            key={v.token}
+            type="button"
+            onClick={() => insertVar(v.token)}
+            title={v.hint}
+            style={{ background: LIGHT, border: "1px solid #dde2ee", borderRadius: 14, padding: "4px 10px", fontSize: 12, color: NAVY, fontFamily: "'Barlow', sans-serif", cursor: "pointer", fontWeight: 600 }}
+          >{v.token} <span style={{ color: "#888", fontWeight: 400, marginLeft: 4 }}>· {v.hint}</span></button>
+        ))}
+      </div>
+
+      <textarea
+        ref={taRef}
+        value={text}
+        onChange={e => { setText(e.target.value); setStatus(null); }}
+        rows={12}
+        style={{ ...S.input, resize: "vertical", minHeight: 220, fontFamily: "'Barlow', sans-serif", lineHeight: 1.5, fontSize: 14, whiteSpace: "pre-wrap" }}
+      />
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={resetToDefault} disabled={saving} style={{ ...S.btn("ghost"), flex: 1 }}>Reset to default</button>
+        <button onClick={save} disabled={saving} style={{ ...S.btn("primary"), flex: 2, opacity: saving ? 0.5 : 1 }}>
+          {saving ? "Saving…" : "Save instructions"}
+        </button>
+      </div>
+
+      {status && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: status.kind === "ok" ? "#eaf7ee" : "#fdecec", color: status.kind === "ok" ? "#1f7a3a" : "#a3231b", fontSize: 13 }}>{status.text}</div>
+      )}
+    </div>
+  );
+}
+
 // Settings card: lets the user customize the email & text message templates
 // that pre-fill the Send modal and the Text Message handoff. Variables in
 // curly braces ({name}, {id}, {total}, {link}) are substituted at send time
@@ -5279,6 +5494,7 @@ function SettingsTab({ onAfterRestore }) {
   return (
     <div style={{ padding: "16px", paddingBottom: 100 }}>
       <MessageTemplatesCard />
+      <PaymentInstructionsCard />
       <div style={card}>
         <div style={heading}>Backup</div>
         <div style={body}>
