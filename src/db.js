@@ -193,14 +193,41 @@ export async function loadAll() {
   }, 0)
   const nextEstimateNum = Math.max(persistedEst, highestActualEst + 1)
 
+  // Roll the rest of the settings (everything that isn't a counter) into a
+  // simple {key: value} map so the UI can read user preferences like custom
+  // email/text message templates without re-querying the table.
+  const settings = {}
+  for (const row of (settingRows || [])) {
+    if (row?.key && row.key !== 'next_num' && row.key !== 'next_estimate_num') {
+      settings[row.key] = row.value
+    }
+  }
+
   return {
     invoices: (invoiceRows || []).map(row => toInvoice(row, itemRows || [], paymentRows || [])),
     clients: (clientRows || []).map(toClient),
     savedItems: (savedItemRows || []).map(toSavedItem),
     expenses: (expenseRows || []).map(toExpense),
+    settings,
     nextNum,
     nextEstimateNum,
   }
+}
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+// User preferences (custom email/text message templates, etc.) are stored as
+// key/value rows in the `settings` table. setSetting upserts a single key.
+// Pass value=null to delete the override and fall back to the default.
+export async function setSetting(key, value) {
+  if (value === null || value === undefined) {
+    const { error } = await supabase.from('settings').delete().eq('key', key)
+    if (error) throw error
+    return
+  }
+  const { error } = await supabase
+    .from('settings')
+    .upsert({ key, value: String(value) }, { onConflict: 'key' })
+  if (error) throw error
 }
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────

@@ -738,8 +738,15 @@ function SendMethodSheet({ kind, invoice, client, onClose, onPickEmail, onPickTe
   );
 }
 
-// ─── Confirm Send Modal ─────────────────────────────────────────────────────
-// Default email message templates. {name} is replaced live with the recipient.
+// ─── Confirm Send Modal ──────────────────────────────────────────────────────────
+// Default email & text message templates. These can be overridden per-user
+// from the Settings tab — the override is stored in the Supabase `settings`
+// table by key. The renderTemplate helper below substitutes variables:
+//   {name}  → recipient name
+//   {id}    → invoice/estimate id (e.g. INV0756)
+//   {total} → formatted total ($1,234.56)
+//   {link}  → trackable public viewer URL
+//   {type}  → "invoice" or "estimate"
 const DEFAULT_INVOICE_MESSAGE = `Aloha {name},
 
 Please find your invoice attached for the completed work. Payment is due upon receipt. Kindly submit payment at your earliest convenience.
@@ -758,6 +765,55 @@ Let me know if you have any questions or would like to discuss any adjustments.
 Mahalo,
 HI Grade Plumbing`;
 
+const DEFAULT_INVOICE_TEXT = `Aloha {name},
+
+Here is your invoice {id} from HI Grade Plumbing for {total}. Tap the link to view and pay:
+{link}
+
+Mahalo,
+HI Grade Plumbing`;
+
+const DEFAULT_ESTIMATE_TEXT = `Aloha {name},
+
+Here is your estimate {id} from HI Grade Plumbing for {total}. Tap the link to review and sign:
+{link}
+
+Mahalo,
+HI Grade Plumbing`;
+
+// Substitute the supported template variables. Missing values fall back to
+// sensible blanks so customer-facing copy never shows raw placeholders.
+function renderTemplate(tpl, vars) {
+  if (!tpl) return "";
+  return tpl
+    .replaceAll("{name}",  vars.name  || "there")
+    .replaceAll("{id}",    vars.id    || "")
+    .replaceAll("{total}", vars.total || "")
+    .replaceAll("{link}",  vars.link  || "")
+    .replaceAll("{type}",  vars.type  || "document");
+}
+
+// Lightweight global cache of saved template overrides so deep components
+// (ConfirmSendModal, sendViaText) can read them without prop-drilling. The
+// data layer hydrates this on app load and the SettingsTab updates it when
+// the user saves a new template.
+const messageTemplates = {
+  email_invoice:  null, // null = use default
+  email_estimate: null,
+  text_invoice:   null,
+  text_estimate:  null,
+};
+
+// Sync the in-memory cache from the freshly loaded settings map. Called
+// after every db.loadAll() so the modals & SMS path always see the latest.
+function hydrateTemplatesFromSettings(settings) {
+  if (!settings) return;
+  messageTemplates.email_invoice  = settings.email_invoice_template  || null;
+  messageTemplates.email_estimate = settings.email_estimate_template || null;
+  messageTemplates.text_invoice   = settings.text_invoice_template   || null;
+  messageTemplates.text_estimate  = settings.text_estimate_template  || null;
+}
+
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
   // kind: "invoice" | "estimate"
   const [email, setEmail] = useState(client?.email || "");
@@ -766,16 +822,22 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   const isEstimate = kind === "estimate";
   const valid = /\S+@\S+\.\S+/.test(email);
   const docNum = invoice?.id || (isEstimate ? "EST0000" : "INV0000");
-  const defaultTemplate = isEstimate ? DEFAULT_ESTIMATE_MESSAGE : DEFAULT_INVOICE_MESSAGE;
+  // Use the user's saved template from Settings if they have one, otherwise
+  // the built-in default. Either is run through renderTemplate so all the
+  // {name}/{id}/{total}/{link} variables get filled in.
+  const savedTemplate = isEstimate ? messageTemplates.email_estimate : messageTemplates.email_invoice;
+  const defaultTemplate = savedTemplate || (isEstimate ? DEFAULT_ESTIMATE_MESSAGE : DEFAULT_INVOICE_MESSAGE);
+  const renderVars = { name, id: docNum, total: fmt(t.total), link: "", type: isEstimate ? "estimate" : "invoice" };
   // Track whether the user has manually edited the message. Until they do,
   // we keep regenerating the template with the latest recipient name.
-  const [message, setMessage] = useState(defaultTemplate.replace("{name}", name || "there"));
+  const [message, setMessage] = useState(renderTemplate(defaultTemplate, renderVars));
   const [edited, setEdited] = useState(false);
   // When the recipient name changes and the user hasn't customized the
   // message yet, refresh the salutation. Once they edit the textarea, we
   // stop touching it so we don't blow away their edits.
   useEffect(() => {
-    if (!edited) setMessage(defaultTemplate.replace("{name}", name || "there"));
+    if (!edited) setMessage(renderTemplate(defaultTemplate, { ...renderVars, name }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, edited, defaultTemplate]);
 
   // Portal to document.body — InvoiceForm's carousel uses CSS transform,
@@ -815,7 +877,7 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
             {edited && (
               <button
                 type="button"
-                onClick={() => { setEdited(false); setMessage(defaultTemplate.replace("{name}", name || "there")); }}
+                onClick={() => { setEdited(false); setMessage(renderTemplate(defaultTemplate, { ...renderVars, name })); }}
                 style={{ background: "none", border: "none", color: ORANGE, fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", padding: 0, fontFamily: "'Barlow Condensed', sans-serif" }}
               >Reset to default</button>
             )}
@@ -2019,10 +2081,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       const isEst = kind === "estimate";
       const docNum = form.id || (isEst ? "EST0000" : "INV0000");
       const name = client?.name || form.client || "";
-      const greeting = name ? `Aloha ${name},` : "Aloha,";
-      const body = isEst
-        ? `${greeting}\n\nHere is your estimate ${docNum} from HI Grade Plumbing for ${fmt(t.total)}. Tap the link to review and sign:\n${viewLink}\n\nMahalo,\nHI Grade Plumbing`
-        : `${greeting}\n\nHere is your invoice ${docNum} from HI Grade Plumbing for ${fmt(t.total)}. Tap the link to view and pay:\n${viewLink}\n\nMahalo,\nHI Grade Plumbing`;
+      // Honor any custom text template the user saved in Settings, otherwise
+      // fall back to the built-in default. All {variables} get filled in.
+      const tpl = isEst
+        ? (messageTemplates.text_estimate || DEFAULT_ESTIMATE_TEXT)
+        : (messageTemplates.text_invoice  || DEFAULT_INVOICE_TEXT);
+      const body = renderTemplate(tpl, {
+        name,
+        id: docNum,
+        total: fmt(t.total),
+        link: viewLink,
+        type: isEst ? "estimate" : "invoice",
+      });
       // iOS uses & as the separator after the number; this also works on Android.
       const smsHref = `sms:${phone}${/iPad|iPhone|iPod/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(body)}`;
       window.location.href = smsHref;
@@ -4972,6 +5042,151 @@ function ReportsTab({ invoices, expenses }) {
 }
 
 // ─── Settings Tab (Backup / Restore) ───────────────────────────────────────────
+// Settings card: lets the user customize the email & text message templates
+// that pre-fill the Send modal and the Text Message handoff. Variables in
+// curly braces ({name}, {id}, {total}, {link}) are substituted at send time
+// so each customer gets a personalized message.
+function MessageTemplatesCard() {
+  const [emailInvoice,  setEmailInvoice]  = useState(messageTemplates.email_invoice  || DEFAULT_INVOICE_MESSAGE);
+  const [emailEstimate, setEmailEstimate] = useState(messageTemplates.email_estimate || DEFAULT_ESTIMATE_MESSAGE);
+  const [textInvoice,   setTextInvoice]   = useState(messageTemplates.text_invoice   || DEFAULT_INVOICE_TEXT);
+  const [textEstimate,  setTextEstimate]  = useState(messageTemplates.text_estimate  || DEFAULT_ESTIMATE_TEXT);
+  const [activeKind, setActiveKind] = useState("email_invoice"); // tab
+  const [savingKey, setSavingKey] = useState(null);
+  const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
+
+  const tabs = [
+    { id: "email_invoice",  label: "Email · Invoice"  },
+    { id: "email_estimate", label: "Email · Estimate" },
+    { id: "text_invoice",   label: "Text · Invoice"   },
+    { id: "text_estimate",  label: "Text · Estimate"  },
+  ];
+
+  const valueFor = (k) => k === "email_invoice" ? emailInvoice : k === "email_estimate" ? emailEstimate : k === "text_invoice" ? textInvoice : textEstimate;
+  const setValueFor = (k, v) => {
+    if (k === "email_invoice")  setEmailInvoice(v);
+    if (k === "email_estimate") setEmailEstimate(v);
+    if (k === "text_invoice")   setTextInvoice(v);
+    if (k === "text_estimate")  setTextEstimate(v);
+  };
+  const defaultFor = (k) => ({
+    email_invoice:  DEFAULT_INVOICE_MESSAGE,
+    email_estimate: DEFAULT_ESTIMATE_MESSAGE,
+    text_invoice:   DEFAULT_INVOICE_TEXT,
+    text_estimate:  DEFAULT_ESTIMATE_TEXT,
+  })[k];
+  const settingKeyFor = (k) => `${k}_template`; // e.g. email_invoice_template
+
+  const save = async () => {
+    const k = activeKind;
+    const value = valueFor(k);
+    const isUnchangedFromDefault = value.trim() === defaultFor(k).trim();
+    setSavingKey(k); setStatus(null);
+    try {
+      // Saving the unmodified default just clears the override so we keep
+      // the table tidy and future tweaks to defaults flow through.
+      await db.setSetting(settingKeyFor(k), isUnchangedFromDefault ? null : value);
+      const cacheKey = k; // matches messageTemplates property name
+      messageTemplates[cacheKey] = isUnchangedFromDefault ? null : value;
+      setStatus({ kind: "ok", text: isUnchangedFromDefault ? "Reset to default." : "Saved. New messages will use this template." });
+    } catch (e) {
+      setStatus({ kind: "err", text: "Save failed: " + (e.message || e) });
+    }
+    setSavingKey(null);
+  };
+
+  const resetToDefault = () => setValueFor(activeKind, defaultFor(activeKind));
+
+  // Insert a {variable} at the current caret position. Makes the chips below
+  // the textarea feel like a friendly cheat sheet instead of just a legend.
+  const taRef = useRef(null);
+  const insertVar = (token) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart ?? valueFor(activeKind).length;
+    const end = ta.selectionEnd ?? start;
+    const cur = valueFor(activeKind);
+    const next = cur.slice(0, start) + token + cur.slice(end);
+    setValueFor(activeKind, next);
+    setTimeout(() => {
+      ta.focus();
+      ta.setSelectionRange(start + token.length, start + token.length);
+    }, 0);
+  };
+
+  const card = { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(10,22,40,0.06)" };
+  const heading = { fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, color: "#8899bb", textTransform: "uppercase", marginBottom: 8 };
+  const body = { fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 12 };
+
+  const variables = [
+    { token: "{name}",  hint: "Customer's name" },
+    { token: "{id}",    hint: "INV0756 / EST0712" },
+    { token: "{total}", hint: "$1,234.56" },
+    { token: "{link}",  hint: "Trackable view link" },
+    { token: "{type}",  hint: "\"invoice\" or \"estimate\"" },
+  ];
+
+  return (
+    <div style={card}>
+      <div style={heading}>Message templates</div>
+      <div style={body}>
+        Customize the default message that pre-fills when you send an invoice or estimate by email or text. Drop in a curly-brace variable and we’ll swap in the real value at send time — so every message reads like you wrote it for that customer.
+      </div>
+
+      {/* Kind tabs */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => { setActiveKind(t.id); setStatus(null); }}
+            style={{
+              flex: "1 1 calc(50% - 3px)", padding: "9px 8px", borderRadius: 8, cursor: "pointer",
+              border: activeKind === t.id ? `2px solid ${ORANGE}` : "1.5px solid #dde2ee",
+              background: activeKind === t.id ? "#fff5ef" : "#fff",
+              color: activeKind === t.id ? ORANGE : "#445",
+              fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif",
+              letterSpacing: 1, textTransform: "uppercase", fontSize: 12,
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+
+      {/* Variable chips — tap to insert at the caret */}
+      <div style={{ fontSize: 11, color: "#888", letterSpacing: 1, fontWeight: 700, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Tap to insert</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+        {variables.map(v => (
+          <button
+            key={v.token}
+            type="button"
+            onClick={() => insertVar(v.token)}
+            title={v.hint}
+            style={{ background: LIGHT, border: "1px solid #dde2ee", borderRadius: 14, padding: "4px 10px", fontSize: 12, color: NAVY, fontFamily: "'Barlow', sans-serif", cursor: "pointer", fontWeight: 600 }}
+          >{v.token} <span style={{ color: "#888", fontWeight: 400, marginLeft: 4 }}>· {v.hint}</span></button>
+        ))}
+      </div>
+
+      <textarea
+        ref={taRef}
+        value={valueFor(activeKind)}
+        onChange={e => { setValueFor(activeKind, e.target.value); setStatus(null); }}
+        rows={9}
+        style={{ ...S.input, resize: "vertical", minHeight: 180, fontFamily: "'Barlow', sans-serif", lineHeight: 1.5, fontSize: 14, whiteSpace: "pre-wrap" }}
+      />
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={resetToDefault} disabled={savingKey === activeKind} style={{ ...S.btn("ghost"), flex: 1 }}>Reset to default</button>
+        <button onClick={save} disabled={savingKey === activeKind} style={{ ...S.btn("primary"), flex: 2, opacity: savingKey === activeKind ? 0.5 : 1 }}>
+          {savingKey === activeKind ? "Saving…" : "Save template"}
+        </button>
+      </div>
+
+      {status && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: status.kind === "ok" ? "#eaf7ee" : "#fdecec", color: status.kind === "ok" ? "#1f7a3a" : "#a3231b", fontSize: 13 }}>{status.text}</div>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab({ onAfterRestore }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
@@ -5032,6 +5247,7 @@ function SettingsTab({ onAfterRestore }) {
 
   return (
     <div style={{ padding: "16px", paddingBottom: 100 }}>
+      <MessageTemplatesCard />
       <div style={card}>
         <div style={heading}>Backup</div>
         <div style={body}>
@@ -5265,6 +5481,7 @@ export default function App() {
     setPtrRefreshing(true);
     try {
       const fresh = await db.loadAll();
+      hydrateTemplatesFromSettings(fresh.settings);
       setData(fresh);
       nextNumRef.current = fresh.nextNum || nextNumRef.current;
       nextEstimateNumRef.current = fresh.nextEstimateNum || nextEstimateNumRef.current;
@@ -5377,6 +5594,7 @@ export default function App() {
         setData(d);
         nextNumRef.current = d.nextNum || 753;
         nextEstimateNumRef.current = d.nextEstimateNum || 712;
+        hydrateTemplatesFromSettings(d.settings);
         setDbLoading(false);
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch {}
       })
