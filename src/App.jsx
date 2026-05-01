@@ -3055,14 +3055,70 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   );
 }
 
+// Quick-actions sheet shown when the user long-presses an invoice card on
+// the list. Mirrors Invoice Simple's iOS action sheet: Delete · Share ·
+// Send · Print · Get link · Mark paid/unpaid · Duplicate · Cancel.
+// Stays a controlled component so the parent owns dismissal and can
+// chain follow-up UI (e.g. opening the form after Duplicate).
+function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onDuplicate }) {
+  if (!inv) return null;
+  const isPaid = inv.status === 'paid';
+  // Each action wraps onClose so the sheet dismisses immediately on tap,
+  // even if the underlying action does async work.
+  const wrap = (fn) => () => { onClose?.(); setTimeout(() => fn?.(), 0); };
+  const itemBase = {
+    width: '100%',
+    background: '#fff',
+    border: 'none',
+    borderTop: '0.5px solid #e8ecf4',
+    padding: '16px 18px',
+    fontSize: 17,
+    fontFamily: "'Barlow', sans-serif",
+    fontWeight: 600,
+    color: NAVY,
+    textAlign: 'center',
+    cursor: 'pointer',
+    WebkitTapHighlightColor: 'rgba(0,0,0,0.06)',
+  };
+  const sheet = {
+    background: '#fff',
+    borderRadius: 14,
+    overflow: 'hidden',
+    width: 'min(360px, calc(100vw - 32px))',
+    boxShadow: '0 24px 60px rgba(10,22,40,0.35)',
+  };
+  const heading = { ...itemBase, borderTop: 'none', color: '#888', fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', padding: '14px 18px 10px', cursor: 'default' };
+  const cancelBtn = { ...itemBase, marginTop: 10, borderTop: 'none', borderRadius: 14, fontWeight: 700 };
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(10,22,40,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' }}>
+        <div style={sheet}>
+          <div style={heading}>{inv.id}</div>
+          <button onClick={wrap(onDelete)} style={{ ...itemBase, color: '#cc4444', fontWeight: 700 }}>Delete</button>
+          <button onClick={wrap(onShare)}    style={itemBase}>Share</button>
+          <button onClick={wrap(onSend)}     style={itemBase}>Send</button>
+          <button onClick={wrap(onPrint)}    style={itemBase}>Print</button>
+          <button onClick={wrap(onGetLink)}  style={itemBase}>Get link</button>
+          <button onClick={wrap(onTogglePaid)} style={itemBase}>{isPaid ? 'Mark unpaid' : 'Mark paid'}</button>
+          <button onClick={wrap(onDuplicate)} style={itemBase}>Duplicate</button>
+        </div>
+        <button onClick={onClose} style={{ ...sheet, ...cancelBtn }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Invoice List ─────────────────────────────────────────────────────────────
 // Single invoice card on the list screen. Extracted into its own component
 // so we can call the useLongPress hook per-card (hooks can't be called inside
-// a .map() callback). Long-press confirms + deletes; tap opens the invoice.
-function InvoiceListCard({ inv, onSelect, onDelete, statusLabel, pillColor, lastMethod, amountColor, displayAmt }) {
+// a .map() callback). Long-press opens the quick-actions sheet; tap opens
+// the invoice.
+function InvoiceListCard({ inv, onSelect, onLongPress, statusLabel, pillColor, lastMethod, amountColor, displayAmt }) {
   const longPress = useLongPress(() => {
-    if (!onDelete) return;
-    if (confirm(`Delete invoice ${inv.id}?\n\nThis cannot be undone.`)) onDelete(inv.id);
+    if (onLongPress) onLongPress(inv);
   });
   return (
     <div
@@ -3110,10 +3166,12 @@ function EstimateListCard({ inv, onSelect, onDelete, pillLabel, pillColor, total
   );
 }
 
-function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
+function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onDuplicate, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
+  // Active invoice for the long-press quick-actions sheet. null means closed.
+  const [menuInv, setMenuInv] = useState(null);
   const tabIndex = TABS.indexOf(tab);
   // Native CSS scroll-snap carousel. Each column is `width: 100%` of the
   // scroll container, and the container has `scroll-snap-type: x mandatory`
@@ -3225,7 +3283,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
           const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
           const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
           return (
-            <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelect} onDelete={onDelete} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
+            <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelect} onLongPress={setMenuInv} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
           );
         })}
       </div>
@@ -3264,6 +3322,19 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
           </div>
         ))}
       </div>
+      {menuInv && (
+        <InvoiceQuickActionsMenu
+          inv={menuInv}
+          onClose={() => setMenuInv(null)}
+          onDelete={() => { if (confirm(`Delete invoice ${menuInv.id}?\n\nThis cannot be undone.`)) onDelete?.(menuInv.id); }}
+          onShare={() => onShare?.(menuInv)}
+          onSend={() => onSend?.(menuInv)}
+          onPrint={() => onPrint?.(menuInv)}
+          onGetLink={() => onGetLink?.(menuInv)}
+          onTogglePaid={() => onTogglePaid?.(menuInv)}
+          onDuplicate={() => onDuplicate?.(menuInv)}
+        />
+      )}
     </div>
   );
 }
@@ -6689,6 +6760,140 @@ export default function App() {
     setView("list"); setSelected(null);
   };
 
+  // ─── Quick-action handlers (used by the long-press action sheet on the
+  // invoice list). All accept the full invoice object so they don't need
+  // to look it up themselves.
+
+  // Build a PDF Blob via the same helper the public viewer uses, so the
+  // shared/printed file matches what the customer would see.
+  const buildInvoicePdfBlob = async (inv) => {
+    const mod = await import('./printablePdf.js');
+    const t = calcTotals(inv);
+    const lateFee = calcLateFee(inv, t);
+    const paymentInstructions = inv.type === 'estimate' ? '' : resolvePaymentInstructions();
+    return mod.buildPrintablePdf(inv, { lateFee, paymentInstructions });
+  };
+
+  const shareInvoice = async (inv) => {
+    try {
+      const blob = await buildInvoicePdfBlob(inv);
+      const filename = `${inv.id || 'invoice'}.pdf`;
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      // navigator.share with files works on iOS Safari + Chrome Android.
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: inv.id, text: `${inv.id} - ${inv.client || ''}` });
+        return;
+      }
+      // Fallback: open the PDF in a new tab so the user can use the browser's
+      // own share/save controls.
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // user cancelled
+      console.error('Share failed:', err);
+      alert('Could not share this invoice: ' + (err.message || err));
+    }
+  };
+
+  const sendInvoice = (inv) => {
+    // The send flow lives inside the invoice form (which has its own
+    // email-vs-text picker). Open the form so the user can tap Send there.
+    setSelected(inv);
+    setView('form');
+  };
+
+  const printInvoice = async (inv) => {
+    try {
+      const blob = await buildInvoicePdfBlob(inv);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      console.error('Print failed:', err);
+      alert('Could not generate the PDF. Please try again.');
+    }
+  };
+
+  const copyInvoiceLink = async (inv) => {
+    try {
+      let token = inv.viewToken;
+      if (!token) {
+        token = await db.ensureViewToken(inv);
+        // Persist the token onto the in-memory invoice so the next call is a
+        // no-op and the form's share button shows the same URL.
+        const updated = { ...inv, viewToken: token };
+        setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      }
+      const link = `${window.location.origin}/v/${token}`;
+      await navigator.clipboard.writeText(link);
+      alert(`Link copied:\n${link}`);
+    } catch (err) {
+      console.error('Copy link failed:', err);
+      alert('Could not copy the link: ' + (err.message || err));
+    }
+  };
+
+  // Toggle paid/unpaid via a synthetic payment row tagged with note
+  // "Marked paid" so the action is reversible without nuking real payments.
+  const toggleInvoicePaid = async (inv) => {
+    const isPaid = inv.status === 'paid';
+    let updated;
+    if (isPaid) {
+      // Strip only synthetic rows — preserve any real payments the user logged.
+      const payments = (inv.payments || []).filter(p => p.note !== 'Marked paid');
+      const t = calcTotals({ ...inv, payments });
+      const status = payments.length === 0
+        ? (inv.status === 'net30' ? 'net30' : 'outstanding')
+        : (t.balance <= 0.01 ? 'paid' : 'partial');
+      updated = { ...inv, payments, status };
+    } else {
+      const t = calcTotals(inv);
+      const balance = Math.max(0, t.balance);
+      const synthetic = {
+        id: Date.now() + Math.floor(Math.random() * 100000),
+        amount: balance,
+        method: 'Other',
+        date: today(),
+        note: 'Marked paid',
+      };
+      const payments = [...(inv.payments || []), synthetic];
+      updated = { ...inv, payments, status: 'paid' };
+    }
+    setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+    try { await db.upsertInvoice(updated, false); }
+    catch (e) { console.error('Toggle paid failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
+  };
+
+  const duplicateInvoice = async (inv) => {
+    const isEst = inv.type === 'estimate';
+    const idPrefix = isEst ? 'EST' : 'INV';
+    const counterRef = isEst ? nextEstimateNumRef : nextNumRef;
+    const num = counterRef.current++;
+    const newId = `${idPrefix}${String(num).padStart(4, '0')}`;
+    const copy = {
+      ...inv,
+      id: newId,
+      date: today(),
+      year: new Date().getFullYear(),
+      payments: [],
+      viewToken: undefined,
+      signature: undefined,
+      signatureDate: undefined,
+      status: isEst ? 'outstanding' : 'outstanding',
+    };
+    setData(d => ({
+      ...d,
+      invoices: [copy, ...d.invoices],
+      nextNum: isEst ? d.nextNum : Math.max(d.nextNum, num + 1),
+      nextEstimateNum: isEst ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
+    }));
+    try { await db.upsertInvoice(copy, true); }
+    catch (e) { console.error('Duplicate failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
+    setSelected(copy);
+    setView('form');
+  };
+
   const saveClient = async (form, editing) => {
     if (editing === "new") {
       const id = await db.insertClient(form);
@@ -7069,7 +7274,7 @@ export default function App() {
         />
       ) : (
         <>
-          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
+          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onDuplicate={duplicateInvoice} />}
           {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
           {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
