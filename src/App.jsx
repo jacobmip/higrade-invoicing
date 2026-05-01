@@ -379,6 +379,7 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     trash:     <svg {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>,
     back:      <svg {...p}><polyline points="15 18 9 12 15 6"/></svg>,
     mail:      <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+    phone:     <svg {...p}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.72 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0 1 22 16.92z"/></svg>,
     payment:   <svg {...p}><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
     check:     <svg {...p} strokeWidth={2.5}><polyline points="20 6 9 17 4 12"/></svg>,
     eye:       <svg {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
@@ -708,6 +709,47 @@ function PaymentModal({ invoice, onClose, onSave }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Send Method Sheet ──────────────────────────────────────────────────────
+// Small bottom sheet shown when Jake taps Send. Lets him pick Email (opens
+// ConfirmSendModal) or Text Message (opens iOS Messages with the public
+// trackable link prefilled). On the Text path we also record a "sent" event.
+function SendMethodSheet({ kind, invoice, client, onClose, onPickEmail, onPickText }) {
+  const isEstimate = kind === "estimate";
+  const phone = client?.phone || "";
+  const hasPhone = !!phone.replace(/\D/g, "");
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "6px 0 max(20px, env(safe-area-inset-bottom))" }}>
+        <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "6px auto 14px" }} />
+        <div style={{ padding: "0 20px 4px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
+          Send {isEstimate ? "estimate" : "invoice"}
+        </div>
+        <div style={{ padding: "0 20px", fontSize: 12, color: "#888", marginBottom: 14 }}>
+          How would you like to send this to {client?.name || "the client"}?
+        </div>
+        <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={onPickEmail} style={{ ...S.btn("navy"), display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", justifyContent: "flex-start" }}>
+            <Icon name="mail" size={18} color="#fff" />
+            <div style={{ textAlign: "left" }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Email</div>
+              <div style={{ fontSize: 11, opacity: 0.85, fontWeight: 500 }}>{client?.email || "Add an email address"}</div>
+            </div>
+          </button>
+          <button onClick={onPickText} disabled={!hasPhone} style={{ ...S.btn(hasPhone ? "green" : "ghost"), display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", justifyContent: "flex-start", opacity: hasPhone ? 1 : 0.55 }}>
+            <Icon name="phone" size={18} color={hasPhone ? "#fff" : "#888"} />
+            <div style={{ textAlign: "left" }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Text Message</div>
+              <div style={{ fontSize: 11, opacity: 0.85, fontWeight: 500 }}>{hasPhone ? phone : "No phone on file for this client"}</div>
+            </div>
+          </button>
+          <button onClick={onClose} style={{ ...S.btn("ghost"), padding: "12px 16px", marginTop: 4 }}>Cancel</button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1683,6 +1725,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [savingClient, setSavingClient] = useState(false);
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
+  const [sendMethodFor, setSendMethodFor] = useState(null); // null | "invoice" | "estimate"
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
   // Per-invoice AI chat history. Lives on the form so toggling the panel
@@ -1956,19 +1999,60 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const setClientInfoField = (k, v) => setField("clientInfo", { ...(effectiveClientInfo || {}), [k]: v });
   const categories = [...new Set(savedItems.map(i => i.category))];
 
-  // Pop the confirm-before-send sheet — actual send happens in handleConfirmedSend.
+  // Pop the send-method sheet first (Email vs Text). The chosen method then
+  // either opens ConfirmSendModal (email) or sendViaText (sms link).
   const handleEmail = () => {
-    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
-    if (!client?.email) {
-      // Still open the modal so the user can type one in.
-      setConfirmSend("invoice");
-      return;
-    }
-    setConfirmSend("invoice");
+    setSendMethodFor("invoice");
   };
 
   const handleSendEstimate = () => {
-    setConfirmSend("estimate");
+    setSendMethodFor("estimate");
+  };
+
+  // Text-message path. Builds an sms: URL with the trackable public link
+  // and a short prefilled message, then hands off to the OS Messages app.
+  // We mint/reuse the view token first so the link in the SMS works, and
+  // record a "sent" event with channel=sms.
+  const sendViaText = async (kind) => {
+    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
+    const phone = (client?.phone || "").replace(/[^0-9+]/g, "");
+    if (!phone) {
+      alert("No phone number on file for this client. Add one in the client record first.");
+      return;
+    }
+    setSendMethodFor(null);
+    try {
+      let viewToken = form.viewToken || null;
+      if (form.id && !viewToken) {
+        try {
+          viewToken = await db.ensureViewToken(form);
+          form.viewToken = viewToken;
+        } catch (e) { console.warn('ensureViewToken failed:', e); }
+      }
+      const viewLink = viewToken ? `${window.location.origin}/v/${viewToken}` : '';
+      const t = calcTotals(form);
+      const isEst = kind === "estimate";
+      const docNum = form.id || (isEst ? "EST0000" : "INV0000");
+      const name = client?.name || form.client || "";
+      const greeting = name ? `Aloha ${name},` : "Aloha,";
+      const body = isEst
+        ? `${greeting}\n\nHere is your estimate ${docNum} from HI Grade Plumbing for ${fmt(t.total)}. Tap the link to review and sign:\n${viewLink}\n\nMahalo,\nHI Grade Plumbing`
+        : `${greeting}\n\nHere is your invoice ${docNum} from HI Grade Plumbing for ${fmt(t.total)}. Tap the link to view and pay:\n${viewLink}\n\nMahalo,\nHI Grade Plumbing`;
+      // iOS uses & as the separator after the number; this also works on Android.
+      const smsHref = `sms:${phone}${/iPad|iPhone|iPod/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(body)}`;
+      window.location.href = smsHref;
+      if (form.id) {
+        try { await db.recordInvoiceEvent(form.id, 'sent', phone, { kind: isEst ? 'estimate' : 'invoice', channel: 'sms' }); }
+        catch (e) { console.warn('recordInvoiceEvent failed:', e); }
+        try { await db.recordInvoiceVersion(form, phone, isEst ? "Estimate texted" : "Invoice texted"); }
+        catch (e) { console.warn('Version snapshot failed:', e); }
+        refreshEvents?.();
+      }
+      setEmailStatus("✓ Opened Messages");
+      setTimeout(() => setEmailStatus(""), 4000);
+    } catch (e) {
+      alert("Failed to open Messages: " + (e.message || e));
+    }
   };
 
   // Called after user confirms recipient details in ConfirmSendModal.
@@ -2078,10 +2162,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     ...events.map(ev => {
       const when = ev.created_at;
       if (ev.kind === 'sent') {
+        const isText = ev.meta?.channel === 'sms';
+        const verb = isText ? 'Texted' : 'Sent';
         return {
           date: when,
-          label: ev.recipient ? `Sent to ${ev.recipient}` : (isEstimate ? 'Estimate sent' : 'Invoice sent'),
+          label: ev.recipient ? `${verb} to ${ev.recipient}` : (isEstimate ? `Estimate ${verb.toLowerCase()}` : `Invoice ${verb.toLowerCase()}`),
           type: 'sent',
+          channel: isText ? 'sms' : 'email',
           amount: null,
           sortKey: new Date(when).getTime(),
         };
@@ -2170,6 +2257,14 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   return (
     <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
+      {sendMethodFor && <SendMethodSheet
+        kind={sendMethodFor}
+        invoice={form}
+        client={{ ...(selectedClient || {}), ...(effectiveClientInfo || {}) }}
+        onClose={() => setSendMethodFor(null)}
+        onPickEmail={() => { const k = sendMethodFor; setSendMethodFor(null); setConfirmSend(k); }}
+        onPickText={() => sendViaText(sendMethodFor)}
+      />}
       {confirmSend && <ConfirmSendModal kind={confirmSend} invoice={form} client={{ ...(selectedClient || {}), ...(effectiveClientInfo || {}) }} sending={sending} onClose={() => !sending && setConfirmSend(null)} onConfirm={handleConfirmedSend} />}
       {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
@@ -2653,7 +2748,9 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             {historyEvents.length > 1 && <div style={{ position: "absolute", left: 17, top: 18, bottom: 18, width: 2, background: "#e8ecf4" }} />}
             {historyEvents.map((ev, i) => {
               const palette = ev.type === 'payment' ? { bg: '#e8f8ef', stroke: '#27ae60', icon: 'payment' }
-                : ev.type === 'sent'    ? { bg: '#eaf2ff', stroke: '#2c6ed4', icon: 'mail' }
+                : ev.type === 'sent'    ? (ev.channel === 'sms'
+                    ? { bg: '#e8f8ef', stroke: '#27ae60', icon: 'phone' }
+                    : { bg: '#eaf2ff', stroke: '#2c6ed4', icon: 'mail' })
                 : ev.type === 'opened'  ? { bg: '#fff1e0', stroke: '#E8622A', icon: 'eye' }
                 : { bg: '#eef0fa', stroke: '#8899bb', icon: 'invoice' };
               // For sent/opened we have full timestamps; show "Apr 30, 12:42 AM".
