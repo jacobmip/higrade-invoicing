@@ -130,7 +130,11 @@ export async function loadAll() {
     { data: settingRows, error: e7 },
   ] = await Promise.all([
     supabase.from('clients').select('*').order('name'),
-    supabase.from('invoices').select('*').order('created_at', { ascending: false }),
+    // Sort by invoice date (newest first), with created_at as a secondary key
+    // so two invoices with the same date order by entry time. Sorting by date
+    // matches what users expect when scanning the list — and is the correct
+    // order for back-dated entries (e.g. CSV imports) too.
+    supabase.from('invoices').select('*').order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
     supabase.from('invoice_items').select('*'),
     supabase.from('payments').select('*'),
     supabase.from('saved_items').select('*').order('category').order('name'),
