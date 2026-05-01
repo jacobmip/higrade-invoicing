@@ -2059,6 +2059,14 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     await flushAutoSaveRef.current();
     onCancel?.();
   };
+  // Edge-swipe-from-left back gesture. App dispatches 'app-back-form'
+  // when the form is the active back-able view.
+  useEffect(() => {
+    const onSwipeBack = () => { handleBack(); };
+    window.addEventListener('app-back-form', onSwipeBack);
+    return () => window.removeEventListener('app-back-form', onSwipeBack);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Merge: created → payments → server-side events (sent/opened). Server
   // events use full ISO timestamps; created+payments are just YYYY-MM-DD,
@@ -3479,6 +3487,23 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openClientId]);
 
+  // Edge-swipe-from-left back gesture. Steps back through modes the same
+  // way the in-screen back arrows do: edit → detail (or list for new),
+  // detail → list. Stays out of the way when already on the list.
+  useEffect(() => {
+    const onSwipeBack = () => {
+      if (mode === "edit") {
+        setMode(detailId ? "detail" : "list");
+        setEditId(null);
+      } else if (mode === "detail") {
+        setMode("list");
+        setDetailId(null);
+      }
+    };
+    window.addEventListener('app-back', onSwipeBack);
+    return () => window.removeEventListener('app-back', onSwipeBack);
+  }, [mode, detailId]);
+
   const save = () => {
     // Make sure each address has an id and a label so dropdowns work later.
     onSave(normalizeClientDraft(form), editId);
@@ -4785,6 +4810,73 @@ export default function App() {
   // because the brand header's getBoundingClientRect height changes by ~1px
   // when transitioning to sticky.
   const rootRef = useRef(null);
+  // Edge-swipe-from-left back gesture. Mirrors iOS: starting a touch within
+  // the leftmost ~22px of the viewport and dragging right by >70px (and
+  // mostly horizontal) fires a window 'app-back' custom event. Active
+  // "back-able" views (InvoiceForm, ClientsTab in detail/edit) listen for
+  // it and step back. We also render a thin orange bar that grows with the
+  // drag to give visual feedback.
+  const [edgeSwipeX, setEdgeSwipeX] = useState(0);
+  useEffect(() => {
+    const EDGE_PX = 22;       // only start when finger lands this close to the left edge
+    const TRIGGER_PX = 70;    // horizontal distance that fires app-back on release
+    const LOCK_PX = 8;        // movement required before locking horizontal vs vertical
+    let startX = 0, startY = 0;
+    let active = false;       // true once we've seen a valid edge touchstart
+    let locked = null;        // 'h' | 'v' | null — direction lock after first move
+    let dx = 0;
+
+    const onStart = (e) => {
+      // Only single-finger swipes from the left edge.
+      if (e.touches.length !== 1) { active = false; return; }
+      const t = e.touches[0];
+      if (t.clientX > EDGE_PX) { active = false; return; }
+      startX = t.clientX;
+      startY = t.clientY;
+      dx = 0;
+      active = true;
+      locked = null;
+    };
+    const onMove = (e) => {
+      if (!active) return;
+      const t = e.touches[0];
+      const ddx = t.clientX - startX;
+      const ddy = t.clientY - startY;
+      if (locked == null) {
+        if (Math.abs(ddx) < LOCK_PX && Math.abs(ddy) < LOCK_PX) return;
+        locked = Math.abs(ddx) > Math.abs(ddy) ? 'h' : 'v';
+        if (locked === 'v') { active = false; setEdgeSwipeX(0); return; }
+      }
+      if (locked === 'h') {
+        // Only show indicator while pulling rightward.
+        dx = Math.max(0, ddx);
+        setEdgeSwipeX(dx);
+        // Suppress browser back swipe + page scroll while we own the gesture.
+        if (e.cancelable) e.preventDefault();
+      }
+    };
+    const onEnd = () => {
+      if (active && locked === 'h' && dx > TRIGGER_PX) {
+        window.dispatchEvent(new CustomEvent('app-back'));
+      }
+      active = false;
+      locked = null;
+      dx = 0;
+      setEdgeSwipeX(0);
+    };
+
+    // touchmove must be non-passive so preventDefault() works on iOS Safari.
+    document.addEventListener('touchstart', onStart, { passive: true });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd, { passive: true });
+    document.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+      document.removeEventListener('touchcancel', onEnd);
+    };
+  }, []);
   // Synchronous counter for invoice IDs. setData's functional updater is
   // deferred, so when handleGlobalAIAction runs 20 times in a tight loop
   // (bulk-create) the closure-captured `newInvoice` race-conditions and only
@@ -4820,6 +4912,28 @@ export default function App() {
   useEffect(() => {
     if (!dbLoading) try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch {}
   }, [data, dbLoading]);
+
+  // App-level handler for the edge-swipe 'app-back' event. Priority:
+  //   1. Close global AI modal if open
+  //   2. Close "More" sheet if open
+  //   3. Exit invoice form (mirrors the form's own back button)
+  //   4. ClientsTab handles its own modes via its own listener
+  useEffect(() => {
+    const onBack = () => {
+      if (showGlobalAI) { setShowGlobalAI(false); return; }
+      if (showMore) { setShowMore(false); return; }
+      if (view === "form") {
+        // Tell InvoiceForm to flush autosave then unmount. The form listens
+        // for 'app-back-form' and calls its own handleBack so pending edits
+        // aren't lost.
+        window.dispatchEvent(new CustomEvent('app-back-form'));
+        return;
+      }
+      // ClientsTab listens directly when in detail/edit mode.
+    };
+    window.addEventListener('app-back', onBack);
+    return () => window.removeEventListener('app-back', onBack);
+  }, [view, showGlobalAI, showMore]);
 
   // Seed the global AI greeting once data has loaded for the first time, but
   // only if there's no saved chat history. After this, the user's full chat
@@ -5285,6 +5399,13 @@ export default function App() {
 
   return (
     <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
+      {/* Edge-swipe-back visual indicator: a thin orange bar on the left
+          edge that grows with the drag. Only renders while a swipe is in
+          progress (edgeSwipeX > 0). Pointer-events: none so it can't
+          intercept touches. */}
+      {edgeSwipeX > 0 && (
+        <div style={{ position: "fixed", top: 0, left: 0, height: "100vh", width: Math.min(edgeSwipeX, 120), background: `linear-gradient(90deg, ${ORANGE}cc 0%, ${ORANGE}33 70%, transparent 100%)`, pointerEvents: "none", zIndex: 9999, transition: "none" }} />
+      )}
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
