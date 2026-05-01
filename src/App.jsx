@@ -5581,10 +5581,10 @@ export default function App() {
     { id: "invoices",  label: "Invoices",  icon: "invoice"   },
     { id: "estimates", label: "Estimates", icon: "estimates" },
     { id: "expenses",  label: "Expenses",  icon: "receipt"   },
-    { id: "payments",  label: "Payments",  icon: "dollar"    },
+    { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
-    { id: "clients",  label: "Clients",  icon: "clients"  },
+    { id: "payments", label: "Payments", icon: "dollar"   },
     { id: "items",    label: "Items",    icon: "items"    },
     { id: "reports",  label: "Reports",  icon: "chart"    },
     { id: "calendar", label: "Calendar", icon: "calendar" },
