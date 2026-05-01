@@ -119,6 +119,27 @@ function toExpense(row) {
 
 // ─── Load all ─────────────────────────────────────────────────────────────────
 
+// Supabase caps a single .select() at 1,000 rows by default. Once the
+// invoice_items table grew past that (which happened the moment we
+// imported historical line items), the most recent ~440 rows were
+// silently dropped — making estimates appear empty in the UI even
+// though the data was in the DB. This helper pages through any builder
+// in 1,000-row chunks until the result set is fully drained.
+async function fetchAllRows(buildQuery) {
+  const PAGE = 1000
+  const out = []
+  let from = 0
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + PAGE - 1)
+    if (error) return { data: null, error }
+    if (!data || data.length === 0) break
+    out.push(...data)
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  return { data: out, error: null }
+}
+
 export async function loadAll() {
   const [
     { data: clientRows, error: e1 },
@@ -134,9 +155,10 @@ export async function loadAll() {
     // so two invoices with the same date order by entry time. Sorting by date
     // matches what users expect when scanning the list — and is the correct
     // order for back-dated entries (e.g. CSV imports) too.
-    supabase.from('invoices').select('*').order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
-    supabase.from('invoice_items').select('*'),
-    supabase.from('payments').select('*'),
+    // Paginate so we don't lose anything once the table passes 1,000 rows.
+    fetchAllRows(() => supabase.from('invoices').select('*').order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })),
+    fetchAllRows(() => supabase.from('invoice_items').select('*').order('invoice_id').order('sort_order')),
+    fetchAllRows(() => supabase.from('payments').select('*').order('invoice_id')),
     supabase.from('saved_items').select('*').order('category').order('name'),
     supabase.from('expenses').select('*').order('date', { ascending: false }),
     supabase.from('settings').select('*'),
