@@ -188,7 +188,11 @@ export default async function handler(req, res) {
             name: `Invoice ${inv.id}`,
             quantity: '1',
             unit_amount: { currency_code: 'USD', value: balanceWithLateFee.toFixed(2) },
-            category: 'DIGITAL_GOODS',
+            // Venmo only supports PHYSICAL_GOODS line items — DIGITAL_GOODS
+            // causes Venmo to reject the order after the buyer scans the QR
+            // (PayPal and Card still accept it). Plumbing services map to
+            // PHYSICAL_GOODS in PayPal's taxonomy anyway.
+            category: 'PHYSICAL_GOODS',
           }],
         }],
         application_context: {
