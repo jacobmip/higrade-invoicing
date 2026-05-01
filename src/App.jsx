@@ -511,6 +511,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const [listening, setListening] = useState(false);
   const endRef = useRef(null);
   const panelRef = useRef(null);
+  const inputElRef = useRef(null);
   // Only auto-scroll when new messages arrive or the loading indicator
   // toggles. Earlier this also fired on every visualViewport change, which
   // meant every keystroke (iOS keyboard animation tweaks the viewport)
@@ -521,14 +522,26 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { alert("Voice not supported."); return; }
     const r = new SR(); r.lang = "en-US";
-    r.onresult = e => { setInput(p => (p + " " + e.results[0][0].transcript).trim()); setListening(false); };
+    r.onresult = e => {
+      setInput(p => {
+        const next = (p + " " + e.results[0][0].transcript).trim();
+        // Mirror into the uncontrolled contenteditable so the user sees it.
+        if (inputElRef.current) inputElRef.current.innerText = next;
+        return next;
+      });
+      setListening(false);
+    };
     r.onerror = () => setListening(false); r.onend = () => setListening(false);
     r.start(); setListening(true);
   };
 
   const send = async () => {
     const text = input.trim(); if (!text || loading) return;
-    setInput(""); const userMsg = { role: "user", text };
+    setInput("");
+    // The contenteditable div is uncontrolled — React's setInput("") doesn't
+    // touch the DOM, so manually clear its innerText after sending.
+    if (inputElRef.current) inputElRef.current.innerText = "";
+    const userMsg = { role: "user", text };
     setMsgs(p => [...p, userMsg]); setLoading(true);
     try {
       // Context-aware system prompt: global knowledge + the open invoice.
@@ -613,36 +626,49 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       </div>
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "center", gap: 8, padding: "0 10px" }}>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
-        <textarea
-          rows={1}
-          name="prompt"
-          autoComplete="off"
-          autoCorrect="on"
-          autoCapitalize="sentences"
-          spellCheck={true}
-          inputMode="text"
-          enterKeyHint="send"
-          data-form-type="other"
-          data-lpignore="true"
+        {/*
+          Use a contenteditable div instead of <input>/<textarea> so iOS
+          Safari doesn't render its contact-autofill suggestion bar (with
+          the user's email and the up/down/checkmark form-navigation
+          arrows). Safari only shows that bar for true form fields; a
+          contenteditable element is treated as rich text and gets a clean
+          keyboard with just the standard predictions row.
+        */}
+        <div
+          ref={inputElRef}
+          contentEditable
+          suppressContentEditableWarning
+          role="textbox"
           aria-label="Job description"
-          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none", resize: "none", height: 38, lineHeight: "20px", overflow: "hidden", verticalAlign: "middle" }}
-          value={input}
+          aria-multiline="false"
+          spellCheck={true}
+          data-placeholder={listening ? "Listening…" : "Describe a job…"}
+          style={{ flex: 1, minHeight: 38, maxHeight: 38, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", WebkitUserModify: "read-write-plaintext-only" }}
           onFocus={() => {
-            // iOS scrolls the focused field to roughly the top of the
-            // viewport. Instead of fighting that on the input, we wait
-            // for Safari's auto-scroll to settle, then scroll the entire
-            // chat panel so its TOP sits at the top of the visible area
-            // — that puts the LINE ITEMS header just above and the chat
-            // history visible above the input, matching the layout Jake
-            // wanted in the screenshot.
+            // After Safari's auto-scroll settles, pull the whole chat
+            // panel into view so the LINE ITEMS header sits at the top and
+            // the chat history is visible above the input.
             setTimeout(() => { panelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, 350);
           }}
-          onChange={e => setInput(e.target.value)}
+          onInput={e => setInput(e.currentTarget.innerText)}
           onKeyDown={e => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+            if (e.key === "Enter") { e.preventDefault(); send(); }
           }}
-          placeholder={listening ? "Listening…" : "Describe a job…"}
+          onPaste={e => {
+            // Force plaintext paste so rich content (e.g. styled text from
+            // Notes) doesn't bring HTML formatting into the chat input.
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData).getData("text");
+            document.execCommand("insertText", false, text);
+          }}
         />
+        <style>{`
+          [contenteditable][data-placeholder]:empty::before {
+            content: attr(data-placeholder);
+            color: #aab1bf;
+            pointer-events: none;
+          }
+        `}</style>
         <button onClick={send} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: NAVY, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={17} /></button>
       </div>
     </div>
@@ -4229,6 +4255,20 @@ function PublicViewerPage({ token }) {
   const [state, setState] = useState({ loading: true, error: null, invoice: null, items: [], payments: [], company: null });
   const trackedRef = useRef(false);
 
+  // Reactive viewport-width detection so the page switches between the
+  // mobile-optimized layout and a desktop "paper" layout (modeled after the
+  // printable PDF) whenever the window is resized or the device rotates.
+  // IMPORTANT: this hook must live above any early returns so the hook count
+  // stays stable between the initial "loading" render and the data render.
+  // Otherwise React throws #310 ("rendered more hooks than during the
+  // previous render") and the page goes blank.
+  const [vw, setVw] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
+  useEffect(() => {
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -4302,15 +4342,6 @@ function PublicViewerPage({ token }) {
   const isEstimate = invForm.type === 'estimate';
   const balance = Math.max(0, totals.balance);
 
-  // Reactive viewport-width detection so the page switches between the
-  // mobile-optimized layout and a desktop "paper" layout (modeled after the
-  // printable PDF) whenever the window is resized or the device rotates.
-  const [vw, setVw] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
-  useEffect(() => {
-    const onResize = () => setVw(window.innerWidth);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
   const isDesktop = vw >= 900;
 
   const handlePrintPdf = async () => {
