@@ -6,7 +6,7 @@
 // into the `payments` table so the public viewer flips to "Paid in
 // full" and the in-app invoice list shows the receipt automatically.
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs', maxDuration: 30 };
 
 function paypalBase() {
   return (process.env.PAYPAL_ENV || 'live').toLowerCase() === 'sandbox'
@@ -18,7 +18,7 @@ async function paypalAccessToken() {
   const id = process.env.PAYPAL_CLIENT_ID;
   const secret = process.env.PAYPAL_CLIENT_SECRET;
   if (!id || !secret) throw new Error('PayPal credentials not configured');
-  const auth = btoa(`${id}:${secret}`);
+  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
   const res = await fetch(`${paypalBase()}/v1/oauth2/token`, {
     method: 'POST',
     headers: {
@@ -48,7 +48,7 @@ async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId
     Prefer: 'return=representation',
   };
 
-  // Idempotency check \u2014 if PayPal retries the capture (or the user
+  // Idempotency check — if PayPal retries the capture (or the user
   // refreshes), we don't want to insert duplicate payment rows. The
   // PayPal capture ID is unique per transaction.
   const dupeRes = await fetch(`${url}/rest/v1/payments?paypal_capture_id=eq.${encodeURIComponent(paypalCaptureId)}&select=id&limit=1`, { headers });
@@ -79,18 +79,17 @@ async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId
   return { ok: true };
 }
 
-export default async function handler(req) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
-      status: 405, headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(405).json({ error: 'method_not_allowed' });
+    return;
   }
   try {
-    const { orderID } = await req.json();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const orderID = body.orderID;
     if (!orderID) {
-      return new Response(JSON.stringify({ error: 'missing_order_id' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(400).json({ error: 'missing_order_id' });
+      return;
     }
 
     const accessToken = await paypalAccessToken();
@@ -103,9 +102,8 @@ export default async function handler(req) {
     });
     const capture = await captureRes.json();
     if (!captureRes.ok) {
-      return new Response(JSON.stringify({ error: 'paypal_capture_failed', detail: capture }), {
-        status: 502, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(502).json({ error: 'paypal_capture_failed', detail: capture });
+      return;
     }
 
     // Pull the captured amount + invoice ID off the response.
@@ -116,9 +114,8 @@ export default async function handler(req) {
     const captureId = cap.id;
 
     if (cap.status !== 'COMPLETED') {
-      return new Response(JSON.stringify({ error: 'capture_not_completed', status: cap.status }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(400).json({ error: 'capture_not_completed', status: cap.status });
+      return;
     }
 
     await recordPayment({
@@ -128,18 +125,14 @@ export default async function handler(req) {
       paypalCaptureId: captureId,
     });
 
-    return new Response(JSON.stringify({
+    res.status(200).json({
       ok: true,
       orderID,
       captureID: captureId,
       amount,
       invoiceId,
-    }), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: 'server_error', message: String(e?.message || e) }), {
-      status: 500, headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(500).json({ error: 'server_error', message: String(e?.message || e) });
   }
 }

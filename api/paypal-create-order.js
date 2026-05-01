@@ -10,7 +10,7 @@
 // /api/paypal-capture-order endpoint actually captures the payment and
 // records it on the invoice.
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs', maxDuration: 30 };
 
 // Toggle live vs sandbox via env. Default to live for production safety —
 // you must explicitly set PAYPAL_ENV=sandbox to point at the test API.
@@ -27,7 +27,7 @@ async function paypalAccessToken() {
   const id = process.env.PAYPAL_CLIENT_ID;
   const secret = process.env.PAYPAL_CLIENT_SECRET;
   if (!id || !secret) throw new Error('PayPal credentials not configured');
-  const auth = btoa(`${id}:${secret}`);
+  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
   const res = await fetch(`${paypalBase()}/v1/oauth2/token`, {
     method: 'POST',
     headers: {
@@ -44,10 +44,10 @@ async function paypalAccessToken() {
   return j.access_token;
 }
 
-// Hit Supabase REST directly so this stays an edge function (no client
-// SDK needed). The anon key is safe here because Row Level Security only
-// permits reading invoices via view_token — same path the public viewer
-// uses to render the page.
+// Hit Supabase REST directly so this stays a small serverless function (no
+// client SDK needed). The anon key is safe here because Row Level Security
+// only permits reading invoices via view_token — same path the public
+// viewer uses to render the page.
 async function fetchInvoiceByToken(token) {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
@@ -55,19 +55,22 @@ async function fetchInvoiceByToken(token) {
 
   const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
+  // Run the four reads in parallel — they're independent and on the same
+  // host, so the network latency dominates and parallelism cuts wall time
+  // by ~3x. Important on Vercel Hobby where the function budget is tight.
   const invRes = await fetch(`${url}/rest/v1/invoices?view_token=eq.${encodeURIComponent(token)}&select=*&limit=1`, { headers });
   const invs = await invRes.json();
   if (!Array.isArray(invs) || invs.length === 0) throw new Error('Invoice not found');
   const inv = invs[0];
 
-  const itemsRes = await fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(inv.id)}&select=*`, { headers });
+  const [itemsRes, paysRes, settingsRes] = await Promise.all([
+    fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(inv.id)}&select=*`, { headers }),
+    fetch(`${url}/rest/v1/payments?invoice_id=eq.${encodeURIComponent(inv.id)}&select=*`, { headers }),
+    fetch(`${url}/rest/v1/settings?key=in.(surcharge_enabled,surcharge_pct,surcharge_flat,late_fee_rate)&select=*`, { headers }),
+  ]);
+
   const items = await itemsRes.json();
-
-  const paysRes = await fetch(`${url}/rest/v1/payments?invoice_id=eq.${encodeURIComponent(inv.id)}&select=*`, { headers });
   const pays = await paysRes.json();
-
-  // Fetch surcharge config from settings.
-  const settingsRes = await fetch(`${url}/rest/v1/settings?key=in.(surcharge_enabled,surcharge_pct,surcharge_flat,late_fee_rate)&select=*`, { headers });
   const settings = await settingsRes.json();
   const settingsMap = {};
   for (const s of (Array.isArray(settings) ? settings : [])) settingsMap[s.key] = s.value;
@@ -126,34 +129,34 @@ function calcSurcharge(amount, settings) {
   return +(base * (pct / 100) + flat).toFixed(2);
 }
 
-export default async function handler(req) {
+// Vercel Node runtime: handler receives (req, res) where req is a Node
+// IncomingMessage and res is a ServerResponse. Vercel pre-parses JSON
+// bodies into req.body for us.
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
-      status: 405, headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(405).json({ error: 'method_not_allowed' });
+    return;
   }
   try {
-    const { token } = await req.json();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const token = body.token;
     if (!token) {
-      return new Response(JSON.stringify({ error: 'missing_token' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(400).json({ error: 'missing_token' });
+      return;
     }
 
     const { inv, items, payments, settings } = await fetchInvoiceByToken(token);
     if (inv.type === 'estimate') {
-      return new Response(JSON.stringify({ error: 'estimates_not_payable' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(400).json({ error: 'estimates_not_payable' });
+      return;
     }
 
     const totals = calcTotals(inv, items, payments);
     const lateFee = calcLateFee(inv, totals, settings);
     const balanceWithLateFee = +(totals.balance + lateFee).toFixed(2);
     if (balanceWithLateFee <= 0) {
-      return new Response(JSON.stringify({ error: 'no_balance_due' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(400).json({ error: 'no_balance_due' });
+      return;
     }
 
     const surcharge = calcSurcharge(balanceWithLateFee, settings);
@@ -198,22 +201,17 @@ export default async function handler(req) {
 
     if (!orderRes.ok) {
       const t = await orderRes.text();
-      return new Response(JSON.stringify({ error: 'paypal_order_failed', detail: t }), {
-        status: 502, headers: { 'Content-Type': 'application/json' },
-      });
+      res.status(502).json({ error: 'paypal_order_failed', detail: t });
+      return;
     }
     const order = await orderRes.json();
-    return new Response(JSON.stringify({
+    res.status(200).json({
       id: order.id,
       balance: balanceWithLateFee,
       surcharge,
       total: grandTotal,
-    }), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: 'server_error', message: String(e?.message || e) }), {
-      status: 500, headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(500).json({ error: 'server_error', message: String(e?.message || e) });
   }
 }
