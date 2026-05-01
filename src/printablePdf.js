@@ -1,0 +1,407 @@
+// Printable, letter-sized PDF generator for invoices and estimates.
+//
+// Older clients like to print and file paper copies, so we render a clean
+// 8.5 × 11 layout that mirrors the in-app preview's brand colors (navy/orange)
+// but with larger fonts, more whitespace, and a structure that flows nicely on
+// a real piece of paper instead of a phone screen.
+//
+// We draw with jsPDF directly (vector text + filled rects) instead of html2canvas
+// so the file stays small, the text is sharp, and the bundle hit is minimal.
+//
+// Returns a Blob (application/pdf). The caller turns it into a base64 string
+// for the email attachment, or a download URL for the local print path.
+
+// jspdf ships its default export under different names depending on the
+// build target (ESM in the browser via Vite, CJS interop in Node). Pull
+// in everything and pick whichever one is callable so this file works in
+// both runtimes — the dev environment occasionally smoke-tests it under
+// node.
+import * as jsPDFModule from "jspdf";
+const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default || jsPDFModule;
+
+const NAVY = "#0a1628";
+const NAVY2 = "#0f2040";
+const ORANGE = "#E8622A";
+const TEXT_DARK = "#222222";
+const TEXT_MID = "#555555";
+const TEXT_LIGHT = "#888888";
+const RULE = "#dde2ee";
+const ROW_ALT = "#f8f9fc";
+
+// Letter size in points (1pt = 1/72in). 8.5" × 11" = 612 × 792.
+const PAGE_W = 612;
+const PAGE_H = 792;
+const MARGIN = 48; // 2/3"
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function fmtMoney(n) {
+  const v = Number(n) || 0;
+  return "$" + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+function fmtDate(d) {
+  if (!d) return "";
+  // Accept "YYYY-MM-DD" without timezone shift.
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(d);
+  const dt = new Date(+m[1], +m[2] - 1, +m[3]);
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function calcItemTotal(item) {
+  const qty = Number(item.qty) || 0;
+  const price = Number(item.price) || 0;
+  const base = qty * price;
+  const disc = Number(item.discount) || 0;
+  if (item.discountType === "%") return base * (1 - disc / 100);
+  return Math.max(0, base - disc);
+}
+function calcTotals(form) {
+  const sub = (form.items || []).reduce((s, it) => s + calcItemTotal(it), 0);
+  const taxableSub = (form.items || [])
+    .filter(it => it.taxable !== false)
+    .reduce((s, it) => s + calcItemTotal(it), 0);
+  let disc = 0;
+  if (form.discount) {
+    if (form.discountType === "%") disc = sub * (Number(form.discount) / 100);
+    else disc = Number(form.discount);
+  }
+  const taxBase = Math.max(0, taxableSub - disc * (taxableSub / Math.max(sub, 1)));
+  const taxAmt = taxBase * (Number(form.tax) || 0) / 100;
+  const total = Math.max(0, sub - disc + taxAmt);
+  const paid = (form.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  return { sub, disc, taxAmt, total, paid, balance: total - paid };
+}
+
+// jsPDF expects RGB [0–255]; we keep our hex strings as the source of truth.
+function hex(c) {
+  const m = c.replace("#", "");
+  return [parseInt(m.slice(0, 2), 16), parseInt(m.slice(2, 4), 16), parseInt(m.slice(4, 6), 16)];
+}
+function setFill(doc, c) { const [r, g, b] = hex(c); doc.setFillColor(r, g, b); }
+function setText(doc, c) { const [r, g, b] = hex(c); doc.setTextColor(r, g, b); }
+function setDraw(doc, c) { const [r, g, b] = hex(c); doc.setDrawColor(r, g, b); }
+
+// Wrap text to a max width and return an array of lines.
+function wrap(doc, text, maxWidth) {
+  if (!text) return [""];
+  return doc.splitTextToSize(String(text), maxWidth);
+}
+
+// ── Section drawers ───────────────────────────────────────────────────────
+
+function drawHeader(doc, form) {
+  const isEst = form.type === "estimate";
+  // Navy band, full-bleed top.
+  setFill(doc, NAVY);
+  doc.rect(0, 0, PAGE_W, 96, "F");
+
+  // Brand block (left)
+  setText(doc, "#ffffff");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.text("HI GRADE PLUMBING", MARGIN, 42);
+
+  setText(doc, ORANGE);
+  doc.setFontSize(10);
+  doc.text("LLC · HONOLULU, HAWAII", MARGIN, 58);
+
+  setText(doc, "#8899bb");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text("License #PJ-13579 · (808) 393-0015", MARGIN, 73);
+  doc.text("higradeplumbing.com · higradeplumbing@gmail.com", MARGIN, 86);
+
+  // Document type + number (right)
+  setText(doc, ORANGE);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(28);
+  const label = isEst ? "ESTIMATE" : "INVOICE";
+  const labelW = doc.getTextWidth(label);
+  doc.text(label, PAGE_W - MARGIN - labelW, 46);
+
+  setText(doc, "#ffffff");
+  doc.setFontSize(14);
+  const num = form.id || (isEst ? "EST0000" : "INV0000");
+  const numW = doc.getTextWidth(num);
+  doc.text(num, PAGE_W - MARGIN - numW, 64);
+
+  // Sub-strip with dates (lighter navy band right under the header).
+  setFill(doc, NAVY2);
+  doc.rect(0, 96, PAGE_W, 32, "F");
+
+  setText(doc, "#8899bb");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("DATE", MARGIN, 110);
+  doc.text("DUE", MARGIN + 130, 110);
+
+  setText(doc, "#dde2ee");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.text(fmtDate(form.date) || "—", MARGIN, 122);
+  doc.text(fmtDate(form.dueDate) || "—", MARGIN + 130, 122);
+
+  // Status pill on the right end of the strip.
+  const status = (form.status || (isEst ? "outstanding" : "outstanding")).toUpperCase();
+  setText(doc, "#ffffff");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  const sw = doc.getTextWidth(status) + 18;
+  setFill(doc, ORANGE);
+  doc.roundedRect(PAGE_W - MARGIN - sw, 106, sw, 16, 8, 8, "F");
+  doc.text(status, PAGE_W - MARGIN - sw + 9, 117);
+}
+
+function drawBillTo(doc, form, y) {
+  const data = form.clientInfo || {};
+  setText(doc, "#6677aa");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text("BILL TO", MARGIN, y);
+
+  setText(doc, TEXT_DARK);
+  doc.setFontSize(13);
+  doc.text(data.name || form.client || "—", MARGIN, y + 18);
+
+  setText(doc, TEXT_MID);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  let cy = y + 34;
+  const addr = [data.address1, data.address2, data.address3].filter(Boolean).join(", ");
+  if (addr) { doc.text(addr, MARGIN, cy); cy += 14; }
+  const contact = [data.phone, data.email].filter(Boolean).join(" · ");
+  if (contact) { setText(doc, TEXT_LIGHT); doc.text(contact, MARGIN, cy); cy += 14; }
+
+  // Job address if it differs (some invoices use a separate work site).
+  if (form.jobAddress && form.jobAddress !== addr) {
+    setText(doc, "#6677aa");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("JOB SITE", PAGE_W / 2 + 12, y);
+    setText(doc, TEXT_MID);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    const lines = wrap(doc, form.jobAddress, PAGE_W / 2 - MARGIN - 12);
+    lines.forEach((ln, i) => doc.text(ln, PAGE_W / 2 + 12, y + 18 + i * 14));
+  }
+
+  return Math.max(cy, y + 60); // bottom of section
+}
+
+function drawItemsTable(doc, form, startY) {
+  const items = form.items || [];
+  const colDescX = MARGIN;
+  const colQtyX = PAGE_W - MARGIN - 200;
+  const colPriceX = PAGE_W - MARGIN - 130;
+  const colAmtRightX = PAGE_W - MARGIN; // right-align
+  const descW = colQtyX - colDescX - 12;
+
+  // Header row
+  setFill(doc, NAVY);
+  doc.rect(MARGIN, startY, PAGE_W - 2 * MARGIN, 22, "F");
+  setText(doc, "#ffffff");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text("DESCRIPTION", colDescX + 8, startY + 14);
+  doc.text("QTY", colQtyX + 8, startY + 14);
+  doc.text("PRICE", colPriceX + 8, startY + 14);
+  const amtLabel = "AMOUNT";
+  doc.text(amtLabel, colAmtRightX - doc.getTextWidth(amtLabel) - 8, startY + 14);
+
+  let y = startY + 22;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+
+  const pageBottom = PAGE_H - MARGIN - 200; // leave room for totals + footer
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    // Compute row height from wrapped name + description.
+    const nameLines = wrap(doc, it.name || it.desc || "—", descW);
+    const descLines = (it.name && it.desc) ? wrap(doc, it.desc, descW) : [];
+    const rowH = Math.max(28, 14 + nameLines.length * 14 + descLines.length * 12 + 8);
+
+    // New page if we'd overflow.
+    if (y + rowH > pageBottom) {
+      doc.addPage();
+      drawHeader(doc, form);
+      // Re-draw table header on the new page.
+      setFill(doc, NAVY);
+      doc.rect(MARGIN, 150, PAGE_W - 2 * MARGIN, 22, "F");
+      setText(doc, "#ffffff");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text("DESCRIPTION", colDescX + 8, 164);
+      doc.text("QTY", colQtyX + 8, 164);
+      doc.text("PRICE", colPriceX + 8, 164);
+      doc.text(amtLabel, colAmtRightX - doc.getTextWidth(amtLabel) - 8, 164);
+      y = 172;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+    }
+
+    // Zebra-stripe alternate rows for readability on paper.
+    if (i % 2 === 1) {
+      setFill(doc, ROW_ALT);
+      doc.rect(MARGIN, y, PAGE_W - 2 * MARGIN, rowH, "F");
+    }
+
+    // Description name (bold)
+    setText(doc, TEXT_DARK);
+    doc.setFont("helvetica", "bold");
+    nameLines.forEach((ln, k) => doc.text(ln, colDescX + 8, y + 16 + k * 14));
+
+    // Description body (smaller, lighter)
+    if (descLines.length) {
+      setText(doc, TEXT_LIGHT);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      descLines.forEach((ln, k) => doc.text(ln, colDescX + 8, y + 16 + nameLines.length * 14 + k * 12));
+      doc.setFontSize(11);
+    }
+
+    // Qty / price / amount
+    setText(doc, TEXT_DARK);
+    doc.setFont("helvetica", "normal");
+    doc.text(String(it.qty ?? 1), colQtyX + 8, y + 16);
+    doc.text(fmtMoney(it.price), colPriceX + 8, y + 16);
+    doc.setFont("helvetica", "bold");
+    const amt = fmtMoney(calcItemTotal(it));
+    doc.text(amt, colAmtRightX - doc.getTextWidth(amt) - 8, y + 16);
+
+    // Bottom rule
+    setDraw(doc, RULE);
+    doc.setLineWidth(0.5);
+    doc.line(MARGIN, y + rowH, PAGE_W - MARGIN, y + rowH);
+
+    y += rowH;
+  }
+
+  return y;
+}
+
+function drawTotals(doc, form, startY) {
+  const t = calcTotals(form);
+  const boxX = PAGE_W - MARGIN - 240;
+  const boxW = 240;
+  let y = startY + 18;
+
+  const line = (label, val, opts = {}) => {
+    setText(doc, opts.color || TEXT_MID);
+    doc.setFont("helvetica", opts.bold ? "bold" : "normal");
+    doc.setFontSize(opts.size || 11);
+    doc.text(label, boxX, y);
+    const w = doc.getTextWidth(val);
+    doc.text(val, boxX + boxW - w, y);
+    y += opts.gap || 18;
+  };
+
+  line("Subtotal", fmtMoney(t.sub));
+  if (t.disc > 0) {
+    const lbl = form.discountType === "%" ? `Discount (${form.discount}%)` : "Discount";
+    // jsPDF's default helvetica encoding (WinAnsi) doesn't include the
+    // typographic minus sign U+2212; using it produces garbled output
+    // (the byte gets decomposed into spaced characters). ASCII hyphen-
+    // minus prints correctly and reads identically in this context.
+    line(lbl, "-" + fmtMoney(t.disc));
+  }
+  line(`GET (${form.tax || 0}%)`, fmtMoney(t.taxAmt));
+
+  // Divider
+  setDraw(doc, "#cfd5e3");
+  doc.setLineWidth(1);
+  doc.line(boxX, y - 6, boxX + boxW, y - 6);
+  y += 6;
+
+  // Total Due (the headline)
+  setText(doc, NAVY);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("TOTAL DUE", boxX, y);
+  setText(doc, ORANGE);
+  doc.setFontSize(18);
+  const totalStr = fmtMoney(t.total);
+  doc.text(totalStr, boxX + boxW - doc.getTextWidth(totalStr), y);
+  y += 22;
+
+  // Paid / balance only if a payment exists.
+  if (t.paid > 0) {
+    setDraw(doc, RULE);
+    doc.line(boxX, y - 8, boxX + boxW, y - 8);
+    line("Paid", "-" + fmtMoney(t.paid), { color: "#27ae60" });
+    line("BALANCE DUE", fmtMoney(Math.max(0, t.balance)), { bold: true, size: 13, color: "#27ae60" });
+  }
+
+  return y;
+}
+
+function drawNotesAndFooter(doc, form, startY) {
+  let y = startY + 16;
+  if (form.notes && form.notes.trim()) {
+    setText(doc, "#6677aa");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("NOTES", MARGIN, y);
+    y += 14;
+    setText(doc, TEXT_MID);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    const lines = wrap(doc, form.notes, PAGE_W - 2 * MARGIN);
+    lines.forEach(ln => { doc.text(ln, MARGIN, y); y += 14; });
+    y += 8;
+  }
+
+  // Footer band.
+  const footerY = PAGE_H - 64;
+  setFill(doc, NAVY);
+  doc.rect(0, footerY, PAGE_W, 64, "F");
+  setText(doc, "#dde2ee");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  const thanks = "Mahalo for your business";
+  doc.text(thanks, (PAGE_W - doc.getTextWidth(thanks)) / 2, footerY + 22);
+
+  setText(doc, "#8899bb");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  const pay = "Pay via Venmo @HIGP808 · Zelle/PayPal higradeplumbing@gmail.com · Cash · Check";
+  doc.text(pay, (PAGE_W - doc.getTextWidth(pay)) / 2, footerY + 38);
+  const tag = "HI Grade Plumbing LLC · Honolulu, Hawaii · License #PJ-13579";
+  doc.text(tag, (PAGE_W - doc.getTextWidth(tag)) / 2, footerY + 52);
+}
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+export function buildPrintablePdf(form) {
+  const doc = new jsPDF({ unit: "pt", format: "letter", compress: true });
+
+  drawHeader(doc, form);
+  const billY = drawBillTo(doc, form, 158);
+  const itemsEndY = drawItemsTable(doc, form, billY + 12);
+  const totalsEndY = drawTotals(doc, form, itemsEndY);
+  drawNotesAndFooter(doc, form, totalsEndY);
+
+  return doc.output("blob");
+}
+
+// Convert the PDF blob to a base64 string (no data: prefix), for the email
+// attachment payload.
+export function pdfBlobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || "");
+      const i = s.indexOf("base64,");
+      resolve(i >= 0 ? s.slice(i + 7) : "");
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+export function pdfFilename(form) {
+  const isEst = form.type === "estimate";
+  const id = form.id || (isEst ? "Estimate" : "Invoice");
+  const name = ((form.clientInfo && form.clientInfo.name) || form.client || "").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
+  return name ? `${id}_${name}.pdf` : `${id}.pdf`;
+}

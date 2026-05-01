@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, clientName, invoiceId, total, message, viewLink } = await req.json();
+    const { to, clientName, invoiceId, total, message, viewLink, attachmentFilename, attachmentBase64 } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
@@ -75,18 +75,29 @@ export default async function handler(req) {
       </div>
     `;
 
+    // Optional printable PDF attachment. Resend accepts an array of
+    // { filename, content } objects where content is a base64 string.
+    // We pass it through verbatim from the client.
+    const resendPayload = {
+      from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
+      to: [to],
+      subject: `Invoice ${invoiceId} from HI Grade Plumbing`,
+      html: emailBody,
+    };
+    if (attachmentBase64) {
+      resendPayload.attachments = [{
+        filename: attachmentFilename || `Invoice_${invoiceId || 'document'}.pdf`,
+        content: attachmentBase64,
+      }];
+    }
+
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${resendKey}`,
       },
-      body: JSON.stringify({
-        from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
-        to: [to],
-        subject: `Invoice ${invoiceId} from HI Grade Plumbing`,
-        html: emailBody,
-      }),
+      body: JSON.stringify(resendPayload),
     });
 
     const data = await res.json();
