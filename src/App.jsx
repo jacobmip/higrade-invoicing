@@ -626,6 +626,16 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           aria-label="Job description"
           style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none" }}
           value={input}
+          onFocus={(e) => {
+            // iOS Safari aggressively scrolls focused inputs to the top of
+            // the viewport, which yanks the chat panel up further than
+            // needed. After Safari's auto-scroll settles, nudge the input
+            // back to the minimum-visible position so only as much of the
+            // page scrolls as is required to keep the input above the
+            // keyboard.
+            const el = e.currentTarget;
+            setTimeout(() => { el?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, 350);
+          }}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && send()}
           placeholder={listening ? "Listening…" : "Describe a job…"}
