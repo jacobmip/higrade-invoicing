@@ -825,6 +825,15 @@ VENMO
 // Default monthly finance-charge rate when an invoice goes >30 days past due.
 const DEFAULT_LATE_FEE_RATE = 1.5; // percent per month
 
+// Online payment surcharge defaults. Mirrors PayPal's standard processing
+// fee for US business accounts (3.49% + $0.49 per transaction). Hawaii
+// allows merchants to surcharge credit card payments as long as the rate
+// doesn't exceed actual cost of acceptance, the surcharge is disclosed up
+// front, and debit cards are excluded — all of which we do.
+const DEFAULT_SURCHARGE_PCT = 3.49;   // percent of balance
+const DEFAULT_SURCHARGE_FLAT = 0.49;  // flat fee in dollars
+const DEFAULT_SURCHARGE_ENABLED = true;
+
 // Substitute the supported template variables. Missing values fall back to
 // sensible blanks so customer-facing copy never shows raw placeholders.
 function renderTemplate(tpl, vars) {
@@ -852,7 +861,36 @@ const messageTemplates = {
   text_estimate:  null,
   payment_instructions: null,
   late_fee_rate:  null, // null = use DEFAULT_LATE_FEE_RATE
+  surcharge_enabled: null, // null = use DEFAULT_SURCHARGE_ENABLED
+  surcharge_pct:     null, // null = use DEFAULT_SURCHARGE_PCT
+  surcharge_flat:    null, // null = use DEFAULT_SURCHARGE_FLAT
 };
+
+// Resolve the active online-payment surcharge config (saved override or
+// built-in default). Returns { enabled, pct, flat }.
+function resolveSurchargeConfig() {
+  const en = messageTemplates.surcharge_enabled;
+  const pct = messageTemplates.surcharge_pct;
+  const flat = messageTemplates.surcharge_flat;
+  return {
+    enabled: en == null ? DEFAULT_SURCHARGE_ENABLED : !!en,
+    pct:     pct == null  ? DEFAULT_SURCHARGE_PCT  : Number(pct),
+    flat:    flat == null ? DEFAULT_SURCHARGE_FLAT : Number(flat),
+  };
+}
+
+// Compute the surcharge for paying `amount` online. Returns 0 fee when the
+// surcharge is disabled or the amount is non-positive. The fee is rounded
+// to two decimals so the customer-facing total matches what we send to
+// PayPal exactly (no penny drift between display and charge).
+function calcSurcharge(amount, cfg) {
+  const c = cfg || resolveSurchargeConfig();
+  if (!c.enabled) return { enabled: false, pct: c.pct, flat: c.flat, fee: 0, total: Number(amount) || 0 };
+  const base = Math.max(0, Number(amount) || 0);
+  if (base <= 0) return { enabled: true, pct: c.pct, flat: c.flat, fee: 0, total: 0 };
+  const fee = +(base * (c.pct / 100) + c.flat).toFixed(2);
+  return { enabled: true, pct: c.pct, flat: c.flat, fee, total: +(base + fee).toFixed(2) };
+}
 
 // Resolve the active payment-instructions template (saved override or
 // built-in default) with variables substituted. Used everywhere we render
@@ -896,6 +934,13 @@ function hydrateTemplatesFromSettings(settings) {
   // the built-in default so older backups still render correctly.
   const r = settings.late_fee_rate;
   messageTemplates.late_fee_rate = (r != null && r !== "" && !isNaN(Number(r))) ? Number(r) : null;
+  // Surcharge config — stored as strings ("true"/"false" or numeric).
+  const se = settings.surcharge_enabled;
+  messageTemplates.surcharge_enabled = (se == null || se === "") ? null : (se === "true" || se === true);
+  const sp = settings.surcharge_pct;
+  messageTemplates.surcharge_pct = (sp != null && sp !== "" && !isNaN(Number(sp))) ? Number(sp) : null;
+  const sf = settings.surcharge_flat;
+  messageTemplates.surcharge_flat = (sf != null && sf !== "" && !isNaN(Number(sf))) ? Number(sf) : null;
 }
 
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
@@ -4325,6 +4370,131 @@ function InPersonSignatureModal({ estimate, onClose, onSave }) {
   );
 }
 
+// ─── PayPal Smart Buttons ─────────────────────────────────────────────────────
+// Renders the official PayPal Smart Buttons inline. Server-driven flow:
+// createOrder hits /api/paypal-create-order which derives the balance +
+// surcharge from Supabase (so the customer can't tamper with the amount),
+// then onApprove hits /api/paypal-capture-order which captures the payment
+// and inserts a `payments` row. We invalidate the parent's data on success
+// so the page flips to "Paid in full" without a manual refresh.
+//
+// The PayPal SDK is pulled from the CDN once per page mount; if it fails
+// to load (offline, ad-blocker), we render a graceful fallback that links
+// to the legacy _xclick checkout so the customer can still pay.
+function PayPalCheckout({ token, invoiceId, balance, onPaid, clientId }) {
+  const containerRef = useRef(null);
+  const [status, setStatus] = useState('idle'); // idle | loading | ready | paid | error | unconfigured
+  const [errorMsg, setErrorMsg] = useState('');
+  const renderedRef = useRef(false);
+
+  useEffect(() => {
+    if (!clientId) { setStatus('unconfigured'); return; }
+    if (renderedRef.current) return;
+    renderedRef.current = true;
+    setStatus('loading');
+
+    // Reuse an existing SDK script tag if a prior mount already loaded it.
+    const existing = document.querySelector('script[data-paypal-sdk="1"]');
+    const onReady = () => {
+      if (!window.paypal || !containerRef.current) {
+        setStatus('error');
+        setErrorMsg('PayPal failed to load. Please try again or pay by another method below.');
+        return;
+      }
+      try {
+        window.paypal.Buttons({
+          style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'pay', height: 48 },
+
+          createOrder: async () => {
+            const res = await fetch('/api/paypal-create-order', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.id) throw new Error(data.error || 'create_order_failed');
+            return data.id;
+          },
+
+          onApprove: async (data) => {
+            try {
+              const res = await fetch('/api/paypal-capture-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ orderID: data.orderID }),
+              });
+              const out = await res.json();
+              if (!res.ok || !out.ok) throw new Error(out.error || 'capture_failed');
+              setStatus('paid');
+              if (onPaid) onPaid(out);
+            } catch (e) {
+              setStatus('error');
+              setErrorMsg('Payment captured but the receipt could not be saved. Please contact us at 808-393-0015 with your PayPal receipt.');
+            }
+          },
+
+          onError: (err) => {
+            console.error('[PayPal] error', err);
+            setStatus('error');
+            setErrorMsg('Something went wrong with PayPal. Please try again.');
+          },
+        }).render(containerRef.current).then(() => {
+          if (status !== 'paid') setStatus('ready');
+        });
+      } catch (e) {
+        console.error('[PayPal] render failed', e);
+        setStatus('error');
+        setErrorMsg(String(e?.message || e));
+      }
+    };
+
+    if (existing && window.paypal) { onReady(); return; }
+    if (existing) { existing.addEventListener('load', onReady); return; }
+
+    const s = document.createElement('script');
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=USD&intent=capture&disable-funding=credit,paylater`;
+    s.async = true;
+    s.dataset.paypalSdk = '1';
+    s.onload = onReady;
+    s.onerror = () => { setStatus('error'); setErrorMsg('PayPal could not be loaded.'); };
+    document.head.appendChild(s);
+  // We intentionally only run this once per mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (status === 'unconfigured') {
+    // Fall back to legacy redirect link so the page stays usable until the
+    // PayPal client ID is set in Vercel env.
+    return (
+      <a
+        href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${balance.toFixed(2)}&currency_code=USD&item_name=Invoice%20${encodeURIComponent(invoiceId)}&no_note=1&no_shipping=1`}
+        target="_blank" rel="noopener noreferrer"
+        style={{ display: 'inline-block', background: '#0070ba', color: '#fff', textDecoration: 'none', fontSize: 16, fontWeight: 700, padding: '12px 24px', borderRadius: 8, whiteSpace: 'nowrap' }}
+      >Pay ${balance.toFixed(2)} with PayPal</a>
+    );
+  }
+
+  if (status === 'paid') {
+    return (
+      <div style={{ background: '#e8f8ef', color: '#1f7a3a', borderRadius: 8, padding: '14px 18px', fontSize: 14, fontWeight: 600, textAlign: 'center' }}>
+        ✓ Payment received — mahalo!
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div ref={containerRef} style={{ minHeight: status === 'loading' ? 56 : 0 }} />
+      {status === 'loading' && (
+        <div style={{ color: '#888', fontSize: 13, textAlign: 'center', padding: '8px 0' }}>Loading PayPal…</div>
+      )}
+      {status === 'error' && (
+        <div style={{ color: '#a3231b', background: '#fdecec', borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>{errorMsg}</div>
+      )}
+    </div>
+  );
+}
+
 // ─── Public Viewer (trackable invoice/estimate link) ─────────────────────────
 // Customers receive an email containing a link like /v/<token>. This page
 // loads the invoice straight from Supabase using the public anon key (RLS
@@ -4422,6 +4592,24 @@ function PublicViewerPage({ token }) {
   const lateFeeInfo = calcLateFee(invForm, totals);
   const balance = Math.max(0, totals.balance + (lateFeeInfo.fee || 0));
   const paymentInstructionsText = resolvePaymentInstructions();
+  const surcharge = !isEstimate && balance > 0 ? calcSurcharge(balance) : { enabled: false, fee: 0, total: balance, pct: 0, flat: 0 };
+  const paypalClientId = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PAYPAL_CLIENT_ID) || '';
+
+  // After a successful PayPal capture, refresh the invoice + payments
+  // from Supabase so the page flips to "Paid in full" without a manual
+  // reload. The capture endpoint has already inserted the payment row.
+  const refreshAfterPayment = async () => {
+    try {
+      const { data: invRows } = await supabase.from('invoices').select('*').eq('view_token', token).limit(1);
+      const inv = invRows && invRows[0];
+      if (!inv) return;
+      const [{ data: items }, { data: pays }] = await Promise.all([
+        supabase.from('invoice_items').select('*').eq('invoice_id', inv.id),
+        supabase.from('payments').select('*').eq('invoice_id', inv.id),
+      ]);
+      setState(s => ({ ...s, invoice: inv, items: items || [], payments: pays || [] }));
+    } catch (e) { console.error('refresh after payment failed', e); }
+  };
 
   const isDesktop = vw >= 900;
 
@@ -4466,14 +4654,6 @@ function PublicViewerPage({ token }) {
             <div style={{ color: '#8899bb', fontSize: 12, letterSpacing: 1.5, marginTop: 3 }}>HONOLULU, HAWAII · LIC PJ-13579 · GET 4.712%</div>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            {!isEstimate && balance > 0 && (
-              <a
-                href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${balance.toFixed(2)}&currency_code=USD&item_name=Invoice%20${encodeURIComponent(invForm.id)}&no_note=1&no_shipping=1`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ background: '#0070ba', color: '#fff', textDecoration: 'none', fontSize: 16, fontWeight: 700, padding: '12px 24px', borderRadius: 8, whiteSpace: 'nowrap' }}
-              >Pay ${balance.toFixed(2)} Now</a>
-            )}
             {isEstimate && (
               <a
                 href={`/sign?id=${encodeURIComponent(invForm.id)}&client=${encodeURIComponent(invForm.client)}&total=${totals.total.toFixed(2)}&job=${encodeURIComponent(invForm.items[0]?.name || 'Plumbing Work')}`}
@@ -4487,6 +4667,45 @@ function PublicViewerPage({ token }) {
             >🖨 Print / Save PDF</button>
           </div>
         </div>
+
+        {/* Pay-online card (desktop) — prominent above the paper sheet so the
+            customer's first scroll lands on a clear pay action. Hidden on
+            estimates and on already-paid invoices. */}
+        {!isEstimate && balance > 0 && (
+          <div style={{ maxWidth: 850, margin: '24px auto 0', background: '#fff', borderRadius: 6, padding: '20px 28px', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 260px' }}>
+                <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1.5 }}>PAY ONLINE</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: 14, color: '#555' }}>
+                  <span>Balance due</span><span>${balance.toFixed(2)}</span>
+                </div>
+                {surcharge.enabled && surcharge.fee > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 13, color: '#888' }}>
+                    <span>Online payment fee ({surcharge.pct}% + ${surcharge.flat.toFixed(2)})</span>
+                    <span>+${surcharge.fee.toFixed(2)}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid #eef0f5', fontSize: 16, fontWeight: 700, color: NAVY }}>
+                  <span>Pay total</span><span style={{ color: ORANGE }}>${surcharge.total.toFixed(2)}</span>
+                </div>
+                {surcharge.enabled && surcharge.fee > 0 && (
+                  <div style={{ fontSize: 12, color: '#888', marginTop: 8, lineHeight: 1.5 }}>
+                    A {surcharge.pct}% + ${surcharge.flat.toFixed(2)} processing fee is added to online card payments. Pay by check, cash, Venmo, or Zelle to avoid this fee.
+                  </div>
+                )}
+              </div>
+              <div style={{ flex: '1 1 240px', minWidth: 240, maxWidth: 320 }}>
+                <PayPalCheckout
+                  token={token}
+                  invoiceId={invForm.id}
+                  balance={surcharge.total}
+                  clientId={paypalClientId}
+                  onPaid={refreshAfterPayment}
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Letter-sized paper sheet */}
         <div style={{ maxWidth: 850, margin: '32px auto', background: '#fff', boxShadow: '0 4px 24px rgba(0,0,0,0.10)', borderRadius: 6, overflow: 'hidden' }}>
@@ -4651,9 +4870,33 @@ function PublicViewerPage({ token }) {
             <div style={{ color: ORANGE, fontSize: 12, marginTop: 4, fontWeight: 600 }}>Includes ${lateFeeInfo.fee.toFixed(2)} late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)</div>
           )}
           {!isEstimate && balance > 0 && (
-            <a href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${balance.toFixed(2)}&currency_code=USD&item_name=Invoice%20${encodeURIComponent(invForm.id)}&no_note=1&no_shipping=1`} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', marginTop: 16, background: '#0070ba', color: '#fff', textDecoration: 'none', fontSize: 15, fontWeight: 700, padding: '13px 30px', borderRadius: 8 }}>
-              Pay ${balance.toFixed(2)} Now
-            </a>
+            <div style={{ marginTop: 16, textAlign: 'left' }}>
+              {surcharge.enabled && surcharge.fee > 0 && (
+                <div style={{ background: '#f4f6fa', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#555' }}>
+                    <span>Balance due</span><span>${balance.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 12, color: '#888' }}>
+                    <span>Online fee ({surcharge.pct}% + ${surcharge.flat.toFixed(2)})</span><span>+${surcharge.fee.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid #dde2ee', fontSize: 14, fontWeight: 700, color: NAVY }}>
+                    <span>Pay total</span><span style={{ color: ORANGE }}>${surcharge.total.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+              <PayPalCheckout
+                token={token}
+                invoiceId={invForm.id}
+                balance={surcharge.total}
+                clientId={paypalClientId}
+                onPaid={refreshAfterPayment}
+              />
+              {surcharge.enabled && surcharge.fee > 0 && (
+                <div style={{ fontSize: 11, color: '#888', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
+                  Pay by check, cash, Venmo, or Zelle to avoid the {surcharge.pct}% + ${surcharge.flat.toFixed(2)} processing fee.
+                </div>
+              )}
+            </div>
           )}
           {isEstimate && (
             <a href={`/sign?id=${encodeURIComponent(invForm.id)}&client=${encodeURIComponent(invForm.client)}&total=${totals.total.toFixed(2)}&job=${encodeURIComponent(invForm.items[0]?.name || 'Plumbing Work')}`} style={{ display: 'inline-block', marginTop: 16, background: ORANGE, color: '#fff', textDecoration: 'none', fontSize: 15, fontWeight: 700, padding: '13px 30px', borderRadius: 8 }}>
@@ -5288,6 +5531,136 @@ function PaymentInstructionsCard() {
   );
 }
 
+// Online payment surcharge card. Lets the user toggle the fee on/off and
+// tune both the percent and the flat dollar amount so the customer-facing
+// surcharge always matches the merchant's actual cost of accepting a card
+// payment (Hawaii's surcharge law caps the fee at acceptance cost).
+function OnlinePaymentFeeCard() {
+  const initialCfg = resolveSurchargeConfig();
+  const [enabled, setEnabled] = useState(initialCfg.enabled);
+  const [pct, setPct]   = useState(String(initialCfg.pct));
+  const [flat, setFlat] = useState(String(initialCfg.flat));
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  // Live preview using a $500 example invoice so the user can see the
+  // dollar impact of the rate they're typing without having to math it.
+  const sampleBase = 500;
+  const sampleFee = enabled ? +(sampleBase * (Number(pct || 0) / 100) + Number(flat || 0)).toFixed(2) : 0;
+  const sampleTotal = +(sampleBase + sampleFee).toFixed(2);
+
+  const resetToDefault = () => {
+    setEnabled(DEFAULT_SURCHARGE_ENABLED);
+    setPct(String(DEFAULT_SURCHARGE_PCT));
+    setFlat(String(DEFAULT_SURCHARGE_FLAT));
+    setStatus(null);
+  };
+
+  const save = async () => {
+    setSaving(true); setStatus(null);
+    try {
+      const parsedPct  = Number(pct);
+      const parsedFlat = Number(flat);
+      if (isNaN(parsedPct)  || parsedPct  < 0) throw new Error("Percent rate must be a positive number");
+      if (isNaN(parsedFlat) || parsedFlat < 0) throw new Error("Flat fee must be a positive number");
+      const isDefaultEnabled = enabled === DEFAULT_SURCHARGE_ENABLED;
+      const isDefaultPct  = parsedPct  === DEFAULT_SURCHARGE_PCT;
+      const isDefaultFlat = parsedFlat === DEFAULT_SURCHARGE_FLAT;
+      // Persist nulls when the value matches the built-in default so the
+      // settings table stays clean and future default changes flow through.
+      await db.setSetting("surcharge_enabled", isDefaultEnabled ? null : (enabled ? "true" : "false"));
+      await db.setSetting("surcharge_pct",  isDefaultPct  ? null : String(parsedPct));
+      await db.setSetting("surcharge_flat", isDefaultFlat ? null : String(parsedFlat));
+      messageTemplates.surcharge_enabled = isDefaultEnabled ? null : enabled;
+      messageTemplates.surcharge_pct  = isDefaultPct  ? null : parsedPct;
+      messageTemplates.surcharge_flat = isDefaultFlat ? null : parsedFlat;
+      setStatus({ kind: "ok", text: "Saved. New invoices will show this online payment fee." });
+    } catch (e) {
+      setStatus({ kind: "err", text: "Save failed: " + (e.message || e) });
+    }
+    setSaving(false);
+  };
+
+  const card = { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(10,22,40,0.06)" };
+  const heading = { fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, color: "#8899bb", textTransform: "uppercase", marginBottom: 8 };
+  const body = { fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 12 };
+
+  return (
+    <div style={card}>
+      <div style={heading}>Online payment fee</div>
+      <div style={body}>
+        Pass the PayPal processing fee on to customers who pay online. Defaults to PayPal’s standard {DEFAULT_SURCHARGE_PCT}% + ${DEFAULT_SURCHARGE_FLAT.toFixed(2)} so the deposit you receive matches the invoice total. Cash, check, Venmo, and Zelle never see this fee.
+      </div>
+
+      {/* Enable / disable toggle */}
+      <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, cursor: "pointer" }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={e => { setEnabled(e.target.checked); setStatus(null); }}
+          style={{ width: 18, height: 18, cursor: "pointer" }}
+        />
+        <span style={{ fontSize: 14, color: NAVY, fontWeight: 600 }}>Charge customers an online payment fee</span>
+      </label>
+
+      {/* Percent + flat fields */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={{ fontSize: 13, color: "#445", fontWeight: 600 }}>Percent</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            disabled={!enabled}
+            value={pct}
+            onChange={e => { setPct(e.target.value); setStatus(null); }}
+            style={{ ...S.input, width: 90, textAlign: "right", opacity: enabled ? 1 : 0.5 }}
+          />
+          <span style={{ fontSize: 13, color: "#666" }}>%</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={{ fontSize: 13, color: "#445", fontWeight: 600 }}>+ Flat</label>
+          <span style={{ fontSize: 13, color: "#666" }}>$</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            disabled={!enabled}
+            value={flat}
+            onChange={e => { setFlat(e.target.value); setStatus(null); }}
+            style={{ ...S.input, width: 90, textAlign: "right", opacity: enabled ? 1 : 0.5 }}
+          />
+        </div>
+      </div>
+
+      {/* Live preview */}
+      <div style={{ background: LIGHT, borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontSize: 13 }}>
+        <div style={{ color: "#888", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Preview — $500 invoice</div>
+        <div style={{ display: "flex", justifyContent: "space-between", color: "#555" }}>
+          <span>Balance</span><span>${sampleBase.toFixed(2)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", color: "#888", marginTop: 2 }}>
+          <span>Online fee</span><span>+${sampleFee.toFixed(2)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTop: "1px solid #dde2ee", fontWeight: 700, color: NAVY }}>
+          <span>Customer pays</span><span style={{ color: ORANGE }}>${sampleTotal.toFixed(2)}</span>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={resetToDefault} disabled={saving} style={{ ...S.btn("ghost"), flex: 1 }}>Reset to default</button>
+        <button onClick={save} disabled={saving} style={{ ...S.btn("primary"), flex: 2, opacity: saving ? 0.5 : 1 }}>
+          {saving ? "Saving…" : "Save fee"}
+        </button>
+      </div>
+
+      {status && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: status.kind === "ok" ? "#eaf7ee" : "#fdecec", color: status.kind === "ok" ? "#1f7a3a" : "#a3231b", fontSize: 13 }}>{status.text}</div>
+      )}
+    </div>
+  );
+}
+
 // Settings card: lets the user customize the email & text message templates
 // that pre-fill the Send modal and the Text Message handoff. Variables in
 // curly braces ({name}, {id}, {total}, {link}) are substituted at send time
@@ -5495,6 +5868,7 @@ function SettingsTab({ onAfterRestore }) {
     <div style={{ padding: "16px", paddingBottom: 100 }}>
       <MessageTemplatesCard />
       <PaymentInstructionsCard />
+      <OnlinePaymentFeeCard />
       <div style={card}>
         <div style={heading}>Backup</div>
         <div style={body}>
