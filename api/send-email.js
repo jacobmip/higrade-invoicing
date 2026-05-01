@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, clientName, invoiceId, total, message, viewLink } = await req.json();
+    const { to, clientName, invoiceId, total, message, viewLink, reviewLinks } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
@@ -35,6 +35,26 @@ export default async function handler(req) {
              Review &amp; Pay
            </a>
            <p style="color: #999; font-size: 12px; margin: 10px 0 0;">Tap above to view your invoice and pay securely</p>
+         </div>`
+      : '';
+
+    // Review request footer. Rendered only when the client passed a
+    // non-empty reviewLinks array — estimates always pass [] so they
+    // never show this. Each platform gets its own button so the customer
+    // doesn't have to pick from a dropdown; tap and go.
+    const platformMeta = {
+      yelp:   { label: 'Leave a Yelp review',   bg: '#d32323', emoji: '\u2B50' },
+      google: { label: 'Leave a Google review', bg: '#4285F4', emoji: '\u2B50' },
+    };
+    const reviewBlock = (Array.isArray(reviewLinks) && reviewLinks.length > 0)
+      ? `<div style="margin-top: 22px; padding: 18px; background: #fff; border-radius: 10px; border: 1px solid #e8ecf4; text-align: center;">
+           <p style="color: #0a1628; font-size: 15px; font-weight: 700; margin: 0 0 6px;">Mahalo for choosing HI Grade Plumbing</p>
+           <p style="color: #555; font-size: 13px; margin: 0 0 14px; line-height: 1.5;">If we did right by you, would you take 30 seconds to leave a review? It helps a small local business more than you\u2019d believe.</p>
+           ${reviewLinks.map(r => {
+             const meta = platformMeta[r.platform];
+             if (!meta || !r.url) return '';
+             return `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" style="display: inline-block; background: ${meta.bg}; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: bold; padding: 10px 22px; border-radius: 6px; margin: 4px 4px 0;">${meta.emoji} ${meta.label}</a>`;
+           }).join('')}
          </div>`
       : '';
 
@@ -67,6 +87,7 @@ export default async function handler(req) {
             Questions? Call or text us at <strong>808-393-0015</strong><br>
             Email: higradeplumbing@gmail.com
           </p>
+          ${reviewBlock}
           ${fallbackUrl}
         </div>
         <div style="background: #0a1628; padding: 16px; text-align: center;">

@@ -348,6 +348,11 @@ function stripActionBlocks(text) {
 
 async function sendInvoiceEmail(invoice, client, message, viewLink) {
   const t = calcTotals(invoice);
+  // Review-request links are only attached to invoice emails (estimates
+  // get sent before the job is done, so we never ask for a review there).
+  // Server-side, the email template only renders the footer when the
+  // array has at least one entry, so passing [] is safe.
+  const reviewLinks = invoice?.type === 'estimate' ? [] : resolveReviewLinks();
   // Link-only email: server renders a Review & Pay button and minimal
   // summary. We no longer pass a full items table so the customer is
   // motivated to click the link (which is what we track). Customers can
@@ -363,6 +368,7 @@ async function sendInvoiceEmail(invoice, client, message, viewLink) {
       total: t.total.toFixed(2),
       message: message || "",
       viewLink: viewLink || "",
+      reviewLinks,
     }),
   });
   return res.json();
@@ -864,7 +870,40 @@ const messageTemplates = {
   surcharge_enabled: null, // null = use DEFAULT_SURCHARGE_ENABLED
   surcharge_pct:     null, // null = use DEFAULT_SURCHARGE_PCT
   surcharge_flat:    null, // null = use DEFAULT_SURCHARGE_FLAT
+  // Per-platform review request toggles. When enabled, the bottom of
+  // invoice emails (not estimates) gets a friendly "leave us a review"
+  // footer with a button per active platform. Google stays off by
+  // default until the business is verified on Google.
+  review_yelp_enabled:   null, // null = use DEFAULT_REVIEW_YELP_ENABLED
+  review_yelp_url:       null, // null = use DEFAULT_REVIEW_YELP_URL
+  review_google_enabled: null, // null = use DEFAULT_REVIEW_GOOGLE_ENABLED
+  review_google_url:     null, // null = use DEFAULT_REVIEW_GOOGLE_URL
 };
+
+// Review-request defaults. Yelp link is the live HI Grade Plumbing page;
+// Google stays empty + disabled until the business is verified on Google.
+const DEFAULT_REVIEW_YELP_ENABLED = false;
+const DEFAULT_REVIEW_YELP_URL = 'https://www.yelp.com/biz/hi-grade-plumbing-honolulu';
+const DEFAULT_REVIEW_GOOGLE_ENABLED = false;
+const DEFAULT_REVIEW_GOOGLE_URL = '';
+
+// Resolve the active set of review platforms to advertise in invoice
+// emails. Returns an array of { platform, url } in display order, only
+// including platforms that are both enabled AND have a usable URL.
+function resolveReviewLinks() {
+  const out = [];
+  const yEn = messageTemplates.review_yelp_enabled;
+  const yEnabled = yEn == null ? DEFAULT_REVIEW_YELP_ENABLED : !!yEn;
+  const yUrl = String(messageTemplates.review_yelp_url ?? DEFAULT_REVIEW_YELP_URL ?? '').trim();
+  if (yEnabled && yUrl) out.push({ platform: 'yelp', url: yUrl });
+
+  const gEn = messageTemplates.review_google_enabled;
+  const gEnabled = gEn == null ? DEFAULT_REVIEW_GOOGLE_ENABLED : !!gEn;
+  const gUrl = String(messageTemplates.review_google_url ?? DEFAULT_REVIEW_GOOGLE_URL ?? '').trim();
+  if (gEnabled && gUrl) out.push({ platform: 'google', url: gUrl });
+
+  return out;
+}
 
 // Resolve the active online-payment surcharge config (saved override or
 // built-in default). Returns { enabled, pct, flat }.
@@ -941,6 +980,15 @@ function hydrateTemplatesFromSettings(settings) {
   messageTemplates.surcharge_pct = (sp != null && sp !== "" && !isNaN(Number(sp))) ? Number(sp) : null;
   const sf = settings.surcharge_flat;
   messageTemplates.surcharge_flat = (sf != null && sf !== "" && !isNaN(Number(sf))) ? Number(sf) : null;
+  // Review request toggles + URLs. Stored as plain strings ("true"/"false"
+  // for booleans, raw URL for the link). Missing/empty falls back to the
+  // built-in default in resolveReviewLinks().
+  const ryEn = settings.review_yelp_enabled;
+  messageTemplates.review_yelp_enabled = (ryEn == null || ryEn === "") ? null : (ryEn === "true" || ryEn === true);
+  messageTemplates.review_yelp_url = (settings.review_yelp_url == null || settings.review_yelp_url === "") ? null : String(settings.review_yelp_url);
+  const rgEn = settings.review_google_enabled;
+  messageTemplates.review_google_enabled = (rgEn == null || rgEn === "") ? null : (rgEn === "true" || rgEn === true);
+  messageTemplates.review_google_url = (settings.review_google_url == null || settings.review_google_url === "") ? null : String(settings.review_google_url);
 }
 
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
@@ -5661,6 +5709,161 @@ function OnlinePaymentFeeCard() {
   );
 }
 
+// Review request settings card. Per-platform toggle so Jake can switch on
+// Yelp now and Google later (after his business is verified there).
+// When enabled, the matching platform gets a button at the bottom of
+// invoice emails — estimates never include the footer.
+function ReviewRequestCard() {
+  // Pull current values out of the in-memory settings cache so the card
+  // reflects whatever was last saved.
+  const yEnInit = messageTemplates.review_yelp_enabled;
+  const yUrlInit = messageTemplates.review_yelp_url;
+  const gEnInit = messageTemplates.review_google_enabled;
+  const gUrlInit = messageTemplates.review_google_url;
+
+  const [yelpEnabled, setYelpEnabled] = useState(yEnInit == null ? DEFAULT_REVIEW_YELP_ENABLED : !!yEnInit);
+  const [yelpUrl, setYelpUrl] = useState(yUrlInit == null ? DEFAULT_REVIEW_YELP_URL : yUrlInit);
+  const [googleEnabled, setGoogleEnabled] = useState(gEnInit == null ? DEFAULT_REVIEW_GOOGLE_ENABLED : !!gEnInit);
+  const [googleUrl, setGoogleUrl] = useState(gUrlInit == null ? DEFAULT_REVIEW_GOOGLE_URL : gUrlInit);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const resetToDefault = () => {
+    setYelpEnabled(DEFAULT_REVIEW_YELP_ENABLED);
+    setYelpUrl(DEFAULT_REVIEW_YELP_URL);
+    setGoogleEnabled(DEFAULT_REVIEW_GOOGLE_ENABLED);
+    setGoogleUrl(DEFAULT_REVIEW_GOOGLE_URL);
+    setStatus(null);
+  };
+
+  const save = async () => {
+    setSaving(true); setStatus(null);
+    try {
+      const yUrlTrim = (yelpUrl || "").trim();
+      const gUrlTrim = (googleUrl || "").trim();
+      // Light sanity check — don't let a typo silently disable the link.
+      if (yelpEnabled && yUrlTrim && !/^https?:\/\//i.test(yUrlTrim)) {
+        throw new Error("Yelp URL should start with https://");
+      }
+      if (googleEnabled && !gUrlTrim) {
+        throw new Error("Add a Google review URL before enabling Google reviews");
+      }
+      if (googleEnabled && gUrlTrim && !/^https?:\/\//i.test(gUrlTrim)) {
+        throw new Error("Google URL should start with https://");
+      }
+
+      // Persist nulls when the value matches the built-in default so the
+      // settings table stays clean (mirrors the surcharge/late-fee pattern).
+      const isDefaultYEn  = yelpEnabled === DEFAULT_REVIEW_YELP_ENABLED;
+      const isDefaultYUrl = yUrlTrim === DEFAULT_REVIEW_YELP_URL;
+      const isDefaultGEn  = googleEnabled === DEFAULT_REVIEW_GOOGLE_ENABLED;
+      const isDefaultGUrl = gUrlTrim === DEFAULT_REVIEW_GOOGLE_URL;
+
+      await db.setSetting("review_yelp_enabled",  isDefaultYEn  ? null : (yelpEnabled ? "true" : "false"));
+      await db.setSetting("review_yelp_url",      isDefaultYUrl ? null : yUrlTrim);
+      await db.setSetting("review_google_enabled",isDefaultGEn  ? null : (googleEnabled ? "true" : "false"));
+      await db.setSetting("review_google_url",    isDefaultGUrl ? null : gUrlTrim);
+
+      messageTemplates.review_yelp_enabled   = isDefaultYEn  ? null : yelpEnabled;
+      messageTemplates.review_yelp_url       = isDefaultYUrl ? null : yUrlTrim;
+      messageTemplates.review_google_enabled = isDefaultGEn  ? null : googleEnabled;
+      messageTemplates.review_google_url     = isDefaultGUrl ? null : gUrlTrim;
+
+      const enabledCount = (yelpEnabled && yUrlTrim ? 1 : 0) + (googleEnabled && gUrlTrim ? 1 : 0);
+      setStatus({
+        kind: "ok",
+        text: enabledCount === 0
+          ? "Saved. Review requests are off \u2014 invoice emails will not ask for a review."
+          : `Saved. New invoice emails will ask customers to leave a review on ${enabledCount === 2 ? "Yelp and Google" : (yelpEnabled ? "Yelp" : "Google")}.`,
+      });
+    } catch (e) {
+      setStatus({ kind: "err", text: "Save failed: " + (e.message || e) });
+    }
+    setSaving(false);
+  };
+
+  const card = { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(10,22,40,0.06)" };
+  const heading = { fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, color: "#8899bb", textTransform: "uppercase", marginBottom: 8 };
+  const body = { fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 12 };
+  const platformBlock = { border: "1px solid #e8ecf4", borderRadius: 8, padding: 12, marginBottom: 10 };
+  const platformLabel = { fontSize: 14, color: NAVY, fontWeight: 700 };
+  const subLabel = { fontSize: 12, color: "#888", marginTop: 2 };
+
+  return (
+    <div style={card}>
+      <div style={heading}>Request reviews</div>
+      <div style={body}>
+        Add a friendly review request to the bottom of invoice emails. Estimates never include the request — it only fires once the job’s done and the invoice goes out.
+      </div>
+
+      {/* Yelp */}
+      <div style={platformBlock}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={yelpEnabled}
+            onChange={e => { setYelpEnabled(e.target.checked); setStatus(null); }}
+            style={{ width: 18, height: 18, cursor: "pointer" }}
+          />
+          <div>
+            <div style={platformLabel}>Yelp</div>
+            <div style={subLabel}>Ask customers to review HI Grade Plumbing on Yelp</div>
+          </div>
+        </label>
+        <div style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 12, color: "#666", fontWeight: 600 }}>Yelp page URL</label>
+          <input
+            type="url"
+            value={yelpUrl}
+            disabled={!yelpEnabled}
+            onChange={e => { setYelpUrl(e.target.value); setStatus(null); }}
+            placeholder="https://www.yelp.com/biz/..."
+            style={{ ...S.input, width: "100%", marginTop: 4, opacity: yelpEnabled ? 1 : 0.5 }}
+          />
+        </div>
+      </div>
+
+      {/* Google */}
+      <div style={platformBlock}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={googleEnabled}
+            onChange={e => { setGoogleEnabled(e.target.checked); setStatus(null); }}
+            style={{ width: 18, height: 18, cursor: "pointer" }}
+          />
+          <div>
+            <div style={platformLabel}>Google</div>
+            <div style={subLabel}>Verify your business on Google, then paste your review link below</div>
+          </div>
+        </label>
+        <div style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 12, color: "#666", fontWeight: 600 }}>Google review URL</label>
+          <input
+            type="url"
+            value={googleUrl}
+            disabled={!googleEnabled}
+            onChange={e => { setGoogleUrl(e.target.value); setStatus(null); }}
+            placeholder="https://g.page/r/..."
+            style={{ ...S.input, width: "100%", marginTop: 4, opacity: googleEnabled ? 1 : 0.5 }}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={resetToDefault} disabled={saving} style={{ ...S.btn("ghost"), flex: 1 }}>Reset to default</button>
+        <button onClick={save} disabled={saving} style={{ ...S.btn("primary"), flex: 2, opacity: saving ? 0.5 : 1 }}>
+          {saving ? "Saving\u2026" : "Save review settings"}
+        </button>
+      </div>
+
+      {status && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: status.kind === "ok" ? "#eaf7ee" : "#fdecec", color: status.kind === "ok" ? "#1f7a3a" : "#a3231b", fontSize: 13 }}>{status.text}</div>
+      )}
+    </div>
+  );
+}
+
 // Settings card: lets the user customize the email & text message templates
 // that pre-fill the Send modal and the Text Message handoff. Variables in
 // curly braces ({name}, {id}, {total}, {link}) are substituted at send time
@@ -5869,6 +6072,7 @@ function SettingsTab({ onAfterRestore }) {
       <MessageTemplatesCard />
       <PaymentInstructionsCard />
       <OnlinePaymentFeeCard />
+      <ReviewRequestCard />
       <div style={card}>
         <div style={heading}>Backup</div>
         <div style={body}>
