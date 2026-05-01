@@ -4452,7 +4452,7 @@ function PayPalCheckout({ token, invoiceId, balance, onPaid, clientId }) {
     if (existing) { existing.addEventListener('load', onReady); return; }
 
     const s = document.createElement('script');
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=USD&intent=capture&disable-funding=credit,paylater`;
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=USD&intent=capture&enable-funding=venmo&disable-funding=credit,paylater`;
     s.async = true;
     s.dataset.paypalSdk = '1';
     s.onload = onReady;
@@ -4690,7 +4690,7 @@ function PublicViewerPage({ token }) {
                 </div>
                 {surcharge.enabled && surcharge.fee > 0 && (
                   <div style={{ fontSize: 12, color: '#888', marginTop: 8, lineHeight: 1.5 }}>
-                    A {surcharge.pct}% + ${surcharge.flat.toFixed(2)} processing fee is added to online card payments. Pay by check, cash, Venmo, or Zelle to avoid this fee.
+                    A {surcharge.pct}% + ${surcharge.flat.toFixed(2)} processing fee is added to online payments (PayPal, card, or Venmo). Pay by check, cash, or Zelle to avoid this fee.
                   </div>
                 )}
               </div>
@@ -4893,7 +4893,7 @@ function PublicViewerPage({ token }) {
               />
               {surcharge.enabled && surcharge.fee > 0 && (
                 <div style={{ fontSize: 11, color: '#888', textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
-                  Pay by check, cash, Venmo, or Zelle to avoid the {surcharge.pct}% + ${surcharge.flat.toFixed(2)} processing fee.
+                  Pay by check, cash, or Zelle to avoid the {surcharge.pct}% + ${surcharge.flat.toFixed(2)} online processing fee.
                 </div>
               )}
             </div>
@@ -5589,7 +5589,7 @@ function OnlinePaymentFeeCard() {
     <div style={card}>
       <div style={heading}>Online payment fee</div>
       <div style={body}>
-        Pass the PayPal processing fee on to customers who pay online. Defaults to PayPal’s standard {DEFAULT_SURCHARGE_PCT}% + ${DEFAULT_SURCHARGE_FLAT.toFixed(2)} so the deposit you receive matches the invoice total. Cash, check, Venmo, and Zelle never see this fee.
+        Pass the PayPal processing fee on to customers who pay online (PayPal, card, or Venmo through the button). Defaults to PayPal’s standard {DEFAULT_SURCHARGE_PCT}% + ${DEFAULT_SURCHARGE_FLAT.toFixed(2)} so the deposit you receive matches the invoice total. Cash, check, and Zelle never see this fee.
       </div>
 
       {/* Enable / disable toggle */}
