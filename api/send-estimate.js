@@ -7,7 +7,7 @@ export default async function handler(req) {
     // viewLink takes the customer to the trackable public viewer; from there
     // they click Review & Sign to reach the signing canvas. items kept for
     // legacy callers but no longer rendered (link-only design).
-    const { to, clientName, estimateId, total, viewLink, message, attachmentFilename, attachmentBase64 } = await req.json();
+    const { to, clientName, estimateId, total, viewLink, message } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) return new Response(JSON.stringify({ error: 'Email not configured' }), {
@@ -62,24 +62,15 @@ export default async function handler(req) {
       </div>
     `;
 
-    // Optional printable PDF attachment for older clients who like a paper copy.
-    const resendPayload = {
-      from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
-      to: [to],
-      subject: `Estimate ${estimateId} from HI Grade Plumbing — Ready to Review`,
-      html: body,
-    };
-    if (attachmentBase64) {
-      resendPayload.attachments = [{
-        filename: attachmentFilename || `Estimate_${estimateId || 'document'}.pdf`,
-        content: attachmentBase64,
-      }];
-    }
-
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${resendKey}` },
-      body: JSON.stringify(resendPayload),
+      body: JSON.stringify({
+        from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
+        to: [to],
+        subject: `Estimate ${estimateId} from HI Grade Plumbing — Ready to Review`,
+        html: body,
+      }),
     });
 
     const data = await res.json();

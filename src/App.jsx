@@ -6,9 +6,9 @@ import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
-// Note: ./printablePdf.js is dynamically imported only when the user opts
-// in to the "Attach printable PDF" toggle, so the heavy jsPDF dependency
-// stays out of the initial bundle.
+// Note: ./printablePdf.js is dynamically imported only when the customer
+// taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
+// dependency stays out of the initial bundle.
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -346,30 +346,24 @@ function stripActionBlocks(text) {
   return result.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-async function sendInvoiceEmail(invoice, client, message, viewLink, attachment) {
+async function sendInvoiceEmail(invoice, client, message, viewLink) {
   const t = calcTotals(invoice);
   // Link-only email: server renders a Review & Pay button and minimal
   // summary. We no longer pass a full items table so the customer is
-  // motivated to click the link (which is what we track).
-  // Optional `attachment` = { filename, contentBase64 } for older clients
-  // who want a printable copy. The server forwards it to Resend's
-  // attachments[] field.
-  const payload = {
-    to: client.email,
-    clientName: client.name,
-    invoiceId: invoice.id,
-    total: t.total.toFixed(2),
-    message: message || "",
-    viewLink: viewLink || "",
-  };
-  if (attachment && attachment.contentBase64) {
-    payload.attachmentFilename = attachment.filename;
-    payload.attachmentBase64 = attachment.contentBase64;
-  }
+  // motivated to click the link (which is what we track). Customers can
+  // print a letter-sized PDF copy from the public viewer page itself —
+  // no attachment needed in the email.
   const res = await fetch(api("/api/send-email"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      to: client.email,
+      clientName: client.name,
+      invoiceId: invoice.id,
+      total: t.total.toFixed(2),
+      message: message || "",
+      viewLink: viewLink || "",
+    }),
   });
   return res.json();
 }
@@ -797,9 +791,6 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   // we keep regenerating the template with the latest recipient name.
   const [message, setMessage] = useState(defaultTemplate.replace("{name}", name || "there"));
   const [edited, setEdited] = useState(false);
-  // "Attach printable PDF" — for older clients who like to print and file
-  // hard copies. Off by default so the standard link-only flow stays fast.
-  const [attachPdf, setAttachPdf] = useState(false);
   // When the recipient name changes and the user hasn't customized the
   // message yet, refresh the salutation. Once they edit the textarea, we
   // stop touching it so we don't blow away their edits.
@@ -856,27 +847,11 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
             style={{ ...S.input, resize: "vertical", minHeight: 160, fontFamily: "'Barlow', sans-serif", lineHeight: 1.5, fontSize: 14, whiteSpace: "pre-wrap" }}
           />
           <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>This appears at the top of the email.</div>
-
-          {/* Printable PDF attachment toggle. Older customers print + file
-              hard copies, so we render a letter-sized branded PDF and
-              attach it to the Resend email. */}
-          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 14, padding: "12px 14px", background: LIGHT, borderRadius: 10, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={attachPdf}
-              onChange={e => setAttachPdf(e.target.checked)}
-              style={{ marginTop: 2, width: 18, height: 18, accentColor: ORANGE, cursor: "pointer" }}
-            />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: NAVY }}>Attach printable PDF</div>
-              <div style={{ fontSize: 11, color: "#888", marginTop: 2, lineHeight: 1.45 }}>Adds a letter-sized PDF to the email so the client can print a paper copy.</div>
-            </div>
-          </label>
         </div>
 
         <div style={{ display: "flex", gap: 10, padding: "16px 20px 0" }}>
           <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
-          <button onClick={() => valid && onConfirm({ name, email, message, attachPdf })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
+          <button onClick={() => valid && onConfirm({ name, email, message })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
             {sending ? "Sending…" : (isEstimate ? "Send Estimate" : "Send Invoice")}
           </button>
         </div>
@@ -2086,7 +2061,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
 
   // Called after user confirms recipient details in ConfirmSendModal.
-  const handleConfirmedSend = async ({ name, email, message, attachPdf }) => {
+  const handleConfirmedSend = async ({ name, email, message }) => {
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
     setSending(true);
     try {
@@ -2102,54 +2077,28 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       }
       const viewLink = viewToken ? `${window.location.origin}/v/${viewToken}` : '';
 
-      // Build the printable PDF up-front when the user opted in. We pass
-      // the same form object (with clientInfo merged from effectiveClientInfo)
-      // so the PDF reflects the recipient as-edited in the modal.
-      let attachment = null;
-      if (attachPdf) {
-        try {
-          // Lazy-load jsPDF + the printable layout only when the user
-          // actually wants a PDF — keeps the initial bundle slim.
-          const { buildPrintablePdf, pdfBlobToBase64, pdfFilename } = await import('./printablePdf.js');
-          const pdfForm = { ...form, clientInfo: { ...(form.clientInfo || {}), ...(effectiveClientInfo || {}), name, email } };
-          const blob = buildPrintablePdf(pdfForm);
-          const contentBase64 = await pdfBlobToBase64(blob);
-          attachment = { filename: pdfFilename(pdfForm), contentBase64 };
-        } catch (e) {
-          console.error('PDF build failed:', e);
-          alert('Could not generate the printable PDF. The email was not sent. Try again, or send without the attachment.');
-          setSending(false);
-          return;
-        }
-      }
-
       if (confirmSend === "estimate") {
         const t2 = calcTotals(form);
         const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
-        const estPayload = { to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" };
-        if (attachment) {
-          estPayload.attachmentFilename = attachment.filename;
-          estPayload.attachmentBase64 = attachment.contentBase64;
-        }
-        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(estPayload) });
+        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" }) });
         // Log a "sent" activity event + snapshot version (both best-effort).
         if (form.id) {
-          try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'estimate', attachedPdf: !!attachment }); }
+          try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'estimate' }); }
           catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-          try { await db.recordInvoiceVersion(form, email, attachment ? "Estimate sent (PDF attached)" : "Estimate sent"); }
+          try { await db.recordInvoiceVersion(form, email, "Estimate sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
         }
         alert("Estimate sent. The link in the email will be tracked when opened.");
       } else {
-        const result = await sendInvoiceEmail(form, client, message, viewLink, attachment);
+        const result = await sendInvoiceEmail(form, client, message, viewLink);
         if (result?.error) {
           setEmailStatus("Failed");
         } else {
           setEmailStatus("✓ Sent!");
           if (form.id) {
-            try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'invoice', attachedPdf: !!attachment }); }
+            try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'invoice' }); }
             catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-            try { await db.recordInvoiceVersion(form, email, attachment ? "Invoice sent (PDF attached)" : "Invoice sent"); }
+            try { await db.recordInvoiceVersion(form, email, "Invoice sent"); }
             catch (e) { console.warn('Version snapshot failed:', e); }
           }
         }
@@ -4315,6 +4264,27 @@ function PublicViewerPage({ token }) {
               Review &amp; Sign
             </a>
           )}
+          {/* Print / Save PDF — lazy-loads jsPDF and opens the printable letter-sized PDF in a new tab */}
+          <div style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const mod = await import('./printablePdf.js');
+                  const blob = mod.buildPrintablePdf(invForm);
+                  const url = URL.createObjectURL(blob);
+                  window.open(url, '_blank', 'noopener,noreferrer');
+                  setTimeout(() => URL.revokeObjectURL(url), 60000);
+                } catch (err) {
+                  console.error('PDF generation failed', err);
+                  alert('Could not generate the PDF. Please try again.');
+                }
+              }}
+              style={{ display: 'inline-block', background: '#fff', color: NAVY, border: `1.5px solid ${NAVY}`, fontSize: 14, fontWeight: 700, padding: '10px 22px', borderRadius: 8, cursor: 'pointer', fontFamily: "'Barlow', sans-serif" }}
+            >
+              🖨 Print / Save PDF
+            </button>
+          </div>
         </div>
         {/* Reuse the in-app PDF preview for full details */}
         <PDFPreview form={invForm} clients={[]} />
