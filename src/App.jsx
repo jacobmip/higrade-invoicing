@@ -4232,6 +4232,210 @@ function PublicViewerPage({ token }) {
   const isEstimate = invForm.type === 'estimate';
   const balance = Math.max(0, totals.balance);
 
+  // Reactive viewport-width detection so the page switches between the
+  // mobile-optimized layout and a desktop "paper" layout (modeled after the
+  // printable PDF) whenever the window is resized or the device rotates.
+  const [vw, setVw] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
+  useEffect(() => {
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const isDesktop = vw >= 900;
+
+  const handlePrintPdf = async () => {
+    try {
+      const mod = await import('./printablePdf.js');
+      const blob = mod.buildPrintablePdf(invForm);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      console.error('PDF generation failed', err);
+      alert('Could not generate the PDF. Please try again.');
+    }
+  };
+
+  if (isDesktop) {
+    // ---------- DESKTOP LAYOUT ----------
+    // Mirrors the printable PDF: full-bleed navy header, a centered
+    // letter-sized white "paper" sheet with orange invoice banner, items
+    // table, totals stack, notes, and a navy Mahalo footer. Typography is
+    // tuned for big screens (15-16px base, larger headings) so it stays
+    // easy to read.
+    const payStatus = isEstimate ? (invForm.status || 'pending').toUpperCase() : (balance > 0 ? 'OUTSTANDING' : 'PAID IN FULL');
+    const statusColor = isEstimate ? ORANGE : (balance > 0 ? ORANGE : '#2ea66a');
+    const ci = invForm.clientInfo || {};
+    const fmtDate = (s) => {
+      if (!s) return '';
+      const d = new Date(s);
+      if (isNaN(d)) return s;
+      return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+    };
+    return (
+      <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: '100vh', paddingBottom: 40 }}>
+        {/* Top navy bar */}
+        <div style={{ background: NAVY, padding: '22px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 24, letterSpacing: 2.5 }}>HI GRADE PLUMBING LLC</div>
+            <div style={{ color: '#8899bb', fontSize: 12, letterSpacing: 1.5, marginTop: 3 }}>HONOLULU, HAWAII · LIC PJ-13579 · GET 4.712%</div>
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            {!isEstimate && balance > 0 && (
+              <a
+                href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=higradeplumbing%40gmail.com&amount=${balance.toFixed(2)}&currency_code=USD&item_name=Invoice%20${encodeURIComponent(invForm.id)}&no_note=1&no_shipping=1`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ background: '#0070ba', color: '#fff', textDecoration: 'none', fontSize: 16, fontWeight: 700, padding: '12px 24px', borderRadius: 8, whiteSpace: 'nowrap' }}
+              >Pay ${balance.toFixed(2)} Now</a>
+            )}
+            {isEstimate && (
+              <a
+                href={`/sign?id=${encodeURIComponent(invForm.id)}&client=${encodeURIComponent(invForm.client)}&total=${totals.total.toFixed(2)}&job=${encodeURIComponent(invForm.items[0]?.name || 'Plumbing Work')}`}
+                style={{ background: ORANGE, color: '#fff', textDecoration: 'none', fontSize: 16, fontWeight: 700, padding: '12px 24px', borderRadius: 8, whiteSpace: 'nowrap' }}
+              >Review &amp; Sign</a>
+            )}
+            <button
+              type="button"
+              onClick={handlePrintPdf}
+              style={{ background: 'transparent', color: '#fff', border: '1.5px solid #fff', fontSize: 15, fontWeight: 700, padding: '11px 22px', borderRadius: 8, cursor: 'pointer', fontFamily: "'Barlow', sans-serif", whiteSpace: 'nowrap' }}
+            >🖨 Print / Save PDF</button>
+          </div>
+        </div>
+
+        {/* Letter-sized paper sheet */}
+        <div style={{ maxWidth: 850, margin: '32px auto', background: '#fff', boxShadow: '0 4px 24px rgba(0,0,0,0.10)', borderRadius: 6, overflow: 'hidden' }}>
+          {/* Orange/navy invoice banner */}
+          <div style={{ background: NAVY, padding: '28px 40px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ color: '#fff', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 30, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
+              <div style={{ color: ORANGE, fontSize: 12, letterSpacing: 2, marginTop: 4, fontWeight: 600 }}>LLC · HONOLULU, HI</div>
+              <div style={{ color: '#8899bb', fontSize: 12, marginTop: 6 }}>License #PJ-13579</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 3 }}>{isEstimate ? 'ESTIMATE' : 'INVOICE'}</div>
+              <div style={{ color: '#fff', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, letterSpacing: 1.5, marginTop: 2 }}>{invForm.id}</div>
+            </div>
+          </div>
+
+          {/* Date / Due / Status sub-strip */}
+          <div style={{ background: '#0e2238', padding: '14px 40px', display: 'flex', gap: 40, alignItems: 'center' }}>
+            <div>
+              <div style={{ color: '#8899bb', fontSize: 10, letterSpacing: 1.5, fontWeight: 700 }}>DATE</div>
+              <div style={{ color: '#fff', fontSize: 15, fontWeight: 600, marginTop: 2 }}>{fmtDate(invForm.date)}</div>
+            </div>
+            {invForm.dueDate && !isEstimate && (
+              <div>
+                <div style={{ color: '#8899bb', fontSize: 10, letterSpacing: 1.5, fontWeight: 700 }}>DUE</div>
+                <div style={{ color: '#fff', fontSize: 15, fontWeight: 600, marginTop: 2 }}>{fmtDate(invForm.dueDate)}</div>
+              </div>
+            )}
+            <div style={{ marginLeft: 'auto', background: statusColor, color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: 1.5, padding: '6px 14px', borderRadius: 20 }}>{payStatus}</div>
+          </div>
+
+          {/* Bill To */}
+          <div style={{ padding: '24px 40px 8px' }}>
+            <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
+            <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
+            {(ci.address || ci.city || ci.state || ci.zip) && (
+              <div style={{ color: '#555', fontSize: 14, marginTop: 4 }}>
+                {[ci.address, [ci.city, ci.state].filter(Boolean).join(', '), ci.zip].filter(Boolean).join(' · ')}
+              </div>
+            )}
+            {(ci.phone || ci.email) && (
+              <div style={{ color: '#555', fontSize: 14, marginTop: 2 }}>
+                {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
+              </div>
+            )}
+          </div>
+
+          {/* Items table */}
+          <div style={{ padding: '16px 40px 8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px', padding: '10px 0', borderBottom: `2px solid ${NAVY}`, color: '#888', fontSize: 11, letterSpacing: 1.5, fontWeight: 700 }}>
+              <div>DESCRIPTION</div>
+              <div style={{ textAlign: 'center' }}>QTY</div>
+              <div style={{ textAlign: 'right' }}>AMOUNT</div>
+            </div>
+            {invForm.items.map((it, idx) => {
+              const lineSubtotal = (parseFloat(it.qty) || 0) * (parseFloat(it.price) || 0);
+              const disc = parseFloat(it.discount) || 0;
+              const lineDisc = it.discountType === '%' ? lineSubtotal * (disc / 100) : disc;
+              const lineTotal = Math.max(0, lineSubtotal - lineDisc);
+              return (
+                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px', padding: '14px 0', borderBottom: '1px solid #eef0f5', background: idx % 2 ? '#fafbfd' : '#fff' }}>
+                  <div>
+                    <div style={{ color: NAVY, fontSize: 15, fontWeight: 700 }}>{it.name || '—'}</div>
+                    {it.desc && (
+                      <div style={{ color: '#888', fontSize: 13, marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{it.desc}</div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'center', color: '#555', fontSize: 14, fontWeight: 600 }}>{it.qty}</div>
+                  <div style={{ textAlign: 'right', color: NAVY, fontSize: 15, fontWeight: 700 }}>${lineTotal.toFixed(2)}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Totals stack */}
+          <div style={{ padding: '16px 40px 24px', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ minWidth: 280 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#555', fontSize: 14 }}>
+                <span>Subtotal</span>
+                <span>${totals.sub.toFixed(2)}</span>
+              </div>
+              {totals.disc > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#555', fontSize: 14 }}>
+                  <span>Discount</span>
+                  <span>-${totals.disc.toFixed(2)}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#555', fontSize: 14 }}>
+                <span>GET ({(invForm.tax || 0).toFixed(3)}%)</span>
+                <span>${totals.taxAmt.toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderTop: `2px solid ${NAVY}`, marginTop: 6, color: NAVY, fontSize: 18, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
+                <span>TOTAL</span>
+                <span>${totals.total.toFixed(2)}</span>
+              </div>
+              {!isEstimate && totals.paid > 0 && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#2ea66a', fontSize: 14, fontWeight: 600 }}>
+                    <span>Paid</span>
+                    <span>-${totals.paid.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderTop: '1px solid #eef0f5', color: balance > 0 ? ORANGE : '#2ea66a', fontSize: 17, fontWeight: 700, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
+                    <span>{balance > 0 ? 'BALANCE DUE' : 'PAID IN FULL'}</span>
+                    <span>${balance.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Notes */}
+          {invForm.notes && (
+            <div style={{ padding: '8px 40px 24px' }}>
+              <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>NOTES</div>
+              <div style={{ color: '#555', fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{invForm.notes}</div>
+            </div>
+          )}
+
+          {/* Navy Mahalo footer */}
+          <div style={{ background: NAVY, padding: '24px 40px', textAlign: 'center' }}>
+            <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, letterSpacing: 2 }}>MAHALO FOR YOUR BUSINESS</div>
+            <div style={{ color: '#8899bb', fontSize: 13, marginTop: 8, lineHeight: 1.6 }}>
+              {isEstimate
+                ? 'Click Review & Sign above to approve this estimate.'
+                : (balance > 0 ? 'Pay online with the button above, or by check, Venmo, or Zelle.' : 'This invoice has been paid in full. Mahalo!')}
+            </div>
+            <div style={{ color: '#fff', fontSize: 13, marginTop: 12 }}>808-393-0015 · higradeplumbing@gmail.com</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- MOBILE LAYOUT (unchanged) ----------
   return (
     <div style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: '100vh' }}>
       <div style={{ background: NAVY, padding: '18px 20px', textAlign: 'center' }}>
@@ -4258,18 +4462,7 @@ function PublicViewerPage({ token }) {
           <div style={{ marginTop: 14 }}>
             <button
               type="button"
-              onClick={async () => {
-                try {
-                  const mod = await import('./printablePdf.js');
-                  const blob = mod.buildPrintablePdf(invForm);
-                  const url = URL.createObjectURL(blob);
-                  window.open(url, '_blank', 'noopener,noreferrer');
-                  setTimeout(() => URL.revokeObjectURL(url), 60000);
-                } catch (err) {
-                  console.error('PDF generation failed', err);
-                  alert('Could not generate the PDF. Please try again.');
-                }
-              }}
+              onClick={handlePrintPdf}
               style={{ display: 'inline-block', background: '#fff', color: NAVY, border: `1.5px solid ${NAVY}`, fontSize: 14, fontWeight: 700, padding: '10px 22px', borderRadius: 8, cursor: 'pointer', fontFamily: "'Barlow', sans-serif" }}
             >
               🖨 Print / Save PDF
