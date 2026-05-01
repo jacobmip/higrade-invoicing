@@ -510,6 +510,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const endRef = useRef(null);
+  const panelRef = useRef(null);
   // Only auto-scroll when new messages arrive or the loading indicator
   // toggles. Earlier this also fired on every visualViewport change, which
   // meant every keystroke (iOS keyboard animation tweaks the viewport)
@@ -579,7 +580,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const containerStyle = { position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
 
   return (
-    <div data-no-swipe="true" style={containerStyle}>
+    <div ref={panelRef} data-no-swipe="true" style={containerStyle}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       {msgs.length > 1 && onResetChat && (
         <button
@@ -612,8 +613,8 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       </div>
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "center", gap: 8, padding: "0 10px" }}>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
-        <input
-          type="text"
+        <textarea
+          rows={1}
           name="prompt"
           autoComplete="off"
           autoCorrect="on"
@@ -624,20 +625,22 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           data-form-type="other"
           data-lpignore="true"
           aria-label="Job description"
-          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none" }}
+          style={{ flex: 1, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, WebkitAppearance: "none", appearance: "none", resize: "none", height: 38, lineHeight: "20px", overflow: "hidden", verticalAlign: "middle" }}
           value={input}
-          onFocus={(e) => {
-            // iOS Safari aggressively scrolls focused inputs to the top of
-            // the viewport, which yanks the chat panel up further than
-            // needed. After Safari's auto-scroll settles, nudge the input
-            // back to the minimum-visible position so only as much of the
-            // page scrolls as is required to keep the input above the
-            // keyboard.
-            const el = e.currentTarget;
-            setTimeout(() => { el?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, 350);
+          onFocus={() => {
+            // iOS scrolls the focused field to roughly the top of the
+            // viewport. Instead of fighting that on the input, we wait
+            // for Safari's auto-scroll to settle, then scroll the entire
+            // chat panel so its TOP sits at the top of the visible area
+            // — that puts the LINE ITEMS header just above and the chat
+            // history visible above the input, matching the layout Jake
+            // wanted in the screenshot.
+            setTimeout(() => { panelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, 350);
           }}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && send()}
+          onKeyDown={e => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+          }}
           placeholder={listening ? "Listening…" : "Describe a job…"}
         />
         <button onClick={send} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: NAVY, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={17} /></button>
