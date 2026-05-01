@@ -2801,9 +2801,19 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
     setTab(next); // useEffect above will scroll to the new column
   };
 
+  // Always sort by invoice date descending so newly inserted rows (e.g. from
+  // an estimate-to-invoice convert) land in the correct chronological slot
+  // regardless of how App's in-memory array was mutated. ID is the tiebreaker
+  // when two invoices share a date.
+  const byDateDesc = (a, b) => {
+    const ad = a.date || ""; const bd = b.date || "";
+    if (ad !== bd) return ad < bd ? 1 : -1;
+    return (a.id || "") < (b.id || "") ? 1 : -1;
+  };
   const filterFor = (key) => invoices
     .filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === key)
-    .filter(inv => matchesSearch(inv, search));
+    .filter(inv => matchesSearch(inv, search))
+    .sort(byDateDesc);
   const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
@@ -2955,10 +2965,18 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
   // Apply the year filter consistently to both the list and the KPI metrics
   // so the numbers always match what the user is currently looking at.
   const inYear = (inv) => yearFilter === "all" || yearOf(inv) === yearFilter;
+  // Sort by date desc so converted/new estimates always land in the right
+  // chronological slot (matches InvoiceList behavior).
+  const byDateDescEst = (a, b) => {
+    const ad = a.date || ""; const bd = b.date || "";
+    if (ad !== bd) return ad < bd ? 1 : -1;
+    return (a.id || "") < (b.id || "") ? 1 : -1;
+  };
   const filterFor = (key) => invoices
     .filter(inYear)
     .filter(inv => key === "all" ? true : key === "open" ? !isClosed(inv) : isClosed(inv))
-    .filter(inv => matchesSearch(inv, search));
+    .filter(inv => matchesSearch(inv, search))
+    .sort(byDateDescEst);
 
   const yearScoped = invoices.filter(inYear);
   const openTotal = yearScoped.filter(i => !isClosed(i)).reduce((s, i) => s + calcTotals(i).total, 0);
