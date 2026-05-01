@@ -2904,6 +2904,17 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
   const tabIndex = TABS.indexOf(tab);
+  // Year filter for the KPI strip + list. Defaults to the current year so
+  // the close-rate metric reflects this year's pipeline (years of historical
+  // estimates would otherwise drown out current performance). "all" is also
+  // an option for users who want the lifetime view.
+  const yearOf = (i) => i.year || (i.date ? new Date(i.date).getFullYear() : null);
+  const availableYears = useMemo(() => {
+    const ys = new Set();
+    for (const i of invoices) { const y = yearOf(i); if (y) ys.add(y); }
+    return [...ys].sort((a, b) => b - a);
+  }, [invoices]);
+  const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
   // Native scroll-snap carousel — same pattern as InvoiceList.
   const trackRef = useRef(null);
   const programmaticScrollRef = useRef(false);
@@ -2941,23 +2952,45 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
 
   // Closed = signed/approved OR converted to invoice (Jake's definition)
   const isClosed = (inv) => inv.status === "approved" || !!inv.convertedToId;
+  // Apply the year filter consistently to both the list and the KPI metrics
+  // so the numbers always match what the user is currently looking at.
+  const inYear = (inv) => yearFilter === "all" || yearOf(inv) === yearFilter;
   const filterFor = (key) => invoices
+    .filter(inYear)
     .filter(inv => key === "all" ? true : key === "open" ? !isClosed(inv) : isClosed(inv))
     .filter(inv => matchesSearch(inv, search));
 
-  const openTotal = invoices.filter(i => !isClosed(i)).reduce((s, i) => s + calcTotals(i).total, 0);
-  const closedTotal = invoices.filter(isClosed).reduce((s, i) => s + calcTotals(i).total, 0);
-  const closeRate = invoices.length === 0 ? 0 : Math.round(invoices.filter(isClosed).length / invoices.length * 100);
+  const yearScoped = invoices.filter(inYear);
+  const openTotal = yearScoped.filter(i => !isClosed(i)).reduce((s, i) => s + calcTotals(i).total, 0);
+  const closedTotal = yearScoped.filter(isClosed).reduce((s, i) => s + calcTotals(i).total, 0);
+  const closeRate = yearScoped.length === 0 ? 0 : Math.round(yearScoped.filter(isClosed).length / yearScoped.length * 100);
 
   // Render KPI strip + filter tabs into the App-level sticky slot. Slot is
   // keyed by tab name ("estimates") so stale pushes can't blank a new tab.
   useEffect(() => {
     setSubHeader?.("estimates",
       <>
-        <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
-          <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Open</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(openTotal)}</div></div>
-          <div style={{ textAlign: "center" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Close Rate</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{closeRate}%</div></div>
-          <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Closed</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(closedTotal)}</div></div>
+        <div style={{ background: NAVY2, padding: "10px 16px 12px" }}>
+          {/* Year selector. Sits just above the KPIs so it's clear the
+              numbers below are scoped to the chosen year. */}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <select
+              value={yearFilter}
+              onChange={e => {
+                const v = e.target.value;
+                setYearFilter(v === "all" ? "all" : parseInt(v, 10));
+              }}
+              style={{ background: "rgba(255,255,255,0.08)", color: "#fff", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, padding: "4px 10px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 0.5, cursor: "pointer" }}
+            >
+              {availableYears.map(y => <option key={y} value={y} style={{ color: "#222" }}>{y}</option>)}
+              <option value="all" style={{ color: "#222" }}>All years</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Open</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(openTotal)}</div></div>
+            <div style={{ textAlign: "center" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Close Rate</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{closeRate}%</div></div>
+            <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Closed</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{fmt(closedTotal)}</div></div>
+          </div>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search estimates, clients, line items" />
         <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #eee" }}>
@@ -2967,7 +3000,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
         </div>
       </>
     );
-  }, [tab, openTotal, closedTotal, closeRate, search, setSubHeader]);
+  }, [tab, openTotal, closedTotal, closeRate, search, setSubHeader, yearFilter, availableYears]);
 
   const renderColumn = (key) => {
     const list = filterFor(key);
