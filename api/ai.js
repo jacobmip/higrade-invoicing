@@ -49,6 +49,50 @@ Example output for "wax ring replacement":
 
 For non-estimate questions, respond conversationally. Do not use JSON for conversational replies.`;
 
+// Build a Honolulu-local date reference block that gets prepended to the system
+// prompt on every request so the AI always knows "today" and can resolve
+// relative phrases like "next Wednesday" without guessing.
+function buildDateContext() {
+  const TZ = 'Pacific/Honolulu';
+  const now = new Date();
+  const fmt = (d, opts) =>
+    new Intl.DateTimeFormat('en-US', { timeZone: TZ, ...opts }).format(d);
+
+  const todayLong = fmt(now, {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+  const timeStr = fmt(now, {
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+
+  // Compute the calendar date in Honolulu (handles the TZ offset correctly).
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now); // "YYYY-MM-DD"
+  const [y, m, d] = ymd.split('-').map(Number);
+  const todayUTC = new Date(Date.UTC(y, m - 1, d));
+
+  const upcoming = [];
+  for (let i = 1; i <= 7; i++) {
+    const dt = new Date(todayUTC);
+    dt.setUTCDate(dt.getUTCDate() + i);
+    const label = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+    }).format(dt);
+    upcoming.push(label);
+  }
+
+  return `CURRENT DATE & TIME (Pacific/Honolulu):
+Today is ${todayLong}. Current local time: ${timeStr} HST.
+
+Upcoming days (use these exact dates when the user says "tomorrow", "next Monday", etc.):
+${upcoming.map((l) => `- ${l}`).join('\n')}
+
+Always use these dates. Do not ask the user what today's date is.
+`;
+}
+
 export default async function handler(req) {
   if (req.method === 'OPTIONS') {
     return new Response(null, {
@@ -90,7 +134,7 @@ export default async function handler(req) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: mt,
-        system: systemPrompt || AI_SYSTEM,
+        system: `${buildDateContext()}\n${systemPrompt || AI_SYSTEM}`,
         messages,
       }),
     });
