@@ -167,9 +167,18 @@ export async function loadAll() {
   const err = e1 || e2 || e3 || e4 || e5 || e6 || e7
   if (err) throw err
 
-  const nextNum = parseInt(
-    (settingRows || []).find(s => s.key === 'next_num')?.value ?? '753'
-  )
+  // Persisted setting can drift behind reality (bulk imports inserted rows by
+  // explicit ID without bumping the counter). Always compute next_num from
+  // the actual highest INV#### in the data and use whichever is greater.
+  const persisted = parseInt(
+    (settingRows || []).find(s => s.key === 'next_num')?.value ?? '1', 10
+  ) || 1
+  const highestActual = (invoiceRows || []).reduce((mx, row) => {
+    if (row.type !== 'invoice') return mx
+    const m = /^INV(\d+)$/.exec(row.id || '')
+    return m ? Math.max(mx, parseInt(m[1], 10)) : mx
+  }, 0)
+  const nextNum = Math.max(persisted, highestActual + 1)
 
   return {
     invoices: (invoiceRows || []).map(row => toInvoice(row, itemRows || [], paymentRows || [])),

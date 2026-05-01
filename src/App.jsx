@@ -5334,9 +5334,22 @@ export default function App() {
   // original is preserved (change-order friendly).
   const convertInvoice = async (form, targetType) => {
     const year = new Date(form.date || today()).getFullYear();
+    // Use nextNumRef (synchronous, advanced past the highest INV#### actually
+    // present) instead of data.nextNum (which can be stale if the persisted
+    // settings.next_num row is behind reality — e.g. after a bulk import
+    // that inserted INVs by explicit ID without bumping the counter).
+    // Belt-and-suspenders: also clamp to highest existing INV id so we never
+    // mint an ID that would collide with a real invoice.
+    const highestExisting = data.invoices.reduce((mx, inv) => {
+      if (inv.type !== "invoice") return mx;
+      const m = /^INV(\d+)$/.exec(inv.id || "");
+      return m ? Math.max(mx, parseInt(m[1], 10)) : mx;
+    }, 0);
+    const num = Math.max(nextNumRef.current, highestExisting + 1);
+    nextNumRef.current = num + 1;
     // Both invoices and estimates use the INV#### scheme — the `type` field
     // is what distinguishes them throughout the app.
-    const newId = `INV${String(data.nextNum).padStart(4, "0")}`;
+    const newId = `INV${String(num).padStart(4, "0")}`;
     // Carry payments forward (e.g. a down payment recorded on an estimate
     // becomes the opening paid balance on the new invoice). Stamp each
     // copied payment with a fresh id so the DB doesn't see a primary-key
@@ -5385,14 +5398,14 @@ export default function App() {
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.filter(inv => inv.id !== form.id)],
-        nextNum: d.nextNum + 1,
+        nextNum: Math.max(d.nextNum, num + 1),
       }));
     } else {
       const sourceUpdated = { ...form, convertedToId: newId };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
-        nextNum: d.nextNum + 1,
+        nextNum: Math.max(d.nextNum, num + 1),
       }));
     }
     try {
