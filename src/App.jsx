@@ -610,7 +610,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
     : { position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
 
   return (
-    <div style={containerStyle}>
+    <div data-no-swipe="true" style={containerStyle}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       {msgs.length > 1 && onResetChat && (
         <button
@@ -2220,6 +2220,16 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   const onTabsTouchStart = (e) => {
     if (animating) return;
+    // If the touch started inside an element opted out of horizontal swiping
+    // (e.g. the AI chat panel, modals), don't engage the tab swiper at all.
+    // Without this guard, tapping the chat input and dragging the caret
+    // (or even tiny iOS auto-scroll movements while the keyboard opens)
+    // gets interpreted as a tab swipe, which translates the whole track
+    // horizontally and visibly shoves the chat box around.
+    if (e.target?.closest?.('[data-no-swipe="true"]')) {
+      swipeRef.current = { x: 0, y: 0, active: false, locked: null, width: 0 };
+      return;
+    }
     const t = e.touches[0];
     const width = trackRef.current?.offsetWidth || window.innerWidth;
     swipeRef.current = { x: t.clientX, y: t.clientY, active: true, locked: null, width };
