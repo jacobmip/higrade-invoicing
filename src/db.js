@@ -182,6 +182,19 @@ export async function loadAll() {
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 
+// Fetch just the optimistic-lock token (updated_at) for a single invoice. Used
+// by the auto-save retry path: when a save is rejected as CONCURRENT_EDIT we
+// pull the freshest token from the database and retry once with it.
+export async function fetchInvoiceUpdatedAt(id) {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('updated_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  return data?.updated_at || null
+}
+
 // Save an invoice atomically via the save_invoice_with_items Postgres RPC.
 // All three writes (invoice header, line items, payments) happen inside one
 // transaction so a network drop can't leave you with an invoice that has

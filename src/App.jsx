@@ -4926,6 +4926,105 @@ export default function App() {
       document.removeEventListener('touchcancel', onEnd);
     };
   }, []);
+
+  // Pull-to-refresh: when the user is at the very top of the page in list
+  // view and drags downward past a threshold, reload everything from
+  // Supabase. Mirrors the native iOS/Android refresh gesture.
+  const [ptrPull, setPtrPull] = useState(0);     // visual pull distance (px)
+  const [ptrRefreshing, setPtrRefreshing] = useState(false);
+  const ptrViewRef = useRef('list');             // current view (synced via effect)
+  const ptrRefreshingRef = useRef(false);
+
+  const refreshAll = async () => {
+    if (ptrRefreshingRef.current) return;
+    ptrRefreshingRef.current = true;
+    setPtrRefreshing(true);
+    try {
+      const fresh = await db.loadAll();
+      setData(fresh);
+      nextNumRef.current = fresh.nextNum || nextNumRef.current;
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)); } catch {}
+    } catch (e) {
+      console.error('Refresh failed:', e);
+    } finally {
+      ptrRefreshingRef.current = false;
+      setPtrRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    const TOP_TOLERANCE = 2;     // window.scrollY must be within this of 0
+    const TRIGGER_PX = 80;       // pull distance that fires a refresh
+    const MAX_PX = 140;          // cap on visual pull (rubber-band)
+    const LOCK_PX = 8;
+    let startX = 0, startY = 0;
+    let active = false;
+    let locked = null;           // 'h' | 'v' | null
+    let dy = 0;
+
+    const onStart = (e) => {
+      // Only when sitting at the top of the list view, no modals open.
+      if (ptrViewRef.current !== 'list') { active = false; return; }
+      if ((window.scrollY || document.documentElement.scrollTop || 0) > TOP_TOLERANCE) { active = false; return; }
+      if (e.touches.length !== 1) { active = false; return; }
+      const t = e.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      dy = 0;
+      active = true;
+      locked = null;
+    };
+    const onMove = (e) => {
+      if (!active) return;
+      const t = e.touches[0];
+      const ddx = t.clientX - startX;
+      const ddy = t.clientY - startY;
+      if (locked == null) {
+        if (Math.abs(ddx) < LOCK_PX && Math.abs(ddy) < LOCK_PX) return;
+        // Only lock vertical if drag is mostly down. Up or horizontal -> bail.
+        if (ddy > 0 && Math.abs(ddy) > Math.abs(ddx)) {
+          locked = 'v';
+        } else {
+          active = false;
+          setPtrPull(0);
+          return;
+        }
+      }
+      if (locked === 'v') {
+        // Resistance curve: linear up to MAX_PX, soft cap beyond.
+        const raw = Math.max(0, ddy);
+        dy = raw < MAX_PX ? raw : MAX_PX + (raw - MAX_PX) * 0.2;
+        setPtrPull(dy);
+        if (e.cancelable) e.preventDefault();
+      }
+    };
+    const onEnd = () => {
+      if (active && locked === 'v' && dy > TRIGGER_PX) {
+        refreshAll();
+      }
+      active = false;
+      locked = null;
+      dy = 0;
+      setPtrPull(0);
+    };
+
+    document.addEventListener('touchstart', onStart, { passive: true });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd, { passive: true });
+    document.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+      document.removeEventListener('touchcancel', onEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the PTR view-ref synced so the touch handler (which closes over
+  // an empty deps array) always sees the current view.
+  useEffect(() => { ptrViewRef.current = view; }, [view]);
+
   // Synchronous counter for invoice IDs. setData's functional updater is
   // deferred, so when handleGlobalAIAction runs 20 times in a tight loop
   // (bulk-create) the closure-captured `newInvoice` race-conditions and only
@@ -5353,7 +5452,24 @@ export default function App() {
         setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === id ? stamped : inv) }));
       } catch (e) {
         if (e?.code === 'CONCURRENT_EDIT') {
-          alert('This invoice was updated on another device. Reload to see the latest version, then re-apply your changes.');
+          // Self-heal: the row was touched outside this client (could be a
+          // genuine concurrent edit, or a backend-side bulk script bumped
+          // updated_at). Re-fetch the freshest token and retry once. Only
+          // surface the alert if the second attempt also fails — then it's
+          // almost certainly a real concurrent edit.
+          try {
+            const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(id);
+            const retried = { ...updated, updatedAt: freshUpdatedAt };
+            const res2 = await db.upsertInvoice(retried, false);
+            stamped = { ...retried, updatedAt: res2?.updatedAt || freshUpdatedAt };
+            setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === id ? stamped : inv) }));
+          } catch (e2) {
+            if (e2?.code === 'CONCURRENT_EDIT') {
+              alert('This invoice was updated on another device. Pull down to refresh, then re-apply your changes.');
+            } else {
+              console.error('Auto-save retry failed (kept local copy):', e2);
+            }
+          }
         } else {
           console.error('Auto-save failed (kept local copy):', e);
         }
@@ -5455,6 +5571,33 @@ export default function App() {
       {edgeSwipeX > 0 && (
         <div style={{ position: "fixed", top: 0, left: 0, height: "100vh", width: Math.min(edgeSwipeX, 120), background: `linear-gradient(90deg, ${ORANGE}cc 0%, ${ORANGE}33 70%, transparent 100%)`, pointerEvents: "none", zIndex: 9999, transition: "none" }} />
       )}
+
+      {/* Pull-to-refresh indicator: a circular spinner that descends from
+          the top of the viewport as the user pulls down. Goes solid orange
+          past the trigger threshold, and animates while a refresh is in
+          flight. Pointer-events:none so it never blocks touch. */}
+      {(ptrPull > 0 || ptrRefreshing) && (
+        <div style={{
+          position: "fixed", top: 0, left: "50%",
+          transform: `translate(-50%, ${ptrRefreshing ? 24 : Math.min(ptrPull * 0.45, 60)}px)`,
+          width: 36, height: 36, borderRadius: "50%",
+          background: "#fff",
+          boxShadow: "0 2px 8px rgba(10,22,40,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 9999, pointerEvents: "none",
+          transition: ptrRefreshing ? "transform 0.2s ease" : "none",
+          opacity: ptrRefreshing ? 1 : Math.min(1, ptrPull / 60),
+        }}>
+          <div style={{
+            width: 20, height: 20, borderRadius: "50%",
+            border: `2.5px solid ${ORANGE}`,
+            borderTopColor: ptrRefreshing ? "transparent" : (ptrPull > 80 ? ORANGE : "#ffd6bf"),
+            animation: ptrRefreshing ? "hi-spin 0.7s linear infinite" : "none",
+            transform: ptrRefreshing ? "none" : `rotate(${ptrPull * 4}deg)`,
+          }} />
+        </div>
+      )}
+      <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
