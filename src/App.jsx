@@ -2523,7 +2523,23 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             <label style={S.label}>Status</label>
             <div style={{ display: "flex", gap: 8 }}>
               {[["outstanding", "Outstanding"], ["net30", "Net 30"], ["paid", "Paid"]].map(([s, label]) => (
-                <button key={s} onClick={() => setField("status", s)} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>{label}</button>
+                <button key={s} onClick={() => {
+                  // Selecting Net 30 also bumps the due date to invoice date + 30 days.
+                  // We only auto-set when transitioning INTO net30 so users who tweaked
+                  // the due date manually after selecting net30 don't get clobbered.
+                  if (s === "net30" && form.status !== "net30") {
+                    const base = form.date ? new Date(form.date + "T00:00:00") : new Date();
+                    if (!isNaN(base)) {
+                      base.setDate(base.getDate() + 30);
+                      const yyyy = base.getFullYear();
+                      const mm = String(base.getMonth() + 1).padStart(2, "0");
+                      const dd = String(base.getDate()).padStart(2, "0");
+                      setForm(f => ({ ...f, status: "net30", dueDate: `${yyyy}-${mm}-${dd}` }));
+                      return;
+                    }
+                  }
+                  setField("status", s);
+                }} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>{label}</button>
               ))}
             </div>
           </div>
