@@ -10,7 +10,7 @@
 // /api/paypal-capture-order endpoint actually captures the payment and
 // records it on the invoice.
 
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'nodejs' };
 
 // Toggle live vs sandbox via env. Default to live for production safety —
 // you must explicitly set PAYPAL_ENV=sandbox to point at the test API.

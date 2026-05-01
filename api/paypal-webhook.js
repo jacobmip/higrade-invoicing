@@ -14,7 +14,7 @@
 // env to the webhook's ID so this endpoint can verify each request's
 // signature (without verification, anyone could POST a fake event).
 
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'nodejs' };
 
 function paypalBase() {
   return (process.env.PAYPAL_ENV || 'live').toLowerCase() === 'sandbox'

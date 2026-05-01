@@ -6,7 +6,7 @@
 // into the `payments` table so the public viewer flips to "Paid in
 // full" and the in-app invoice list shows the receipt automatically.
 
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'nodejs' };
 
 function paypalBase() {
   return (process.env.PAYPAL_ENV || 'live').toLowerCase() === 'sandbox'
