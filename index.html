@@ -22,6 +22,13 @@
     <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
+      /* Force every native element (buttons, inputs, textareas, selects) to
+         use Barlow so the app looks consistent across iOS / Mac / Windows.
+         Without this, browsers fall back to system UI fonts on form controls
+         which clashes with the Barlow body text. */
+      html, body, button, input, select, textarea, optgroup {
+        font-family: 'Barlow', system-ui, -apple-system, sans-serif;
+      }
       html, body {
         background: #f4f6fa;
         -webkit-tap-highlight-color: transparent;

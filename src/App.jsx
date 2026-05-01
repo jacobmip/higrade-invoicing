@@ -1572,8 +1572,8 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   // the iOS keyboard appeared.
   if (creating) {
     return createPortal(
-      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
-        <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", padding: "20px 18px 28px", maxHeight: "90vh", overflowY: "auto" }}>
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
+        <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "0 0 16px 16px", padding: "20px 18px 28px", maxHeight: "90vh", overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 14, gap: 10 }}>
             <button onClick={() => setCreating(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={20} /></button>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
@@ -1593,8 +1593,8 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   }
 
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "16px 16px 0 0", padding: "18px 16px 24px", maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "0 0 16px 16px", padding: "18px 16px 24px", maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1 }}>SELECT CLIENT</span>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
@@ -4920,7 +4920,7 @@ function SettingsTab({ onAfterRestore }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 });
+  const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 });
   const [dbLoading, setDbLoading] = useState(true);
   const [tab, setTab] = useState("invoices");
   const [view, setView] = useState("list");
@@ -5058,6 +5058,7 @@ export default function App() {
       const fresh = await db.loadAll();
       setData(fresh);
       nextNumRef.current = fresh.nextNum || nextNumRef.current;
+      nextEstimateNumRef.current = fresh.nextEstimateNum || nextEstimateNumRef.current;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)); } catch {}
     } catch (e) {
       console.error('Refresh failed:', e);
@@ -5146,6 +5147,8 @@ export default function App() {
   // one ends up persisted. Using a ref lets each call grab a unique ID and
   // build the full record up-front, before any state update or DB write.
   const nextNumRef = useRef(753);
+  // Estimates use their own counter (EST####). Same race-avoidance pattern.
+  const nextEstimateNumRef = useRef(712);
   // Keep the synchronous counter aligned with state whenever state advances
   // (e.g. after a load from Supabase or after a single-doc create updates state).
   useEffect(() => {
@@ -5153,12 +5156,18 @@ export default function App() {
       nextNumRef.current = data.nextNum;
     }
   }, [data.nextNum]);
+  useEffect(() => {
+    if (typeof data.nextEstimateNum === "number" && data.nextEstimateNum > nextEstimateNumRef.current) {
+      nextEstimateNumRef.current = data.nextEstimateNum;
+    }
+  }, [data.nextEstimateNum]);
 
   useEffect(() => {
     db.loadAll()
       .then(d => {
         setData(d);
         nextNumRef.current = d.nextNum || 753;
+        nextEstimateNumRef.current = d.nextEstimateNum || 712;
         setDbLoading(false);
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch {}
       })
@@ -5166,8 +5175,8 @@ export default function App() {
         console.error('Supabase load failed:', e);
         try {
           const raw = localStorage.getItem(CACHE_KEY);
-          if (raw) { setData(JSON.parse(raw)); } else { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 }); }
-        } catch { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753 }); }
+          if (raw) { setData(JSON.parse(raw)); } else { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
+        } catch { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
         setDbLoading(false);
       });
   }, []);
@@ -5395,9 +5404,17 @@ export default function App() {
       try { await db.upsertInvoice(updated, false); }
       catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     } else {
-      const id = `INV${String(data.nextNum).padStart(4, "0")}`;
+      // Estimates and invoices use independent counters: EST#### vs INV####.
+      const isEst = form.type === "estimate";
+      const num = isEst ? nextEstimateNumRef.current++ : nextNumRef.current++;
+      const id = `${isEst ? "EST" : "INV"}${String(num).padStart(4, "0")}`;
       const newInv = { ...form, id, year };
-      setData(d => ({ ...d, invoices: [newInv, ...d.invoices], nextNum: d.nextNum + 1 }));
+      setData(d => ({
+        ...d,
+        invoices: [newInv, ...d.invoices],
+        nextNum: isEst ? d.nextNum : Math.max(d.nextNum, num + 1),
+        nextEstimateNum: isEst ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
+      }));
       try { await db.upsertInvoice(newInv, true); }
       catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     }
@@ -5449,22 +5466,20 @@ export default function App() {
   // original is preserved (change-order friendly).
   const convertInvoice = async (form, targetType) => {
     const year = new Date(form.date || today()).getFullYear();
-    // Use nextNumRef (synchronous, advanced past the highest INV#### actually
-    // present) instead of data.nextNum (which can be stale if the persisted
-    // settings.next_num row is behind reality — e.g. after a bulk import
-    // that inserted INVs by explicit ID without bumping the counter).
-    // Belt-and-suspenders: also clamp to highest existing INV id so we never
-    // mint an ID that would collide with a real invoice.
+    // Pick the right counter based on what we're minting. Belt-and-suspenders:
+    // also clamp to highest existing id of that type so we never collide.
+    const isEstTarget = targetType === "estimate";
+    const idPrefix = isEstTarget ? "EST" : "INV";
+    const idRegex = isEstTarget ? /^EST(\d+)$/ : /^INV(\d+)$/;
     const highestExisting = data.invoices.reduce((mx, inv) => {
-      if (inv.type !== "invoice") return mx;
-      const m = /^INV(\d+)$/.exec(inv.id || "");
+      if (inv.type !== targetType) return mx;
+      const m = idRegex.exec(inv.id || "");
       return m ? Math.max(mx, parseInt(m[1], 10)) : mx;
     }, 0);
-    const num = Math.max(nextNumRef.current, highestExisting + 1);
-    nextNumRef.current = num + 1;
-    // Both invoices and estimates use the INV#### scheme — the `type` field
-    // is what distinguishes them throughout the app.
-    const newId = `INV${String(num).padStart(4, "0")}`;
+    const counterRef = isEstTarget ? nextEstimateNumRef : nextNumRef;
+    const num = Math.max(counterRef.current, highestExisting + 1);
+    counterRef.current = num + 1;
+    const newId = `${idPrefix}${String(num).padStart(4, "0")}`;
     // Carry payments forward (e.g. a down payment recorded on an estimate
     // becomes the opening paid balance on the new invoice). Stamp each
     // copied payment with a fresh id so the DB doesn't see a primary-key
@@ -5513,14 +5528,16 @@ export default function App() {
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.filter(inv => inv.id !== form.id)],
-        nextNum: Math.max(d.nextNum, num + 1),
+        nextNum: isEstTarget ? d.nextNum : Math.max(d.nextNum, num + 1),
+        nextEstimateNum: isEstTarget ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
     } else {
       const sourceUpdated = { ...form, convertedToId: newId };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
-        nextNum: Math.max(d.nextNum, num + 1),
+        nextNum: isEstTarget ? d.nextNum : Math.max(d.nextNum, num + 1),
+        nextEstimateNum: isEstTarget ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
     }
     try {
@@ -5605,10 +5622,18 @@ export default function App() {
       if (!selected || selected.id !== id) setSelected(stamped);
       return stamped;
     }
-    // New record — mint an ID using the existing nextNum counter.
-    const id = `INV${String(data.nextNum).padStart(4, "0")}`;
+    // New record — mint an ID. Estimates and invoices use independent counters.
+    const isEst = form.type === "estimate";
+    const counterRef = isEst ? nextEstimateNumRef : nextNumRef;
+    const num = counterRef.current++;
+    const id = `${isEst ? "EST" : "INV"}${String(num).padStart(4, "0")}`;
     const created = { ...form, id, year };
-    setData(d => ({ ...d, invoices: [created, ...d.invoices], nextNum: d.nextNum + 1 }));
+    setData(d => ({
+      ...d,
+      invoices: [created, ...d.invoices],
+      nextNum: isEst ? d.nextNum : Math.max(d.nextNum, num + 1),
+      nextEstimateNum: isEst ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
+    }));
     setSelected(created);
     let stamped = created;
     try {

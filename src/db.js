@@ -180,12 +180,26 @@ export async function loadAll() {
   }, 0)
   const nextNum = Math.max(persisted, highestActual + 1)
 
+  // Estimates have their own counter (EST####) — derived from the highest
+  // existing EST id at load time. Persisted as next_estimate_num once
+  // we start writing it, but always clamped to highest actual.
+  const persistedEst = parseInt(
+    (settingRows || []).find(s => s.key === 'next_estimate_num')?.value ?? '1', 10
+  ) || 1
+  const highestActualEst = (invoiceRows || []).reduce((mx, row) => {
+    if (row.type !== 'estimate') return mx
+    const m = /^EST(\d+)$/.exec(row.id || '')
+    return m ? Math.max(mx, parseInt(m[1], 10)) : mx
+  }, 0)
+  const nextEstimateNum = Math.max(persistedEst, highestActualEst + 1)
+
   return {
     invoices: (invoiceRows || []).map(row => toInvoice(row, itemRows || [], paymentRows || [])),
     clients: (clientRows || []).map(toClient),
     savedItems: (savedItemRows || []).map(toSavedItem),
     expenses: (expenseRows || []).map(toExpense),
     nextNum,
+    nextEstimateNum,
   }
 }
 
