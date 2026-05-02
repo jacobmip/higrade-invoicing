@@ -2570,7 +2570,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
       <div ref={trackRef} onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ overflow: "hidden", touchAction: "pan-y" }}>
       <div style={{ display: "flex", width: viewportW ? viewportW * TABS.length : "300%", transform: trackTransform, transition: trackTransition, willChange: "transform", alignItems: "flex-start" }}>
-      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
+      {/* Non-active tabs collapse to maxHeight 0 at rest so the track only
+          grows to fit the active panel's natural height (eliminates the dead
+          space that the much-taller History panel would otherwise leave on the
+          shorter Edit panel). During a swipe drag or settle animation, all
+          panels expand back to natural height so the user actually sees the
+          neighboring tab slide in horizontally. */}
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 0 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 0 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div>
           {/* Bill To */}
           <div style={{ padding: "16px 16px 0" }}>
@@ -2987,10 +2993,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         </div>
 
       </div>
-      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 1 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 1 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <PDFPreview form={form} clients={clients} />
       </div>
-      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0 }}>
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 2 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 2 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div style={{ padding: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
