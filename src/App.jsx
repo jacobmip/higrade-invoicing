@@ -3176,12 +3176,15 @@ function EstimateListCard({ inv, onSelect, onLongPress, pillLabel, pillColor, to
   );
 }
 
-function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onDuplicate, setSubHeader }) {
+function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onRecordPayment, onDuplicate, setSubHeader }) {
   const TABS = ["all", "outstanding", "paid"];
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
   // Active invoice for the long-press quick-actions sheet. null means closed.
   const [menuInv, setMenuInv] = useState(null);
+  // When set, opens the PaymentModal so the user can pick a payment method
+  // for the "Mark paid" quick action instead of recording a synthetic Other payment.
+  const [payInv, setPayInv] = useState(null);
   const tabIndex = TABS.indexOf(tab);
   // Native CSS scroll-snap carousel. Each column is `width: 100%` of the
   // scroll container, and the container has `scroll-snap-type: x mandatory`
@@ -3341,8 +3344,20 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
           onSend={() => onSend?.(menuInv)}
           onPrint={() => onPrint?.(menuInv)}
           onGetLink={() => onGetLink?.(menuInv)}
-          onTogglePaid={() => onTogglePaid?.(menuInv)}
+          onTogglePaid={() => {
+            // Mark unpaid → reuse the existing toggle which strips synthetic rows.
+            // Mark paid → open the payment modal so the user can pick a method.
+            if (menuInv.status === 'paid') onTogglePaid?.(menuInv);
+            else setPayInv(menuInv);
+          }}
           onDuplicate={() => onDuplicate?.(menuInv)}
+        />
+      )}
+      {payInv && (
+        <PaymentModal
+          invoice={payInv}
+          onClose={() => setPayInv(null)}
+          onSave={(updated) => { onRecordPayment?.(updated); setPayInv(null); }}
         />
       )}
     </div>
@@ -6892,6 +6907,14 @@ export default function App() {
     catch (e) { console.error('Toggle paid failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
   };
 
+  // Persist a payment recorded via PaymentModal from the quick-actions menu.
+  // The modal already builds the updated invoice (new payment row + status).
+  const recordPayment = async (updated) => {
+    setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === updated.id ? updated : i) }));
+    try { await db.upsertInvoice(updated, false); }
+    catch (e) { console.error('Record payment failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
+  };
+
   const duplicateInvoice = async (inv) => {
     const isEst = inv.type === 'estimate';
     const idPrefix = isEst ? 'EST' : 'INV';
@@ -7301,7 +7324,7 @@ export default function App() {
         />
       ) : (
         <>
-          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onDuplicate={duplicateInvoice} />}
+          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
           {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
           {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
