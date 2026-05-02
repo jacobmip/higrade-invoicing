@@ -3061,13 +3061,16 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   );
 }
 
-// Quick-actions sheet shown when the user long-presses an invoice card on
-// the list. Mirrors Invoice Simple's iOS action sheet: Delete · Share ·
-// Send · Print · Get link · Mark paid/unpaid · Duplicate · Cancel.
+// Quick-actions sheet shown when the user long-presses an invoice or
+// estimate card on the list. Mirrors Invoice Simple's iOS action sheet.
+// Buttons differ by document type:
+//   invoice:  Delete · Share · Send · Print · Get link · Mark paid/unpaid · Duplicate
+//   estimate: Delete · Share · Send · Print · Get link · Convert to invoice · Duplicate
 // Stays a controlled component so the parent owns dismissal and can
 // chain follow-up UI (e.g. opening the form after Duplicate).
-function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onDuplicate }) {
+function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onConvert, onDuplicate }) {
   if (!inv) return null;
+  const isEstimate = inv.type === 'estimate';
   const isPaid = inv.status === 'paid';
   // Each action wraps onClose so the sheet dismisses immediately on tap,
   // even if the underlying action does async work.
@@ -3108,7 +3111,9 @@ function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPr
           <button onClick={wrap(onSend)}     style={itemBase}>Send</button>
           <button onClick={wrap(onPrint)}    style={itemBase}>Print</button>
           <button onClick={wrap(onGetLink)}  style={itemBase}>Get link</button>
-          <button onClick={wrap(onTogglePaid)} style={itemBase}>{isPaid ? 'Mark unpaid' : 'Mark paid'}</button>
+          {isEstimate
+            ? <button onClick={wrap(onConvert)} style={itemBase}>Convert to invoice</button>
+            : <button onClick={wrap(onTogglePaid)} style={itemBase}>{isPaid ? 'Mark unpaid' : 'Mark paid'}</button>}
           <button onClick={wrap(onDuplicate)} style={itemBase}>Duplicate</button>
         </div>
         <button onClick={onClose} style={{ ...sheet, ...cancelBtn }}>Cancel</button>
@@ -3148,11 +3153,10 @@ function InvoiceListCard({ inv, onSelect, onLongPress, statusLabel, pillColor, l
 }
 
 // Single estimate card on the list screen. Same long-press treatment as
-// invoices: hold to delete, tap to open.
-function EstimateListCard({ inv, onSelect, onDelete, pillLabel, pillColor, total }) {
+// invoices: hold to open the quick-actions sheet, tap to open the form.
+function EstimateListCard({ inv, onSelect, onLongPress, pillLabel, pillColor, total }) {
   const longPress = useLongPress(() => {
-    if (!onDelete) return;
-    if (confirm(`Delete estimate ${inv.id}?\n\nThis cannot be undone.`)) onDelete(inv.id);
+    if (onLongPress) onLongPress(inv);
   });
   return (
     <div
@@ -3521,6 +3525,19 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
           </div>
         ))}
       </div>
+      {menuInv && (
+        <InvoiceQuickActionsMenu
+          inv={menuInv}
+          onClose={() => setMenuInv(null)}
+          onDelete={() => { if (confirm(`Delete estimate ${menuInv.id}?\n\nThis cannot be undone.`)) onDelete?.(menuInv.id); }}
+          onShare={() => onShare?.(menuInv)}
+          onSend={() => onSend?.(menuInv)}
+          onPrint={() => onPrint?.(menuInv)}
+          onGetLink={() => onGetLink?.(menuInv)}
+          onConvert={() => onConvert?.(menuInv)}
+          onDuplicate={() => onDuplicate?.(menuInv)}
+        />
+      )}
     </div>
   );
 }
@@ -7285,7 +7302,7 @@ export default function App() {
       ) : (
         <>
           {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onDuplicate={duplicateInvoice} />}
-          {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} />}
+          {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
           {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
           {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
