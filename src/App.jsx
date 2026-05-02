@@ -4793,9 +4793,13 @@ function PayPalCheckout({ token, invoiceId, balance, onPaid, clientId }) {
 
 // ─── Public Viewer (trackable invoice/estimate link) ─────────────────────────
 // Customers receive an email containing a link like /v/<token>. This page
-// loads the invoice straight from Supabase using the public anon key (RLS
-// allows anon select on invoices/items/payments) and pings /api/track-open
-// once per mount so the activity log gets an "opened" entry.
+// loads the invoice from /api/public-invoice (which runs server-side with
+// the service-role key and is scoped to view_token only). The serverless
+// route is required because RLS now blocks anon reads on the invoices
+// table — we don't want random visitors fishing in our data.
+//
+// /api/track-open is also pinged once per mount so the activity log gets
+// an "opened" entry.
 function PublicViewerPage({ token }) {
   const [state, setState] = useState({ loading: true, error: null, invoice: null, items: [], payments: [], company: null });
   const trackedRef = useRef(false);
@@ -4818,17 +4822,15 @@ function PublicViewerPage({ token }) {
     let cancelled = false;
     (async () => {
       try {
-        const { data: invRows, error: e1 } = await supabase
-          .from('invoices').select('*').eq('view_token', token).limit(1);
-        if (e1) throw e1;
-        const inv = invRows?.[0];
-        if (!inv) { if (!cancelled) setState(s => ({ ...s, loading: false, error: 'Link not found' })); return; }
-        const [{ data: items }, { data: payments }] = await Promise.all([
-          supabase.from('invoice_items').select('*').eq('invoice_id', inv.id),
-          supabase.from('payments').select('*').eq('invoice_id', inv.id),
-        ]);
+        const r = await fetch(api(`/api/public-invoice?token=${encodeURIComponent(token)}`));
+        if (r.status === 404) {
+          if (!cancelled) setState(s => ({ ...s, loading: false, error: 'Link not found' }));
+          return;
+        }
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        const { invoice, items, payments } = await r.json();
         if (cancelled) return;
-        setState({ loading: false, error: null, invoice: inv, items: items || [], payments: payments || [] });
+        setState({ loading: false, error: null, invoice, items: items || [], payments: payments || [] });
         // Fire-and-forget open tracker. Guarded so React StrictMode double
         // mount doesn't double-log; the server also de-dupes by IP/hour.
         if (!trackedRef.current) {
@@ -4892,18 +4894,15 @@ function PublicViewerPage({ token }) {
   const paypalClientId = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PAYPAL_CLIENT_ID) || '';
 
   // After a successful PayPal capture, refresh the invoice + payments
-  // from Supabase so the page flips to "Paid in full" without a manual
-  // reload. The capture endpoint has already inserted the payment row.
+  // from /api/public-invoice so the page flips to "Paid in full" without
+  // a manual reload. The capture endpoint has already inserted the row.
   const refreshAfterPayment = async () => {
     try {
-      const { data: invRows } = await supabase.from('invoices').select('*').eq('view_token', token).limit(1);
-      const inv = invRows && invRows[0];
-      if (!inv) return;
-      const [{ data: items }, { data: pays }] = await Promise.all([
-        supabase.from('invoice_items').select('*').eq('invoice_id', inv.id),
-        supabase.from('payments').select('*').eq('invoice_id', inv.id),
-      ]);
-      setState(s => ({ ...s, invoice: inv, items: items || [], payments: pays || [] }));
+      const r = await fetch(api(`/api/public-invoice?token=${encodeURIComponent(token)}`));
+      if (!r.ok) return;
+      const { invoice, items, payments } = await r.json();
+      if (!invoice) return;
+      setState(s => ({ ...s, invoice, items: items || [], payments: payments || [] }));
     } catch (e) { console.error('refresh after payment failed', e); }
   };
 
@@ -6381,6 +6380,23 @@ function SettingsTab({ onAfterRestore }) {
         </div>
       </div>
 
+      <div style={card}>
+        <div style={heading}>Sign out</div>
+        <div style={body}>
+          Signs you out of this device. You'll need your email and password to get back in. Customers viewing public links are not affected.
+        </div>
+        <button
+          onClick={async () => {
+            if (!confirm("Sign out of HI Grade Invoicing on this device?")) return;
+            try { await supabase.auth.signOut(); }
+            catch (e) { alert("Sign-out failed: " + (e?.message || e)); }
+          }}
+          style={{ ...S.btn("ghost"), borderColor: "#c0392b", color: "#c0392b" }}
+        >
+          Sign out
+        </button>
+      </div>
+
       {showConfirm && pendingFile && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.6)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: "100%", maxWidth: 380, boxSizing: "border-box" }}>
@@ -6417,7 +6433,98 @@ function SettingsTab({ onAfterRestore }) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+// ─── Login Screen ──────────────────────────────────────────────────────────────────────
+// Gates the entire authenticated UI. Shown when supabase.auth.getSession()
+// returns no active session. The /v/<token> public viewer + /sign signature
+// page bypass this entirely (handled in App() below the auth check).
+function LoginScreen({ onSuccess }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    setError("");
+    if (!email || !password) { setError("Email and password are required."); return; }
+    setBusy(true);
+    try {
+      const { error: e1 } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (e1) throw e1;
+      onSuccess?.();
+    } catch (err) {
+      // Supabase returns "Invalid login credentials" for wrong email or password.
+      // Don't leak which one was wrong.
+      setError(err?.message || "Sign in failed. Please try again.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, background: NAVY, fontFamily: "'Barlow', sans-serif" }}>
+      <div style={{ width: "100%", maxWidth: 380, background: "#fff", borderRadius: 16, padding: 32, boxShadow: "0 12px 40px rgba(0,0,0,0.4)" }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, fontSize: 26, color: NAVY, letterSpacing: 1.5 }}>HI GRADE PLUMBING</div>
+          <div style={{ fontSize: 11, color: "#888", letterSpacing: 2, marginTop: 2 }}>LLC · HONOLULU</div>
+        </div>
+        <form onSubmit={submit}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: NAVY, marginBottom: 4, letterSpacing: 0.4 }}>EMAIL</label>
+          <input
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={busy}
+            autoFocus
+            style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d8dbe2", borderRadius: 8, fontSize: 15, marginBottom: 14, boxSizing: "border-box", outline: "none" }}
+          />
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: NAVY, marginBottom: 4, letterSpacing: 0.4 }}>PASSWORD</label>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={busy}
+            style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #d8dbe2", borderRadius: 8, fontSize: 15, marginBottom: 18, boxSizing: "border-box", outline: "none" }}
+          />
+          {error && (
+            <div style={{ background: "#fdecea", color: "#c0392b", borderRadius: 8, padding: "8px 12px", fontSize: 13, marginBottom: 14, lineHeight: 1.4 }}>
+              {error}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            style={{ width: "100%", padding: "12px 16px", background: ORANGE, color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 700, letterSpacing: 0.5, cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1 }}
+          >
+            {busy ? "SIGNING IN\u2026" : "SIGN IN"}
+          </button>
+        </form>
+        <div style={{ textAlign: "center", color: "#888", fontSize: 11, marginTop: 18 }}>
+          Trouble signing in? Reset your password from the Supabase dashboard or call (808) 393-0015.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  // Auth gate state. session === undefined means we haven't checked yet (show
+  // a quick splash). null means logged out (show LoginScreen). An object
+  // means signed in (render the app).
+  const [session, setSession] = useState(undefined);
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setSession(data?.session || null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+      if (!mounted) return;
+      setSession(s || null);
+    });
+    return () => { mounted = false; sub?.subscription?.unsubscribe?.(); };
+  }, []);
+
   const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 });
   const [dbLoading, setDbLoading] = useState(true);
   const [tab, setTab] = useState("invoices");
@@ -6662,6 +6769,10 @@ export default function App() {
   }, [data.nextEstimateNum]);
 
   useEffect(() => {
+    // Don't fire the heavy loadAll until we know the user is signed in.
+    // Without this, RLS would reject every query on a fresh page load.
+    if (!session) return;
+    setDbLoading(true);
     db.loadAll()
       .then(d => {
         setData(d);
@@ -7326,13 +7437,23 @@ export default function App() {
     setData(d => ({ ...d, savedItems: d.savedItems.filter(i => i.id !== id) }));
   };
 
-  // Public routes — must come before the dbLoading gate so customers don't
-  // wait through the owner-side initial loadAll().
+  // Public routes — must come before the auth + dbLoading gates so customers
+  // can view/sign/pay invoices without an owner account.
   if (window.location.pathname === "/sign") return <SignaturePage />;
   if (window.location.pathname.startsWith("/v/")) {
     const token = window.location.pathname.slice(3);
     return <PublicViewerPage token={token} />;
   }
+
+  // Auth gate. While we're still resolving the session, show the same
+  // navy splash so the page doesn't flicker through a flash of LoginScreen
+  // for already-signed-in users.
+  if (session === undefined) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY }}>
+      <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
+    </div>
+  );
+  if (!session) return <LoginScreen onSuccess={() => { /* auth listener flips session */ }} />;
 
   if (dbLoading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: NAVY, flexDirection: "column", gap: 16 }}>

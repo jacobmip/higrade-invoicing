@@ -29,7 +29,14 @@ function stubClient(reason) {
   }
   return {
     from() { return queryStub },
-    auth: { getSession: async () => ({ data: { session: null }, error: err }) },
+    channel() { return { on() { return this }, subscribe() { return this } } },
+    removeChannel() {},
+    auth: {
+      getSession: async () => ({ data: { session: null }, error: err }),
+      signInWithPassword: async () => ({ data: { session: null }, error: err }),
+      signOut: async () => ({ error: null }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
   }
 }
 

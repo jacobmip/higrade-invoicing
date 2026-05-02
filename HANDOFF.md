@@ -154,6 +154,26 @@ higrade-invoicing/
 ### Google Calendar
 - OAuth via the user's personal Google account. Tokens stored in `localStorage`. No server-side token storage.
 
+### Supabase Auth (login gate — added May 2026)
+- The web app at `https://higrade-invoicing.vercel.app` requires email + password sign-in. Single-tenant: only Jake's account exists.
+- Implementation:
+  - `LoginScreen` component in `App.jsx` (~line 6418) renders the navy-themed login form.
+  - Auth gate in `App()` (~line 6494): `useEffect` calls `supabase.auth.getSession()` + subscribes to `onAuthStateChange`. While `session === undefined` it shows a splash; if `session === null` it shows `LoginScreen`; otherwise the app renders.
+  - `db.loadAll()` is guarded by `if (!session) return` so no Supabase reads happen pre-auth.
+  - Sign Out button lives in `SettingsTab` (~line 6383) — confirm dialog → `supabase.auth.signOut()`.
+  - Sessions persist via Supabase JS client default (`localStorage`) so the user stays logged in across reloads.
+- Public customer routes are NOT gated:
+  - `/sign/<token>` (estimate signing) and `/v/<token>` (public invoice viewer) render before the auth check.
+  - `/v/<token>` reads via the new `api/public-invoice.js` endpoint (service-role, scoped to the view_token) so it keeps working after the RLS lockdown.
+- RLS lockdown is `supabase/migrations/012_auth_lockdown.sql`. It drops every anon policy on app tables (`invoices`, `invoice_items`, `payments`, `clients`, `saved_items`, `expenses`, `settings`, `invoice_versions`, `invoice_events`, `notifications`) and replaces them with `for all to authenticated using (true) with check (true)`. Server endpoints using the service-role key are unaffected.
+
+#### To activate the lockdown (one-time manual steps in Supabase dashboard)
+1. **Apply migration 012**: open the Supabase SQL editor for project `cwhgcxxszyvevjpbnnkc`, paste the contents of `supabase/migrations/012_auth_lockdown.sql`, run it. The trailing DO block prints a notice listing any anon policies still in place — should be empty.
+2. **Create the user**: Authentication → Users → "Add user" → email `jacobmip@gmail.com` + a strong password. Mark email as confirmed.
+3. **Disable signups**: Authentication → Providers → Email → turn OFF "Enable signups". Without this, anyone could register and gain full access (the RLS policies trust any authenticated user).
+
+If the user ever forgets the password: Supabase dashboard → Authentication → Users → row menu → "Send password recovery" or set a new password directly.
+
 ---
 
 ## 6. Database Schema (Supabase)
