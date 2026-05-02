@@ -3365,10 +3365,12 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
 }
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
-function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
+function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, setSubHeader }) {
   const TABS = ["all", "open", "closed"];
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
+  // Active estimate for the long-press quick-actions sheet. null means closed.
+  const [menuInv, setMenuInv] = useState(null);
   const tabIndex = TABS.indexOf(tab);
   // Year filter for the KPI strip + list. Defaults to the current year so
   // the close-rate metric reflects this year's pipeline (years of historical
@@ -3501,7 +3503,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, setSubHeader }) {
           const pillLabel = inv.convertedToId ? "→ Invoice" : inv.status === "approved" ? "✓ Approved" : "Open";
           const pillColor = closed ? "#27ae60" : "#8899bb";
           return (
-            <EstimateListCard key={inv.id} inv={inv} onSelect={onSelect} onDelete={onDelete} pillLabel={pillLabel} pillColor={pillColor} total={t.total} />
+            <EstimateListCard key={inv.id} inv={inv} onSelect={onSelect} onLongPress={setMenuInv} pillLabel={pillLabel} pillColor={pillColor} total={t.total} />
           );
         })}
       </div>
@@ -4268,24 +4270,41 @@ function ItemsTab({ savedItems, onDelete }) {
 function NotificationsBell({ onOpenInvoice }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
+  // If the notifications table doesn't exist yet (migration 011 not applied),
+  // we hide the bell entirely instead of spamming the console + showing a
+  // useless empty bell. The first refresh detects this and flips the flag.
+  const [available, setAvailable] = useState(true);
   const unread = items.filter(n => !n.read_at).length;
 
   const refresh = async () => {
     try { setItems(await db.listNotifications(50)); }
-    catch (e) { console.error('listNotifications failed:', e); }
+    catch (e) {
+      // PGRST205 = table not in schema cache. Treat as "feature not yet enabled"
+      // and silently disable the bell so it doesn't crash the rest of the UI.
+      if (e?.code === 'PGRST205' || /notifications/i.test(e?.message || '')) {
+        setAvailable(false);
+      } else {
+        console.error('listNotifications failed:', e);
+      }
+    }
   };
 
   useEffect(() => {
     refresh();
-    const channel = db.subscribeNotifications((row) => {
-      setItems(prev => {
-        if (prev.some(n => n.id === row.id)) return prev;
-        return [row, ...prev].slice(0, 50);
+    let channel;
+    try {
+      channel = db.subscribeNotifications((row) => {
+        setItems(prev => {
+          if (prev.some(n => n.id === row.id)) return prev;
+          return [row, ...prev].slice(0, 50);
+        });
       });
-    });
+    } catch {}
     const t = setInterval(refresh, 60000);
-    return () => { db.unsubscribeChannel(channel); clearInterval(t); };
+    return () => { try { db.unsubscribeChannel(channel); } catch {} clearInterval(t); };
   }, []);
+
+  if (!available) return null;
 
   const handleClick = async (n) => {
     if (!n.read_at) {
