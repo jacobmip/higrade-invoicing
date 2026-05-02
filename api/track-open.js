@@ -7,7 +7,9 @@
 // token is unguessable (~72 bits) and only the invoice owner sees the resulting
 // activity log entry, so abuse risk is minimal.
 
-export const config = { runtime: 'edge' };
+import { notifyAll } from './_lib/notify.js';
+
+export const config = { runtime: 'nodejs', maxDuration: 15 };
 
 const SUPABASE_URL = 'https://cwhgcxxszyvevjpbnnkc.supabase.co';
 // Public anon key (also baked into the client bundle). RLS-enforced.
@@ -17,6 +19,19 @@ const FALLBACK_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 async function sha256(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Pull the client name off the invoice for a friendlier push body. Fails
+// open — if Supabase is grumpy we just say "a client".
+async function fetchInvoiceClient(invoiceId, headers) {
+  try {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}&select=client&limit=1`,
+      { headers }
+    );
+    const rows = await r.json();
+    return rows?.[0]?.client || '';
+  } catch { return ''; }
 }
 
 export default async function handler(req) {
@@ -88,6 +103,18 @@ export default async function handler(req) {
     const text = await insertRes.text();
     return json({ ok: false, error: 'Insert failed', detail: text }, 500);
   }
+
+  // Fire-and-forget in-app notification + APNs push. We don't block the
+  // tracking pixel response on Supabase or APNs.
+  fetchInvoiceClient(invoiceId, headers).then(client => {
+    return notifyAll({
+      type: 'invoice_open',
+      title: 'Invoice opened',
+      body: client ? `${client} opened ${invoiceId}` : `${invoiceId} was opened`,
+      invoiceId,
+      data: { client },
+    });
+  }).catch(e => console.error('[track-open] notify failed:', e));
 
   return json({ ok: true });
 }

@@ -4260,6 +4260,126 @@ function ItemsTab({ savedItems, onDelete }) {
 }
 
 // ─── Payments Tab ─────────────────────────────────────────────────────────────
+// ─── Notifications Bell ───────────────────────────────────────────────────────────
+// Header bell + dropdown panel listing recent notifications. Subscribes
+// to a Supabase realtime channel so the badge updates the moment a
+// payment lands while the app is open. Tapping a notification marks it
+// read and (if it has an invoice_id) navigates the app to that invoice.
+function NotificationsBell({ onOpenInvoice }) {
+  const [items, setItems] = useState([]);
+  const [open, setOpen] = useState(false);
+  const unread = items.filter(n => !n.read_at).length;
+
+  const refresh = async () => {
+    try { setItems(await db.listNotifications(50)); }
+    catch (e) { console.error('listNotifications failed:', e); }
+  };
+
+  useEffect(() => {
+    refresh();
+    const channel = db.subscribeNotifications((row) => {
+      setItems(prev => {
+        if (prev.some(n => n.id === row.id)) return prev;
+        return [row, ...prev].slice(0, 50);
+      });
+    });
+    const t = setInterval(refresh, 60000);
+    return () => { db.unsubscribeChannel(channel); clearInterval(t); };
+  }, []);
+
+  const handleClick = async (n) => {
+    if (!n.read_at) {
+      try { await db.markNotificationRead(n.id); } catch {}
+      setItems(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x));
+    }
+    if (n.invoice_id) onOpenInvoice?.(n.invoice_id);
+    setOpen(false);
+  };
+
+  const handleMarkAllRead = async () => {
+    try { await db.markAllNotificationsRead(); } catch {}
+    setItems(prev => prev.map(x => x.read_at ? x : { ...x, read_at: new Date().toISOString() }));
+  };
+
+  const fmtTime = (iso) => {
+    const t = new Date(iso);
+    const diff = (Date.now() - t.getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+    return t.toLocaleDateString();
+  };
+
+  const iconForType = (type) => {
+    if (type === 'payment') return { name: 'payment', color: '#27ae60' };
+    if (type === 'estimate_signed') return { name: 'pen', color: ORANGE };
+    if (type === 'invoice_open') return { name: 'eye', color: '#2980b9' };
+    return { name: 'bell', color: '#888' };
+  };
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-label="Notifications"
+        style={{ position: 'relative', width: 36, height: 36, background: 'transparent', borderRadius: 8, border: `2px solid ${ORANGE}`, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+      >
+        <Icon name="bell" size={18} color={ORANGE} />
+        {unread > 0 && (
+          <span style={{ position: 'absolute', top: -4, right: -4, background: ORANGE, color: '#fff', fontSize: 10, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', border: `2px solid ${NAVY}` }}>
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, background: 'transparent', zIndex: 200 }} />
+          <div style={{ position: 'absolute', top: 56, right: 16, width: 'min(360px, calc(100vw - 32px))', maxHeight: 'min(70vh, 520px)', background: '#fff', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 201, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid #eaecf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f8f9fc' }}>
+              <div style={{ fontWeight: 700, color: NAVY, fontSize: 14 }}>Notifications</div>
+              {unread > 0 && (
+                <button onClick={handleMarkAllRead} style={{ background: 'none', border: 'none', color: ORANGE, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}>
+                  Mark all read
+                </button>
+              )}
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {items.length === 0 ? (
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: '#888', fontSize: 13 }}>
+                  No notifications yet.
+                </div>
+              ) : items.map(n => {
+                const ic = iconForType(n.type);
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => handleClick(n)}
+                    style={{ width: '100%', display: 'flex', gap: 10, padding: '12px 14px', background: n.read_at ? '#fff' : '#fff8f3', border: 'none', borderBottom: '1px solid #f0f2f6', cursor: 'pointer', textAlign: 'left' }}
+                  >
+                    <div style={{ width: 32, height: 32, borderRadius: 16, background: `${ic.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Icon name={ic.name} size={16} color={ic.color} />
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: NAVY, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.title}</span>
+                        <span style={{ fontSize: 11, color: '#888', fontWeight: 400, flexShrink: 0 }}>{fmtTime(n.created_at)}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#556', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.body}</div>
+                    </div>
+                    {!n.read_at && <div style={{ width: 8, height: 8, borderRadius: 4, background: ORANGE, alignSelf: 'center', flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function PaymentsTab({ invoices }) {
   const methodInfo = (m) => ({ Cash: ["$", "#27ae60"], Check: ["✓", "#2980b9"], Venmo: ["V", "#3D95CE"], Zelle: ["Z", "#6B39A8"], PayPal: ["P", "#0070ba"], "Credit Card": ["CC", ORANGE], "Bank Transfer": ["B", "#16a085"] }[m] || ["•", "#888"]);
 
@@ -7281,6 +7401,12 @@ export default function App() {
                   <Icon name="plus" size={20} color="#fff" />
                 </button>
               )}
+              <NotificationsBell
+                onOpenInvoice={(invoiceId) => {
+                  const inv = data.invoices.find(i => i.id === invoiceId);
+                  if (inv) { setSelected(inv); setView("form"); }
+                }}
+              />
               <button
                 onClick={() => setShowGlobalAI(true)}
                 aria-label="AI assistant"

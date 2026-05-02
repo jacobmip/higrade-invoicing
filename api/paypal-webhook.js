@@ -14,6 +14,8 @@
 // env to the webhook's ID so this endpoint can verify each request's
 // signature (without verification, anyone could POST a fake event).
 
+import { notifyAll } from './_lib/notify.js';
+
 export const config = {
   runtime: 'nodejs',
   maxDuration: 30,
@@ -157,7 +159,20 @@ export default async function handler(req, res) {
       return;
     }
 
-    await recordPayment({ invoiceId, amount, paypalOrderId: orderId, paypalCaptureId: captureId });
+    const result = await recordPayment({ invoiceId, amount, paypalOrderId: orderId, paypalCaptureId: captureId });
+
+    // Notify only if the inline capture handler didn't already record this
+    // payment. The deduped flag guarantees a single notification per capture.
+    if (result?.ok && !result.deduped) {
+      await notifyAll({
+        type: 'payment',
+        title: 'PayPal payment received',
+        body: `$${amount.toFixed(2)} on ${invoiceId}`,
+        invoiceId,
+        data: { amount, method: 'PayPal', captureId, source: 'webhook' },
+      }).catch(e => console.error('[paypal-webhook] notify failed:', e));
+    }
+
     res.status(200).json({ ok: true });
   } catch (e) {
     console.error('[paypal-webhook]', e);

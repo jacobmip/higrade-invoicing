@@ -6,6 +6,8 @@
 // into the `payments` table so the public viewer flips to "Paid in
 // full" and the in-app invoice list shows the receipt automatically.
 
+import { notifyAll } from './_lib/notify.js';
+
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
 function paypalBase() {
@@ -118,12 +120,25 @@ export default async function handler(req, res) {
       return;
     }
 
-    await recordPayment({
+    const recordResult = await recordPayment({
       invoiceId,
       amount,
       paypalOrderId: orderID,
       paypalCaptureId: captureId,
     });
+
+    // Fire an in-app notification + APNs push, but only on the first time
+    // this capture is recorded (the webhook may also fire and we don't
+    // want to double-notify).
+    if (recordResult?.ok && !recordResult.deduped) {
+      await notifyAll({
+        type: 'payment',
+        title: 'PayPal payment received',
+        body: `$${amount.toFixed(2)} on ${invoiceId}`,
+        invoiceId,
+        data: { amount, method: 'PayPal', captureId },
+      }).catch(e => console.error('[paypal-capture] notify failed:', e));
+    }
 
     res.status(200).json({
       ok: true,

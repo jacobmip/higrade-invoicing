@@ -1,10 +1,22 @@
-export const config = { runtime: 'edge' };
+import { notifyAll } from './_lib/notify.js';
+
+export const config = { runtime: 'nodejs', maxDuration: 15 };
 
 export default async function handler(req) {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
   try {
     const { estimateId, clientName, total, job, signatureData, signedAt } = await req.json();
+
+    // Fire the in-app notification + APNs push in parallel with the email.
+    // We don't await — push failure shouldn't block the email confirmation.
+    notifyAll({
+      type: 'estimate_signed',
+      title: 'Estimate signed',
+      body: `${clientName || 'Client'} approved ${estimateId}`,
+      invoiceId: estimateId,
+      data: { clientName, total, job },
+    }).catch(e => console.error('[submit-signature] notify failed:', e));
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) return new Response(JSON.stringify({ error: 'Email not configured' }), {

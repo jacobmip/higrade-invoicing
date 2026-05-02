@@ -533,3 +533,52 @@ export async function deleteSavedItem(id) {
   const { error } = await supabase.from('saved_items').delete().eq('id', id)
   if (error) throw error
 }
+
+// ─── Notifications ─────────────────────────────────────────────────────────────────────────────
+// Server-side endpoints (paypal-webhook, paypal-capture-order,
+// track-open, submit-signature) write rows here. The bell icon in the
+// app polls listNotifications + listens to a realtime channel for
+// instant updates.
+
+export async function listNotifications(limit = 50) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data || []
+}
+
+export async function markNotificationRead(id) {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function markAllNotificationsRead() {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .is('read_at', null)
+  if (error) throw error
+}
+
+// Subscribe to inserts on the notifications table so the bell badge
+// updates the moment a payment lands. Returns the channel so the
+// caller can unsubscribe on unmount.
+export function subscribeNotifications(onInsert) {
+  const channel = supabase
+    .channel('notifications-feed')
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'notifications' },
+      (payload) => onInsert?.(payload.new))
+    .subscribe()
+  return channel
+}
+
+export function unsubscribeChannel(channel) {
+  if (channel) supabase.removeChannel(channel)
+}
