@@ -6580,11 +6580,14 @@ export default function App() {
       const inv = parsed.invoice || {};
       const year = new Date(inv.date || today()).getFullYear();
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
+      const isEst = docType === "estimate";
       // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
-      // create) don't collide. setData below uses a functional updater to
-      // stay consistent if state-derived nextNum has already advanced.
-      const num = nextNumRef.current++;
-      const id = `INV${String(num).padStart(4, "0")}`;
+      // create) don't collide. Estimates and invoices use independent
+      // counters so EST and INV numbers never share a sequence.
+      const counterRef = isEst ? nextEstimateNumRef : nextNumRef;
+      const idPrefix = isEst ? "EST" : "INV";
+      const num = counterRef.current++;
+      const id = `${idPrefix}${String(num).padStart(4, "0")}`;
       const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
       // Persist FIRST so we don't show success in the UI for records that fail
       // to land in Supabase. If the write throws we surface the error.
@@ -6594,14 +6597,15 @@ export default function App() {
       } catch (e) {
         console.error('DB write failed for', id, e);
         // Roll back the synchronous counter so the next call reuses this number
-        if (nextNumRef.current === num + 1) nextNumRef.current = num;
+        if (counterRef.current === num + 1) counterRef.current = num;
         throw e;
       }
       const stamped = { ...newInvoice, updatedAt: saveResult?.updatedAt || null };
       setData(d => ({
         ...d,
         invoices: [stamped, ...d.invoices],
-        nextNum: Math.max(d.nextNum, num + 1),
+        nextNum: isEst ? d.nextNum : Math.max(d.nextNum, num + 1),
+        nextEstimateNum: isEst ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
       return stamped;
     }
