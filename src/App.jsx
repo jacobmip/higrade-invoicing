@@ -6790,7 +6790,7 @@ export default function App() {
         } catch { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
         setDbLoading(false);
       });
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     if (!dbLoading) try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch {}
