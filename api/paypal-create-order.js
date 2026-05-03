@@ -50,7 +50,11 @@ async function paypalAccessToken() {
 // viewer uses to render the page.
 async function fetchInvoiceByToken(token) {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+  // After the May 2026 RLS lockdown, the anon key can no longer read the
+  // invoices table. Use service-role here. We still scope the query to
+  // view_token (an unguessable ~72-bit token), so this can't be abused
+  // to enumerate invoices the customer doesn't already have a link to.
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase credentials not configured');
 
   const headers = { apikey: key, Authorization: `Bearer ${key}` };

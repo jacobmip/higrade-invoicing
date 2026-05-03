@@ -46,13 +46,16 @@ export default async function handler(req) {
     try { token = (await req.json())?.token; } catch {}
   }
 
-  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
+  // After the May 2026 RLS lockdown, anon can't read invoices or write
+  // invoice_events. Use service-role here so customer-side open-tracking
+  // still works. The token still scopes the lookup to a single invoice.
+  const apiKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
   if (!token) return json({ error: 'Missing token' }, 400);
 
   const headers = {
     'Content-Type': 'application/json',
-    'apikey': anonKey,
-    'Authorization': `Bearer ${anonKey}`,
+    'apikey': apiKey,
+    'Authorization': `Bearer ${apiKey}`,
   };
 
   // Look up the invoice by token.
