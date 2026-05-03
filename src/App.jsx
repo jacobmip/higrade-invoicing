@@ -3252,10 +3252,10 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
     return (a.id || "") < (b.id || "") ? 1 : -1;
   };
   const filterFor = (key) => invoices
-    .filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30") : inv.status === key)
+    .filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30" || inv.status === "partial") : inv.status === key)
     .filter(inv => matchesSearch(inv, search))
     .sort(byDateDesc);
-  const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30").reduce((s, i) => s + calcTotals(i).balance, 0);
+  const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30" || i.status === "partial").reduce((s, i) => s + calcTotals(i).balance, 0);
   const paidThisYear = invoices.filter(i => i.status === "paid" && (i.year === 2026 || i.date?.startsWith("2026"))).reduce((s, i) => s + calcTotals(i).total, 0);
 
   // Render KPI strip + filter tabs into the App-level sticky slot. Slot is
@@ -3304,7 +3304,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
           const { label: statusLabel, color: pillColor } = statusDisplay(inv);
           const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
           const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
-          const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
+          const displayAmt = inv.status !== "paid" && t.paid > 0 ? fmt(Math.max(0, t.balance)) : fmt(t.total);
           return (
             <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelect} onLongPress={setMenuInv} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
           );
@@ -4170,7 +4170,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
               const { label: statusLabel, color: pillColor } = statusDisplay(inv);
               const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
               const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
-              const displayAmt = inv.status === "partial" ? fmt(Math.max(0, t.balance)) : fmt(t.total);
+              const displayAmt = inv.status !== "paid" && t.paid > 0 ? fmt(Math.max(0, t.balance)) : fmt(t.total);
               return (
                 <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelectInvoice} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
               );
