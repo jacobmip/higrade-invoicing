@@ -38,17 +38,21 @@ async function paypalAccessToken() {
 // bypasses RLS. The payment row references the invoice by id, which we
 // found via the view_token the customer was already authorized to see, so
 // this can't be abused to write to arbitrary invoices.
-async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId }) {
+function supabaseCfg() {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase credentials not configured');
-
   const headers = {
     apikey: key,
     Authorization: `Bearer ${key}`,
     'Content-Type': 'application/json',
     Prefer: 'return=representation',
   };
+  return { url, headers };
+}
+
+async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId }) {
+  const { url, headers } = supabaseCfg();
 
   // Idempotency check — if PayPal retries the capture (or the user
   // refreshes), we don't want to insert duplicate payment rows. The
@@ -81,6 +85,65 @@ async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId
   return { ok: true };
 }
 
+// After recording a payment, mirror the in-app totals math against the
+// invoice's items + payments and flip the invoice's status column. The
+// in-app list/dashboard UI keys off `invoices.status`, so without this
+// update a paid invoice keeps showing as 'outstanding' until the user
+// edits it manually.
+async function reconcileInvoiceStatus(invoiceId) {
+  const { url, headers } = supabaseCfg();
+
+  // Pull the invoice + its items + all payments. We need the same fields
+  // the client uses to compute totals (tax %, discount, items, payments).
+  const [invRes, itemsRes, paysRes] = await Promise.all([
+    fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}&select=id,type,status,tax,discount,discount_type&limit=1`, { headers }),
+    fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(invoiceId)}&select=qty,price,discount,discount_type,taxable`, { headers }),
+    fetch(`${url}/rest/v1/payments?invoice_id=eq.${encodeURIComponent(invoiceId)}&select=amount`, { headers }),
+  ]);
+  const invs = await invRes.json();
+  const items = await itemsRes.json();
+  const pays = await paysRes.json();
+  if (!Array.isArray(invs) || invs.length === 0) return;
+  const inv = invs[0];
+  if (inv.type === 'estimate') return;
+
+  const itemTotal = (it) => {
+    const qty = parseFloat(it.qty ?? 1);
+    const price = parseFloat(it.price ?? 0);
+    const base = qty * price;
+    const disc = parseFloat(it.discount ?? 0);
+    if (it.discount_type === '%') return base * (1 - disc / 100);
+    return Math.max(0, base - disc);
+  };
+  const sub = (items || []).reduce((s, it) => s + itemTotal(it), 0);
+  const taxableSub = (items || []).filter(it => it.taxable !== false).reduce((s, it) => s + itemTotal(it), 0);
+  let disc = 0;
+  if (inv.discount) {
+    if (inv.discount_type === '%') disc = sub * (parseFloat(inv.discount) / 100);
+    else disc = parseFloat(inv.discount);
+  }
+  const taxBase = Math.max(0, taxableSub - disc * (taxableSub / Math.max(sub, 1)));
+  const taxAmt = taxBase * (parseFloat(inv.tax || 4.712) / 100);
+  const total = Math.max(0, sub - disc + taxAmt);
+  const paid = (pays || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const balance = +(total - paid).toFixed(2);
+
+  // Flip status based on balance. Use a 1-cent tolerance so floating-point
+  // rounding doesn't leave a paid invoice in 'partial' forever.
+  let newStatus = inv.status;
+  if (balance <= 0.01) newStatus = 'paid';
+  else if (paid > 0) newStatus = 'partial';
+  // If nothing was paid yet (shouldn't happen on this code path) leave it.
+
+  if (newStatus !== inv.status) {
+    await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status: newStatus, updated_at: new Date().toISOString() }),
+    });
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'method_not_allowed' });
@@ -108,10 +171,17 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Pull the captured amount + invoice ID off the response.
+    // Pull the captured amount + invoice ID off the response. The buyer
+    // was charged the full grand total (invoice balance + processing
+    // surcharge), but only the invoice-portion should count toward the
+    // balance. We set that as `breakdown.item_total` at order creation,
+    // so prefer it; fall back to the captured total if the breakdown is
+    // missing (older orders).
     const pu = (capture.purchase_units && capture.purchase_units[0]) || {};
     const cap = (pu.payments && pu.payments.captures && pu.payments.captures[0]) || {};
-    const amount = parseFloat(cap.amount?.value || '0');
+    const grossAmount = parseFloat(cap.amount?.value || '0');
+    const itemTotal = parseFloat(cap.amount?.breakdown?.item_total?.value || '0');
+    const amount = itemTotal > 0 ? itemTotal : grossAmount;
     const invoiceId = pu.reference_id || pu.invoice_id;
     const captureId = cap.id;
 
@@ -126,6 +196,15 @@ export default async function handler(req, res) {
       paypalOrderId: orderID,
       paypalCaptureId: captureId,
     });
+
+    // Flip invoice.status to 'paid' / 'partial' if the new payment
+    // changed the balance. Best-effort: if this fails, the payment is
+    // still recorded and the in-app reconciliation can fix the status
+    // on the next save. Don't block the success response on it.
+    if (recordResult?.ok && !recordResult.deduped) {
+      try { await reconcileInvoiceStatus(invoiceId); }
+      catch (e) { console.error('[paypal-capture] status reconcile failed:', e); }
+    }
 
     // Fire an in-app notification + APNs push, but only on the first time
     // this capture is recorded (the webhook may also fire and we don't

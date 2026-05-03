@@ -151,7 +151,11 @@ export default async function handler(req, res) {
     const orderId = r.supplementary_data?.related_ids?.order_id
                  || (r.links || []).find(l => l.rel === 'up')?.href?.split('/').pop()
                  || '';
-    const amount = parseFloat(r.amount?.value || '0');
+    // Same logic as paypal-capture-order: prefer the invoice-portion of
+    // the charge (item_total) over the surcharge-inclusive gross.
+    const grossAmount = parseFloat(r.amount?.value || '0');
+    const itemTotal = parseFloat(r.amount?.breakdown?.item_total?.value || '0');
+    const amount = itemTotal > 0 ? itemTotal : grossAmount;
     const invoiceId = r.invoice_id || r.custom_id || ''; // we set invoice_id on order creation
 
     if (!captureId || !invoiceId) {
