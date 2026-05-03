@@ -51,7 +51,7 @@ function supabaseCfg() {
   return { url, headers };
 }
 
-async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId }) {
+async function recordPayment({ invoiceId, amount, surcharge, paypalOrderId, paypalCaptureId }) {
   const { url, headers } = supabaseCfg();
 
   // Idempotency check — if PayPal retries the capture (or the user
@@ -71,6 +71,7 @@ async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId
     body: JSON.stringify({
       invoice_id: invoiceId,
       amount: Number(amount),
+      surcharge: Number(surcharge || 0),
       method: 'PayPal',
       date: today,
       note,
@@ -173,15 +174,25 @@ export default async function handler(req, res) {
 
     // Pull the captured amount + invoice ID off the response. The buyer
     // was charged the full grand total (invoice balance + processing
-    // surcharge), but only the invoice-portion should count toward the
-    // balance. We set that as `breakdown.item_total` at order creation,
-    // so prefer it; fall back to the captured total if the breakdown is
-    // missing (older orders).
+    // surcharge). We split it back out so the receipt can show the
+    // invoice portion and the processing fee on separate lines.
+    //
+    // Note: PayPal echoes the breakdown we sent at order creation on the
+    // purchase unit's `amount` field. The capture's own `amount` only
+    // carries currency_code + value, no breakdown. So we read item_total
+    // and handling (surcharge) from `pu.amount.breakdown`.
     const pu = (capture.purchase_units && capture.purchase_units[0]) || {};
     const cap = (pu.payments && pu.payments.captures && pu.payments.captures[0]) || {};
     const grossAmount = parseFloat(cap.amount?.value || '0');
-    const itemTotal = parseFloat(cap.amount?.breakdown?.item_total?.value || '0');
+    const itemTotal = parseFloat(pu.amount?.breakdown?.item_total?.value || '0');
+    const handling = parseFloat(pu.amount?.breakdown?.handling?.value || '0');
+
+    // Prefer the breakdown values when present. If the breakdown is
+    // missing (legacy orders), record the gross as the invoice portion
+    // with zero surcharge — the receipt won't show a fee line, but the
+    // balance will still reconcile.
     const amount = itemTotal > 0 ? itemTotal : grossAmount;
+    const surcharge = handling > 0 ? handling : 0;
     const invoiceId = pu.reference_id || pu.invoice_id;
     const captureId = cap.id;
 
@@ -193,6 +204,7 @@ export default async function handler(req, res) {
     const recordResult = await recordPayment({
       invoiceId,
       amount,
+      surcharge,
       paypalOrderId: orderID,
       paypalCaptureId: captureId,
     });
@@ -224,6 +236,8 @@ export default async function handler(req, res) {
       orderID,
       captureID: captureId,
       amount,
+      surcharge,
+      gross: grossAmount,
       invoiceId,
     });
   } catch (e) {

@@ -92,7 +92,7 @@ async function verifyWebhook(headers, rawBody, webhookId) {
   return j.verification_status === 'SUCCESS';
 }
 
-async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId }) {
+async function recordPayment({ invoiceId, amount, surcharge, paypalOrderId, paypalCaptureId }) {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase credentials not configured');
@@ -113,6 +113,7 @@ async function recordPayment({ invoiceId, amount, paypalOrderId, paypalCaptureId
     body: JSON.stringify({
       invoice_id: invoiceId,
       amount: Number(amount),
+      surcharge: Number(surcharge || 0),
       method: 'PayPal',
       date: today,
       note,
@@ -151,11 +152,15 @@ export default async function handler(req, res) {
     const orderId = r.supplementary_data?.related_ids?.order_id
                  || (r.links || []).find(l => l.rel === 'up')?.href?.split('/').pop()
                  || '';
-    // Same logic as paypal-capture-order: prefer the invoice-portion of
-    // the charge (item_total) over the surcharge-inclusive gross.
+    // Same logic as paypal-capture-order: split the charge into invoice
+    // portion + processing surcharge from the breakdown we set at order
+    // creation. Webhook payload's `resource` is the capture object, and
+    // breakdown lives on its amount field when present.
     const grossAmount = parseFloat(r.amount?.value || '0');
     const itemTotal = parseFloat(r.amount?.breakdown?.item_total?.value || '0');
+    const handling = parseFloat(r.amount?.breakdown?.handling?.value || '0');
     const amount = itemTotal > 0 ? itemTotal : grossAmount;
+    const surcharge = handling > 0 ? handling : 0;
     const invoiceId = r.invoice_id || r.custom_id || ''; // we set invoice_id on order creation
 
     if (!captureId || !invoiceId) {
@@ -163,7 +168,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    const result = await recordPayment({ invoiceId, amount, paypalOrderId: orderId, paypalCaptureId: captureId });
+    const result = await recordPayment({ invoiceId, amount, surcharge, paypalOrderId: orderId, paypalCaptureId: captureId });
 
     // Notify only if the inline capture handler didn't already record this
     // payment. The deduped flag guarantees a single notification per capture.

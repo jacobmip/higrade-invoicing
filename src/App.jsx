@@ -1648,6 +1648,10 @@ function PDFPreview({ form, clients }) {
   const lateFeeInfo = calcLateFee(form, t);
   const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
   const paymentInstructionsText = !isEstimate ? resolvePaymentInstructions() : "";
+  // Sum any PayPal processing surcharges across this invoice's payments so
+  // the receipt can show 'Processing Fee' on its own line. Without this,
+  // the customer sees the gross paid amount and thinks they overpaid.
+  const totalSurcharge = (form.payments || []).reduce((s, p) => s + (parseFloat(p.surcharge) || 0), 0);
 
   return (
     <div className="print-area" style={{ padding: "16px 12px 40px" }}>
@@ -1717,10 +1721,16 @@ function PDFPreview({ form, clients }) {
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: "#111" }}>TOTAL DUE</span>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, color: ORANGE }}>{fmt(t.total)}</span>
           </div>
+          {totalSurcharge > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13, color: "#666" }}>
+              <span>Processing fee</span>
+              <span>+{fmt(totalSurcharge)}</span>
+            </div>
+          )}
           {t.paid > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13, color: "#27ae60" }}>
               <span>Paid</span>
-              <span>−{fmt(t.paid)}</span>
+              <span>−{fmt(t.paid + totalSurcharge)}</span>
             </div>
           )}
           {lateFeeInfo.fee > 0 && (
@@ -4883,6 +4893,7 @@ function PublicViewerPage({ token }) {
     })),
     payments: (state.payments || []).map(p => ({
       id: p.id, amount: parseFloat(p.amount), method: p.method || '', date: p.date, note: p.note || '',
+      surcharge: parseFloat(p.surcharge || 0),
     })),
   };
   const totals = calcTotals(invForm);
@@ -5096,12 +5107,25 @@ function PublicViewerPage({ token }) {
                 <span>TOTAL</span>
                 <span>${totals.total.toFixed(2)}</span>
               </div>
-              {!isEstimate && totals.paid > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#2ea66a', fontSize: 14, fontWeight: 600 }}>
-                  <span>Paid</span>
-                  <span>-${totals.paid.toFixed(2)}</span>
-                </div>
-              )}
+              {!isEstimate && (() => {
+                const surchargeSum = (invForm.payments || []).reduce((s, p) => s + (parseFloat(p.surcharge) || 0), 0);
+                return (
+                  <>
+                    {surchargeSum > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#666', fontSize: 14 }}>
+                        <span>Processing fee</span>
+                        <span>+${surchargeSum.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {totals.paid > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: '#2ea66a', fontSize: 14, fontWeight: 600 }}>
+                        <span>Paid</span>
+                        <span>-${(totals.paid + surchargeSum).toFixed(2)}</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {!isEstimate && lateFeeInfo.fee > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', color: ORANGE, fontSize: 14, fontWeight: 600 }}>
                   <span>Late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)</span>
