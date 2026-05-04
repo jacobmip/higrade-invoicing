@@ -50,9 +50,12 @@ function toInvoice(row, items = [], payments = []) {
       .map(p => ({
         id: p.id,
         amount: parseFloat(p.amount),
+        surcharge: parseFloat(p.surcharge ?? 0),
         method: p.method || '',
         date: p.date,
         note: p.note || '',
+        paypal_order_id: p.paypal_order_id || null,
+        paypal_capture_id: p.paypal_capture_id || null,
       })),
   }
 }
@@ -295,9 +298,16 @@ export async function upsertInvoice(inv, isNew) {
     })),
     payments: (inv.payments || []).map(p => ({
       amount: p.amount ?? 0,
+      surcharge: p.surcharge ?? 0,
       method: p.method || '',
       date: p.date || null,
       note: p.note || '',
+      // Round-trip PayPal identifiers so the save_invoice_with_items RPC
+      // recognizes these rows as PayPal-managed and skips re-inserting them.
+      // Without this, the RPC strips paypal_capture_id and the dedupe filter
+      // misses, producing duplicate manual rows on every save.
+      paypal_order_id: p.paypal_order_id || null,
+      paypal_capture_id: p.paypal_capture_id || null,
     })),
     expected_updated_at: isNew ? null : (inv.updatedAt || null),
     is_new: !!isNew,

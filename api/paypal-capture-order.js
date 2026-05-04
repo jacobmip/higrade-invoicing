@@ -184,17 +184,39 @@ export default async function handler(req, res) {
     const pu = (capture.purchase_units && capture.purchase_units[0]) || {};
     const cap = (pu.payments && pu.payments.captures && pu.payments.captures[0]) || {};
     const grossAmount = parseFloat(cap.amount?.value || '0');
-    const itemTotal = parseFloat(pu.amount?.breakdown?.item_total?.value || '0');
-    const handling = parseFloat(pu.amount?.breakdown?.handling?.value || '0');
-
-    // Prefer the breakdown values when present. If the breakdown is
-    // missing (legacy orders), record the gross as the invoice portion
-    // with zero surcharge — the receipt won't show a fee line, but the
-    // balance will still reconcile.
-    const amount = itemTotal > 0 ? itemTotal : grossAmount;
-    const surcharge = handling > 0 ? handling : 0;
+    let itemTotal = parseFloat(pu.amount?.breakdown?.item_total?.value || '0');
+    let handling = parseFloat(pu.amount?.breakdown?.handling?.value || '0');
     const invoiceId = pu.reference_id || pu.invoice_id;
     const captureId = cap.id;
+
+    // Fallback when PayPal's capture response doesn't echo the breakdown
+    // we sent at order creation. This has been observed in production for
+    // tiny orders (e.g. $1.03) and for orders captured through Venmo. We
+    // re-fetch the order to read back the breakdown we originally posted.
+    if ((itemTotal <= 0 || handling <= 0) && orderID) {
+      try {
+        const orderRes = await fetch(`${paypalBase()}/v2/checkout/orders/${encodeURIComponent(orderID)}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (orderRes.ok) {
+          const ord = await orderRes.json();
+          const opu = (ord.purchase_units && ord.purchase_units[0]) || {};
+          const it = parseFloat(opu.amount?.breakdown?.item_total?.value || '0');
+          const hd = parseFloat(opu.amount?.breakdown?.handling?.value || '0');
+          if (it > 0) itemTotal = it;
+          if (hd > 0) handling = hd;
+        }
+      } catch (e) {
+        console.error('[paypal-capture] order re-fetch for breakdown failed:', e);
+      }
+    }
+
+    // Prefer the breakdown values when present. If still missing after the
+    // re-fetch, record the gross as the invoice portion with zero surcharge
+    // — the receipt won't show a fee line, but the balance will still
+    // reconcile so the customer's payment is not lost.
+    const amount = itemTotal > 0 ? itemTotal : grossAmount;
+    const surcharge = handling > 0 ? handling : 0;
 
     if (cap.status !== 'COMPLETED') {
       res.status(400).json({ error: 'capture_not_completed', status: cap.status });
