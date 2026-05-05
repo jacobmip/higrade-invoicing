@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HI Grade — AI Estimator Test Harness</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f6f8; color: #1a1a1a;
+    margin: 0; padding: 24px; max-width: 900px; margin-left: auto; margin-right: auto;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px 0; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 20px; }
+  textarea {
+    width: 100%; min-height: 120px; padding: 12px; font-size: 15px;
+    border: 1px solid #d0d3d8; border-radius: 8px; font-family: inherit;
+    resize: vertical;
+  }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button {
+    background: #0066cc; color: white; border: none; padding: 10px 18px;
+    border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 500;
+  }
+  button:hover { background: #0052a3; }
+  button:disabled { background: #999; cursor: not-allowed; }
+  button.secondary { background: #e8eaed; color: #1a1a1a; }
+  button.secondary:hover { background: #d8dade; }
+  .preset { font-size: 12px; padding: 6px 10px; background: #fff; border: 1px solid #d0d3d8; color: #333; }
+  .preset:hover { background: #eef; }
+  .card {
+    background: white; border: 1px solid #e0e3e8; border-radius: 10px;
+    padding: 16px; margin-top: 16px;
+  }
+  .card h3 { margin: 0 0 12px 0; font-size: 16px; }
+  .item {
+    border-left: 3px solid #0066cc; padding: 8px 12px; margin-bottom: 10px;
+    background: #f8f9fb; border-radius: 4px;
+  }
+  .item .name { font-weight: 600; font-size: 15px; }
+  .item .price { float: right; font-weight: 600; color: #0a7a35; }
+  .item .desc {
+    margin-top: 6px; font-size: 13px; color: #444; white-space: pre-wrap;
+    line-height: 1.5;
+  }
+  .block { margin-top: 12px; }
+  .block .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #666; font-weight: 600; margin-bottom: 4px;
+  }
+  .block ul { margin: 0; padding-left: 18px; font-size: 13px; }
+  .summary { font-style: italic; color: #555; font-size: 13px; }
+  .total {
+    text-align: right; font-size: 18px; font-weight: 600;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e3e8;
+  }
+  .total .gross { color: #999; font-size: 13px; font-weight: 400; margin-right: 8px; }
+  .raw {
+    background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+  }
+  .pill {
+    display: inline-block; background: #eef; color: #335;
+    padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-right: 4px;
+  }
+  .citation { font-size: 12px; margin-bottom: 4px; }
+  .citation a { color: #0066cc; text-decoration: none; }
+  .err {
+    background: #fdecea; border: 1px solid #f5b3ab; color: #9b1d18;
+    padding: 12px; border-radius: 8px; margin-top: 12px;
+  }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid #fff; border-top-color: transparent; border-radius: 50%;
+    animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .meta { font-size: 11px; color: #888; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <h1>AI Estimator — Test Harness</h1>
+  <div class="sub">Sonnet 4.6 + web search · Option B markup · Jake's voice. Throw real jobs at it.</div>
+
+  <textarea id="job" placeholder="Paste a real job description... e.g., '50 gallon electric water heater replacement in Hawaii Kai, customer wants standard, no permit'"></textarea>
+
+  <div class="row">
+    <button id="go">Generate Estimate</button>
+    <button class="secondary" id="clear">Clear</button>
+  </div>
+
+  <div class="row" style="margin-top: 8px;">
+    <button class="preset">50 gal electric water heater replacement, Hawaii Kai</button>
+    <button class="preset">Moen single-handle kitchen faucet leaking from base</button>
+    <button class="preset">Toilet running constantly + bath sink slow drain + corroded showerhead</button>
+    <button class="preset">Customer-supplied Toto washlet bidet install, GFCI already present</button>
+    <button class="preset">Tankless water heater install, replacing 40 gal electric tank, Kailua</button>
+    <button class="preset">Whole-house repipe estimate, single-story 3BR Manoa, copper to PEX</button>
+  </div>
+
+  <div id="result"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const go = $('go');
+
+document.querySelectorAll('.preset').forEach(btn => {
+  btn.addEventListener('click', () => { $('job').value = btn.textContent; });
+});
+
+$('clear').addEventListener('click', () => {
+  $('job').value = '';
+  $('result').innerHTML = '';
+});
+
+go.addEventListener('click', async () => {
+  const job = $('job').value.trim();
+  if (!job) return;
+  go.disabled = true;
+  go.innerHTML = '<span class="spinner"></span>Thinking...';
+  $('result').innerHTML = '';
+
+  const t0 = Date.now();
+  try {
+    const r = await fetch('/api/ai-estimator', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobDescription: job }),
+    });
+    const data = await r.json();
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    render(data, elapsed);
+  } catch (e) {
+    $('result').innerHTML = `<div class="err">Request failed: ${e.message}</div>`;
+  } finally {
+    go.disabled = false;
+    go.textContent = 'Generate Estimate';
+  }
+});
+
+function render(data, elapsed) {
+  if (data.error) {
+    $('result').innerHTML = `<div class="err"><strong>Error:</strong> ${data.error}<br><pre>${data.detail || ''}</pre></div>`;
+    return;
+  }
+
+  const est = data.estimate;
+  let html = '';
+
+  if (est && est.action === 'clarify') {
+    html += `<div class="card"><h3>Needs clarification</h3>
+      <div>${escapeHtml(est.question || '')}</div>
+      <div class="row" style="margin-top:10px;">${
+        (est.options || []).map(o => `<button class="preset">${escapeHtml(o)}</button>`).join('')
+      }</div></div>`;
+  } else if (est && est.items) {
+    const subtotal = est.items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0);
+    const tax = subtotal * 0.04712;
+    const grand = subtotal + tax;
+
+    html += `<div class="card"><h3>Estimate Preview</h3>`;
+    for (const it of est.items) {
+      html += `<div class="item">
+        <span class="price">$${Number(it.price).toFixed(2)}${it.qty > 1 ? ' × ' + it.qty : ''}</span>
+        <div class="name">${escapeHtml(it.name || '')}</div>
+        <div class="desc">${escapeHtml(it.desc || '')}</div>
+      </div>`;
+    }
+    if (est.assumptions && est.assumptions.length) {
+      html += `<div class="block"><div class="label">Assumptions</div>
+        <ul>${est.assumptions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul></div>`;
+    }
+    if (est.sources && est.sources.length) {
+      html += `<div class="block"><div class="label">Sources</div>
+        <ul>${est.sources.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`;
+    }
+    if (est.summary) {
+      html += `<div class="block"><div class="label">Summary</div>
+        <div class="summary">${escapeHtml(est.summary)}</div></div>`;
+    }
+    html += `<div class="total">
+      <span class="gross">Subtotal $${subtotal.toFixed(2)} · GET $${tax.toFixed(2)}</span>
+      Total $${grand.toFixed(2)}</div></div>`;
+  } else {
+    html += `<div class="err">Could not parse JSON estimate from model.<br>Showing raw text below.</div>`;
+  }
+
+  // Citations
+  if (data.citations && data.citations.length) {
+    html += `<div class="card"><h3>Web search results used</h3>`;
+    for (const c of data.citations) {
+      html += `<div class="citation">• <a href="${escapeAttr(c.url)}" target="_blank">${escapeHtml(c.title || c.url)}</a></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Meta
+  const usage = data.usage || {};
+  const tokens = (usage.input_tokens || 0) + (usage.output_tokens || 0);
+  const searches = usage.server_tool_use?.web_search_requests || 0;
+  html += `<div class="meta">
+    <span class="pill">${elapsed}s</span>
+    <span class="pill">${tokens} tokens</span>
+    <span class="pill">${searches} web searches</span>
+    <span class="pill">stop: ${data.stop_reason || 'n/a'}</span>
+  </div>`;
+
+  // Raw
+  html += `<div class="card"><h3>Raw model output</h3>
+    <div class="raw">${escapeHtml(data.raw_text || '')}</div></div>`;
+
+  $('result').innerHTML = html;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+</script>
+</body>
+</html>
