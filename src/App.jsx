@@ -570,7 +570,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         const itemList = (currentInvoice.items || []).map((it, i) =>
           `  ${i + 1}. ${it.name || it.desc || "(unnamed)"} — qty ${it.qty || 1} @ $${it.price || 0}`
         ).join("\n");
-        invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", etc. without specifying an ID — he means THIS one (${currentInvoice.id || 'unsaved'}). Use that ID in your action's invoiceId field. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him.`;
+        invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
       }
       const systemPrompt = systemBase ? systemBase + invoiceContext : null;
       const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
@@ -583,11 +583,33 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       const previewEstimate = actions.find(a => a.action === "estimate" && a.items?.length);
       const otherActions = actions.filter(a => a !== previewEstimate);
 
+      // Actions that operate on a single invoice. When the chat is open
+      // inside an invoice, Jake almost always means "this invoice" — even
+      // if the model forgot to echo invoiceId, sent "unsaved", or sent the
+      // wrong id. We force-route those to the local handler (which mutates
+      // the open form for instant feedback) so "add a service call line"
+      // never silently no-ops on a draft invoice.
+      const INVOICE_OPS = new Set([
+        'add_items', 'update_invoice', 'add_payment',
+        'remove_item', 'update_item',
+      ]);
       if (otherActions.length && onGlobalAction) {
         for (const a of otherActions) {
-          const targetsCurrent = currentInvoice && a.invoiceId && a.invoiceId === currentInvoice.id;
+          const isInvoiceOp = INVOICE_OPS.has(a.action);
+          const idMatches = currentInvoice && a.invoiceId && a.invoiceId === currentInvoice.id;
+          // Treat "no id", "unsaved", or any id when the open invoice has no
+          // id yet, as referring to the current invoice. This is the fix for
+          // the bug where adding a line to an unsaved/open invoice claimed
+          // success but never actually persisted.
+          const looksLikeCurrent = currentInvoice && isInvoiceOp && (
+            idMatches
+            || !a.invoiceId
+            || a.invoiceId === 'unsaved'
+            || a.invoiceId === '(unsaved)'
+            || !currentInvoice.id
+          );
           let handledLocally = false;
-          if (targetsCurrent && onLocalAction) {
+          if (looksLikeCurrent && onLocalAction) {
             handledLocally = !!(await onLocalAction(a));
           }
           if (!handledLocally) await onGlobalAction(a);
@@ -2044,7 +2066,7 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -2077,6 +2099,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sendMethodFor, setSendMethodFor] = useState(null); // null | "invoice" | "estimate"
+  // When the user picks Send from the long-press quick-actions menu on the
+  // list, the parent opens the form with autoSendKind set. Pop the same
+  // send-method sheet the in-form Send Email button uses, exactly once.
+  const autoSendConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!autoSendKind) { autoSendConsumedRef.current = false; return; }
+    if (autoSendConsumedRef.current) return;
+    autoSendConsumedRef.current = true;
+    setSendMethodFor(autoSendKind);
+    onAutoSendConsumed?.();
+  }, [autoSendKind]);
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
   // Per-invoice AI chat history. Lives on the form so toggling the panel
@@ -6886,6 +6919,11 @@ export default function App() {
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [newDocType, setNewDocType] = useState("invoice");
+  // When the user picks Send from the long-press quick-actions menu on the
+  // list, we route them into the invoice form AND tell the form to pop its
+  // send-method sheet automatically. The form clears this back to null after
+  // it consumes it (see onAutoSendConsumed).
+  const [autoSendKind, setAutoSendKind] = useState(null); // null | 'invoice' | 'estimate'
   const [showGlobalAI, setShowGlobalAI] = useState(false);
   // Persistent chat history for the global AI Assistant. Lives on the App
   // so closing/reopening the modal preserves history. Also mirrored to
@@ -7445,9 +7483,12 @@ export default function App() {
 
   const sendInvoice = (inv) => {
     // The send flow lives inside the invoice form (which has its own
-    // email-vs-text picker). Open the form so the user can tap Send there.
+    // email-vs-text picker). Open the form AND tell it to pop the same
+    // send-method sheet the Send Email button triggers, so the long-press
+    // Send action behaves identically to opening the invoice and tapping Send.
     setSelected(inv);
     setView('form');
+    setAutoSendKind(inv?.type === 'estimate' ? 'estimate' : 'invoice');
   };
 
   const printInvoice = async (inv) => {
@@ -7943,6 +7984,8 @@ export default function App() {
           gcalAuthed={gcalAuthed}
           data={data}
           onAIAction={handleGlobalAIAction}
+          autoSendKind={autoSendKind}
+          onAutoSendConsumed={() => setAutoSendKind(null)}
           onSave={updateInvoice}
           onPartialSave={partialSaveInvoice}
           onAutoSave={autoSaveInvoice}

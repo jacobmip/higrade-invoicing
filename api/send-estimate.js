@@ -68,6 +68,9 @@ export default async function handler(req) {
       body: JSON.stringify({
         from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
         to: [to],
+        // BCC Jake on every outbound customer email so he can see exactly
+        // what the customer received.
+        bcc: ['higradeplumbing@gmail.com'],
         subject: `Estimate ${estimateId} from HI Grade Plumbing — Ready to Review`,
         html: body,
       }),

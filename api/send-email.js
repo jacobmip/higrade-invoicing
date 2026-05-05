@@ -132,6 +132,10 @@ export default async function handler(req) {
       body: JSON.stringify({
         from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
         to: [to],
+        // BCC Jake on every outbound customer email so he can see exactly
+        // what the customer received. Resend silently hides this from the
+        // primary recipient.
+        bcc: ['higradeplumbing@gmail.com'],
         subject: isPaidInFull
           ? `Mahalo \u2014 ${invoiceId} paid in full`
           : `Invoice ${invoiceId} from HI Grade Plumbing`,
