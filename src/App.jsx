@@ -353,6 +353,17 @@ async function sendInvoiceEmail(invoice, client, message, viewLink) {
   // Server-side, the email template only renders the footer when the
   // array has at least one entry, so passing [] is safe.
   const reviewLinks = invoice?.type === 'estimate' ? [] : resolveReviewLinks();
+  // When the invoice is paid in full, the server flips the subject to a
+  // "Mahalo — paid in full" receipt line and changes the CTA button from
+  // "Review & Pay" to "View Receipt".
+  const isPaidInFull = invoice?.type !== 'estimate' && t.paid > 0 && t.balance <= 0.01;
+  // Find the latest payment for the receipt header (method + date).
+  let lastPayment = null;
+  if (isPaidInFull && Array.isArray(invoice.payments) && invoice.payments.length > 0) {
+    const sorted = [...invoice.payments].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const p = sorted[0];
+    lastPayment = { method: p.method || 'payment', date: p.date || null };
+  }
   // Link-only email: server renders a Review & Pay button and minimal
   // summary. We no longer pass a full items table so the customer is
   // motivated to click the link (which is what we track). Customers can
@@ -369,6 +380,8 @@ async function sendInvoiceEmail(invoice, client, message, viewLink) {
       message: message || "",
       viewLink: viewLink || "",
       reviewLinks,
+      isPaidInFull,
+      lastPayment,
     }),
   });
   return res.json();
@@ -788,6 +801,19 @@ If you have any questions or need assistance with payment, please feel free to r
 Mahalo,
 HI Grade Plumbing`;
 
+// Default body when the invoice is already paid in full — sending becomes a
+// receipt + thank-you instead of a payment request. The send modal swaps to
+// this template automatically when calcTotals(invoice).balance <= 0.01 and
+// at least one payment row exists.
+const DEFAULT_INVOICE_PAID_MESSAGE = `Aloha {name},
+
+Mahalo for your payment. This email confirms that your invoice {id} has been paid in full.
+
+We truly appreciate the opportunity to work with you and your trust in HI Grade Plumbing. If you ever need anything else — a repair, a quote, or just a question — we're a phone call away.
+
+Mahalo,
+HI Grade Plumbing`;
+
 const DEFAULT_ESTIMATE_MESSAGE = `Aloha {name},
 
 Mahalo for the opportunity to provide an estimate for your project. Please review the details below and tap "Review & Sign" when you're ready to approve the work.
@@ -1007,8 +1033,17 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   // Use the user's saved template from Settings if they have one, otherwise
   // the built-in default. Either is run through renderTemplate so all the
   // {name}/{id}/{total}/{link} variables get filled in.
-  const savedTemplate = isEstimate ? messageTemplates.email_estimate : messageTemplates.email_invoice;
-  const defaultTemplate = savedTemplate || (isEstimate ? DEFAULT_ESTIMATE_MESSAGE : DEFAULT_INVOICE_MESSAGE);
+  // Detect paid-in-full so we can auto-swap the template (and the email
+  // subject / button on the server side) to a receipt-style message.
+  const isPaidInFull = !isEstimate && t.paid > 0 && t.balance <= 0.01;
+  const savedTemplate = isEstimate
+    ? messageTemplates.email_estimate
+    : (isPaidInFull
+        ? (messageTemplates.email_invoice_paid || DEFAULT_INVOICE_PAID_MESSAGE)
+        : messageTemplates.email_invoice);
+  const defaultTemplate = savedTemplate || (isEstimate
+    ? DEFAULT_ESTIMATE_MESSAGE
+    : (isPaidInFull ? DEFAULT_INVOICE_PAID_MESSAGE : DEFAULT_INVOICE_MESSAGE));
   const renderVars = { name, id: docNum, total: fmt(t.total), link: "", type: isEstimate ? "estimate" : "invoice" };
   // Track whether the user has manually edited the message. Until they do,
   // we keep regenerating the template with the latest recipient name.
@@ -5080,6 +5115,19 @@ function PublicViewerPage({ token }) {
     : Math.max(0, totals.balance + (lateFeeInfo.fee || 0));
   const paymentInstructionsText = resolvePaymentInstructions();
   const showPay = (!isEstimate && balance > 0) || isPayableEstimate;
+  // True when the invoice has fully been paid — used to swap the viewer
+  // into receipt mode (green banner up top, payment-history block, no pay
+  // card). Estimates and unpaid invoices are unaffected.
+  const totalPaid = (invForm.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const isPaidInFull = !isEstimate && totalPaid > 0 && balance <= 0.01;
+  // Friendlier date formatter for receipt rows ("May 4, 2026").
+  const fmtPaidDate = (s) => {
+    if (!s) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
+    if (!m) return s;
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${months[parseInt(m[2],10)-1]} ${parseInt(m[3],10)}, ${m[1]}`;
+  };
   const surcharge = showPay ? calcSurcharge(balance) : { enabled: false, fee: 0, total: balance, pct: 0, flat: 0 };
   const paypalClientId = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PAYPAL_CLIENT_ID) || '';
 
@@ -5162,6 +5210,19 @@ function PublicViewerPage({ token }) {
             >🖨 Print / Save PDF</button>
           </div>
         </div>
+
+        {/* Paid-in-full banner (desktop) — green stripe between the navy
+            top bar and the paper sheet, only when the invoice has been paid
+            fully. Replaces the pay card visually. */}
+        {isPaidInFull && (
+          <div style={{ maxWidth: 850, margin: '24px auto 0', background: '#4ecb71', borderRadius: 6, padding: '18px 28px', display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+            <div style={{ background: 'rgba(255,255,255,0.22)', width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 24, fontWeight: 700, flexShrink: 0 }}>✓</div>
+            <div style={{ color: '#fff' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 0.5 }}>PAID IN FULL</div>
+              <div style={{ fontSize: 13, opacity: 0.92, marginTop: 2 }}>Mahalo{invForm.client ? `, ${invForm.client}` : ''} — thank you for your payment</div>
+            </div>
+          </div>
+        )}
 
         {/* Pay-online card (desktop) — prominent above the paper sheet so the
             customer's first scroll lands on a clear pay action. Hidden on
@@ -5361,8 +5422,29 @@ function PublicViewerPage({ token }) {
             </div>
           )}
 
-          {/* Payment Instructions */}
-          {paymentInstructionsText && (
+          {/* Payment History (desktop) — only on fully-paid invoices.
+              Renders one row per recorded payment with method, date, and
+              amount so the customer has a clear receipt. */}
+          {isPaidInFull && (invForm.payments || []).length > 0 && (
+            <div style={{ padding: '8px 40px 24px', borderTop: '1px solid #eef0f5', marginTop: 8 }}>
+              <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: 1.5, marginBottom: 10, marginTop: 12 }}>PAYMENT HISTORY</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {(invForm.payments || []).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).map((p, i) => (
+                  <div key={p.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#f4f9f5', border: '1px solid #d8ebde', borderRadius: 6, fontSize: 14 }}>
+                    <div style={{ color: NAVY, fontWeight: 600 }}>
+                      {(p.method || 'Payment')}
+                      <span style={{ color: '#888', fontWeight: 500, marginLeft: 8 }}>{fmtPaidDate(p.date)}</span>
+                    </div>
+                    <div style={{ color: '#2ea66a', fontWeight: 700 }}>${(Number(p.amount) || 0).toFixed(2)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Payment Instructions — hidden on fully-paid invoices since
+              there's no balance left to collect. */}
+          {!isPaidInFull && paymentInstructionsText && (
             <div style={{ padding: '8px 40px 24px', borderTop: '1px solid #eef0f5', marginTop: 8 }}>
               <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: 1.5, marginBottom: 8, marginTop: 12 }}>PAYMENT INSTRUCTIONS</div>
               <div style={{ color: '#555', fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{paymentInstructionsText}</div>
@@ -5392,6 +5474,18 @@ function PublicViewerPage({ token }) {
         <div style={{ color: '#8899bb', fontSize: 11, letterSpacing: 1, marginTop: 2 }}>HONOLULU, HAWAII · LIC PJ-13579</div>
       </div>
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '20px 0 24px' }}>
+        {/* Paid-in-full banner (mobile) — mirrors the desktop green stripe.
+            Sits above the top summary card so the receipt state is the
+            first thing the customer sees on their phone. */}
+        {isPaidInFull && (
+          <div style={{ margin: '0 12px 16px', background: '#4ecb71', borderRadius: 10, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ background: 'rgba(255,255,255,0.22)', width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 20, fontWeight: 700, flexShrink: 0 }}>✓</div>
+            <div style={{ color: '#fff' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>PAID IN FULL</div>
+              <div style={{ fontSize: 12, opacity: 0.92, marginTop: 1 }}>Mahalo{invForm.client ? `, ${invForm.client}` : ''} — thank you</div>
+            </div>
+          </div>
+        )}
         {/* Top summary card */}
         <div style={{ background: '#fff', margin: '0 12px 16px', borderRadius: 12, padding: '20px 18px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', textAlign: 'center' }}>
           <div style={{ color: '#888', fontSize: 11, letterSpacing: 1.5, fontWeight: 700, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>{isEstimate ? `Estimate ${invForm.id}` : `Invoice ${invForm.id}`}</div>
@@ -5453,6 +5547,23 @@ function PublicViewerPage({ token }) {
             </button>
           </div>
         </div>
+        {/* Payment History (mobile) — only on fully-paid invoices. */}
+        {isPaidInFull && (invForm.payments || []).length > 0 && (
+          <div style={{ background: '#fff', margin: '0 12px 16px', borderRadius: 12, padding: '16px 16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1.5, marginBottom: 10 }}>PAYMENT HISTORY</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(invForm.payments || []).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).map((p, i) => (
+                <div key={p.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f4f9f5', border: '1px solid #d8ebde', borderRadius: 6, fontSize: 13 }}>
+                  <div style={{ color: NAVY, fontWeight: 600, minWidth: 0, flex: 1 }}>
+                    <div>{p.method || 'Payment'}</div>
+                    <div style={{ color: '#888', fontWeight: 500, fontSize: 12, marginTop: 2 }}>{fmtPaidDate(p.date)}</div>
+                  </div>
+                  <div style={{ color: '#2ea66a', fontWeight: 700, marginLeft: 12 }}>${(Number(p.amount) || 0).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* Reuse the in-app PDF preview for full details */}
         <PDFPreview form={invForm} clients={[]} />
         {/* Footer */}

@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, clientName, invoiceId, total, message, viewLink, reviewLinks } = await req.json();
+    const { to, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
@@ -29,14 +29,39 @@ export default async function handler(req) {
 
     // Link-only design (mirrors Invoice Simple). The customer must click the
     // Review button to see the full invoice — that click is what we track.
+    // When the invoice is paid in full, the CTA flips to a "View Receipt"
+    // label so the customer doesn't think we're asking them to pay again.
+    const ctaLabel = isPaidInFull ? 'View Receipt' : 'Review &amp; Pay';
+    const ctaHelper = isPaidInFull
+      ? 'Tap above for your full receipt and invoice details'
+      : 'Tap above to view your invoice and pay securely';
     const reviewBtn = viewLink
       ? `<div style="text-align: center; margin: 20px 0 8px;">
            <a href="${escapeHtml(viewLink)}" target="_blank" style="display: inline-block; background: #0070ba; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: bold; padding: 14px 36px; border-radius: 6px;">
-             Review &amp; Pay
+             ${ctaLabel}
            </a>
-           <p style="color: #999; font-size: 12px; margin: 10px 0 0;">Tap above to view your invoice and pay securely</p>
+           <p style="color: #999; font-size: 12px; margin: 10px 0 0;">${ctaHelper}</p>
          </div>`
       : '';
+
+    // Receipt header pieces — only used when isPaidInFull. Shows a green
+    // "PAID IN FULL" pill and the payment method/date underneath the total.
+    const fmtPaymentDate = (d) => {
+      if (!d) return '';
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d));
+      if (!m) return escapeHtml(String(d));
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${months[parseInt(m[2],10)-1]} ${parseInt(m[3],10)}, ${m[1]}`;
+    };
+    const paidPill = isPaidInFull
+      ? `<div style="display:inline-block;margin-top:12px;background:#4ecb71;color:#fff;font-size:13px;font-weight:bold;letter-spacing:1.5px;padding:6px 16px;border-radius:20px;">PAID IN FULL</div>`
+      : '';
+    const paidMeta = (isPaidInFull && lastPayment)
+      ? `<div style="color:#666;font-size:13px;margin-top:14px;">Paid by ${escapeHtml(lastPayment.method || 'payment')}${lastPayment.date ? ' \u00b7 ' + fmtPaymentDate(lastPayment.date) : ''}</div>`
+      : '';
+    const summaryLabel = isPaidInFull
+      ? `Receipt \u00b7 Invoice ${escapeHtml(invoiceId || '')}`
+      : `Invoice ${escapeHtml(invoiceId || '')}`;
 
     // Review request footer. Rendered only when the client passed a
     // non-empty reviewLinks array — estimates always pass [] so they
@@ -70,19 +95,21 @@ export default async function handler(req) {
         </div>
         <div style="padding: 32px 24px; background: #f4f6fa;">
           <div style="background:#fff;border-radius:10px;padding:22px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,0.06);margin-bottom:20px;">
-            <div style="color:#888;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">Invoice ${escapeHtml(invoiceId || '')}</div>
+            <div style="color:#888;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">${summaryLabel}</div>
             <div style="color:#0a1628;font-size:30px;font-weight:bold;margin-top:8px;">USD $${total}</div>
+            ${paidPill}
+            ${paidMeta}
             ${reviewBtn}
           </div>
           <div style="color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 16px;">${messageHtml}</div>
-          <div style="margin-top: 20px; padding: 14px; background: #fff; border-radius: 8px; border: 1px solid #e8ecf4;">
+          ${isPaidInFull ? '' : `<div style="margin-top: 20px; padding: 14px; background: #fff; border-radius: 8px; border: 1px solid #e8ecf4;">
             <p style="color: #666; font-size: 13px; font-weight: bold; margin: 0 0 6px;">Other Payment Options</p>
             <p style="color: #444; font-size: 13px; margin: 0; line-height: 1.7;">
               💚 <strong>Venmo:</strong> @HIGP808<br>
               💙 <strong>Zelle / PayPal:</strong> higradeplumbing@gmail.com<br>
               💵 Cash or Check accepted
             </p>
-          </div>
+          </div>`}
           <p style="color: #666; margin-top: 20px; font-size: 13px;">
             Questions? Call or text us at <strong>808-393-0015</strong><br>
             Email: higradeplumbing@gmail.com
@@ -105,7 +132,9 @@ export default async function handler(req) {
       body: JSON.stringify({
         from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
         to: [to],
-        subject: `Invoice ${invoiceId} from HI Grade Plumbing`,
+        subject: isPaidInFull
+          ? `Mahalo \u2014 ${invoiceId} paid in full`
+          : `Invoice ${invoiceId} from HI Grade Plumbing`,
         html: emailBody,
       }),
     });
