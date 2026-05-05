@@ -999,6 +999,11 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   const isEstimate = kind === "estimate";
   const valid = /\S+@\S+\.\S+/.test(email);
   const docNum = invoice?.id || (isEstimate ? "EST0000" : "INV0000");
+  // Down-payment percentage (estimates only). 0 = no down payment requested.
+  // When > 0, the customer's signature on the public viewer auto-creates a
+  // new invoice for that portion of the estimate total.
+  const [downPct, setDownPct] = useState(typeof invoice?.downPaymentPct === 'number' ? invoice.downPaymentPct : 0);
+  const downAmt = Math.round(t.total * (downPct / 100) * 100) / 100;
   // Use the user's saved template from Settings if they have one, otherwise
   // the built-in default. Either is run through renderTemplate so all the
   // {name}/{id}/{total}/{link} variables get filled in.
@@ -1042,6 +1047,43 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
             </div>
           </div>
 
+          {isEstimate && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={S.label}>Down payment</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                {[0, 25, 33, 50, 75, 100].map(pct => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => setDownPct(pct)}
+                    style={{
+                      padding: "7px 12px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${downPct === pct ? ORANGE : "#dde2ee"}`,
+                      background: downPct === pct ? ORANGE : "#fff",
+                      color: downPct === pct ? "#fff" : "#444",
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      letterSpacing: 0.5,
+                      cursor: "pointer",
+                      flex: "0 0 auto",
+                    }}
+                  >{pct === 0 ? "None" : `${pct}%`}</button>
+                ))}
+              </div>
+              {downPct > 0 ? (
+                <div style={{ fontSize: 12, color: "#666" }}>
+                  When the customer signs, the app will create a new invoice for <strong>{fmt(downAmt)}</strong> ({downPct}% of {fmt(t.total)}) and email them a payment link.
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "#888" }}>
+                  No down payment will be requested. The customer simply signs to approve.
+                </div>
+              )}
+            </div>
+          )}
+
           <label style={S.label}>Recipient name</label>
           <input value={name} onChange={e => setName(e.target.value)} style={S.input} placeholder="Client name" />
 
@@ -1070,7 +1112,7 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
 
         <div style={{ display: "flex", gap: 10, padding: "16px 20px 0" }}>
           <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
-          <button onClick={() => valid && onConfirm({ name, email, message })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
+          <button onClick={() => valid && onConfirm({ name, email, message, downPaymentPct: downPct })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
             {sending ? "Sending…" : (isEstimate ? "Send Estimate" : "Send Invoice")}
           </button>
         </div>
@@ -1668,7 +1710,9 @@ function PDFPreview({ form, clients }) {
           </div>
         </div>
         <div style={{ background: NAVY2, padding: "10px 24px", display: "flex", alignItems: "center", gap: 28 }}>
-          {[["Date", form.date], ["Due", form.dueDate]].map(([label, val]) => (
+          {/* Skip the Due column for estimates with no due date — estimates */}
+          {/* aren't bills, and the validity note below conveys the timeframe. */}
+          {[["Date", form.date], ["Due", form.dueDate]].filter(([_, val]) => !!val).map(([label, val]) => (
             <div key={label}>
               <div style={{ color: "#6677aa", fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{label}</div>
               <div style={{ color: "#dde2ee", fontSize: 13, fontWeight: 600 }}>{fmtDate(val)}</div>
@@ -1676,6 +1720,14 @@ function PDFPreview({ form, clients }) {
           ))}
           <div style={{ marginLeft: "auto" }}><span style={S.pill(statusDisplay(form).color)}>{statusDisplay(form).label}</span></div>
         </div>
+        {/* Estimates carry a standard 30-day validity — surface that here so */}
+        {/* customers know the pricing isn't open-ended. */}
+        {isEstimate && (
+          <div style={{ background: "#fff8ef", borderBottom: "1px solid #f3e6cc", padding: "8px 24px", color: "#a16f1a", fontSize: 12, fontWeight: 600, fontFamily: "'Barlow', sans-serif", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 14 }}>ⓘ</span>
+            <span>This estimate is valid for 30 days from the date above.</span>
+          </div>
+        )}
         <div style={{ padding: "16px 24px 14px", borderBottom: "1px solid #f0f2f8" }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 7 }}>Bill To</div>
           {form.client ? (
@@ -1959,7 +2011,9 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
 
 function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
-  const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
+  // Estimates default to no due date — they're proposals, not bills.
+  // The PDF preview will surface a separate "Valid for 30 days" note instead.
+  const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
   const [showSaved, setShowSaved] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -2319,9 +2373,21 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
 
   // Called after user confirms recipient details in ConfirmSendModal.
-  const handleConfirmedSend = async ({ name, email, message }) => {
+  // For estimates, downPaymentPct is the share of the total to bill when the
+  // customer signs (0 = none). We persist it on the estimate row before
+  // sending so submit-signature.js can read it back when the customer signs.
+  const handleConfirmedSend = async ({ name, email, message, downPaymentPct }) => {
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
     setSending(true);
+    // Persist the chosen down-payment percent on the estimate. Best-effort:
+    // if this fails we still send the email, but the customer's signature
+    // won't trigger an auto-invoice.
+    if (confirmSend === 'estimate' && form.id && typeof downPaymentPct === 'number' && downPaymentPct !== form.downPaymentPct) {
+      const updatedForm = { ...form, downPaymentPct };
+      setForm(updatedForm);
+      try { await onPartialSave?.(updatedForm); }
+      catch (e) { console.warn('persist downPaymentPct failed:', e); }
+    }
     try {
       // Mint (or reuse) a public view-token so the email link is trackable.
       // Best-effort: if the DB write fails we still send the email, just
@@ -2775,10 +2841,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             )}
           </div>
 
-          {/* Dates */}
-          <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div style={{ minWidth: 0 }}><label style={S.label}>Invoice Date</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>
-            <div style={{ minWidth: 0 }}><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
+          {/* Dates — estimates have no due date by default. Show a single full-width */}
+          {/* date picker for estimates and the usual two-column grid for invoices. */}
+          <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: isEstimate ? "1fr" : "1fr 1fr", gap: 10 }}>
+            <div style={{ minWidth: 0 }}><label style={S.label}>{isEstimate ? "Estimate Date" : "Invoice Date"}</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>
+            {!isEstimate && (
+              <div style={{ minWidth: 0 }}><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
+            )}
           </div>
 
           {/* Line Items */}
@@ -2988,7 +3057,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
-              <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
+              <button onClick={isEstimate ? handleSendEstimate : handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name={isEstimate ? "pen" : "mail"} size={16} color="#fff" /> {emailStatus || (isEstimate ? "Send for Signature" : "Send Email")}</button>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={handlePrint} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="print" size={16} color="#444" /> Print / PDF</button>
@@ -7347,7 +7416,26 @@ export default function App() {
       setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? stamped : inv) }));
     } catch (e) {
       if (e?.code === 'CONCURRENT_EDIT') {
-        alert('This invoice was updated on another device. Reload to see the latest version, then re-apply your changes.');
+        // Self-heal: a concurrent write touched updated_at (often it's our
+        // own auto-save still in flight, or a bulk backend script). Re-fetch
+        // the freshest token and retry once — only show the alert if the
+        // retry also fails. Without this retry, signing on iPhone almost
+        // always tripped the "updated on another device" message because
+        // the signature modal save raced the autosave triggered by the
+        // status flip.
+        try {
+          const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(selected.id);
+          const retried = { ...withMeta, updatedAt: freshUpdatedAt };
+          const res2 = await db.upsertInvoice(retried, false);
+          const stamped = { ...retried, updatedAt: res2?.updatedAt || freshUpdatedAt };
+          setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? stamped : inv) }));
+        } catch (e2) {
+          if (e2?.code === 'CONCURRENT_EDIT') {
+            alert('This invoice was updated on another device. Pull down to refresh, then re-apply your changes.');
+          } else {
+            console.error('Partial-save retry failed:', e2);
+          }
+        }
       } else {
         console.error('Auto-save failed:', e);
       }

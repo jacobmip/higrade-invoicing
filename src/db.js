@@ -27,6 +27,12 @@ function toInvoice(row, items = [], payments = []) {
     viewToken: row.view_token || null,
     jobAddress: row.job_address || null,
     billingAddress: row.billing_address || null,
+    // Down-payment workflow (estimates only — see migration 016).
+    // downPaymentPct: 0–100, the % of the estimate total to bill on signing.
+    // downPaymentInvoiceId: id of the invoice auto-created when the customer
+    // signed; surfaces a link from the estimate to its down-payment invoice.
+    downPaymentPct: parseInt(row.down_payment_pct ?? 0, 10),
+    downPaymentInvoiceId: row.down_payment_invoice_id || null,
     // Optimistic-lock token. The server returns this on every save and we
     // pass it back on the next save so a concurrent edit on another device
     // can be detected before it overwrites changes.
@@ -282,6 +288,8 @@ export async function upsertInvoice(inv, isNew) {
       client_info: inv.clientInfo || null,
       converted_to_id: inv.convertedToId || null,
       view_token: inv.viewToken || null,
+      down_payment_pct: typeof inv.downPaymentPct === 'number' ? inv.downPaymentPct : 0,
+      down_payment_invoice_id: inv.downPaymentInvoiceId || null,
       job_address: inv.jobAddress || null,
       billing_address: inv.billingAddress || null,
     },
