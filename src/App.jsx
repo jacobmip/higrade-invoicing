@@ -665,8 +665,8 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         {loading && <div style={{ display: "flex", marginBottom: 10 }}><div style={{ background: "#fff", borderRadius: "14px 14px 14px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>{[0,1,2].map(i => <span key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${i*0.18}s infinite` }}/>)}</div></div>}
         <div ref={endRef} />
       </div>
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "center", gap: 8, padding: "0 10px" }}>
-        <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, minHeight: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "flex-end", gap: 8, padding: "12px 10px" }}>
+        <button onClick={startListening} style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
         {/*
           Use a contenteditable div instead of <input>/<textarea> so iOS
           Safari doesn't render its contact-autofill suggestion bar (with
@@ -681,10 +681,10 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           suppressContentEditableWarning
           role="textbox"
           aria-label="Job description"
-          aria-multiline="false"
+          aria-multiline="true"
           spellCheck={true}
           data-placeholder={listening ? "Listening…" : "Describe a job…"}
-          style={{ flex: 1, minHeight: 38, maxHeight: 38, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", WebkitUserModify: "read-write-plaintext-only" }}
+          style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
           onFocus={() => {
             // After Safari's auto-scroll settles, pull the whole chat
             // panel into view so the LINE ITEMS header sits at the top and
@@ -693,7 +693,8 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           }}
           onInput={e => setInput(e.currentTarget.innerText)}
           onKeyDown={e => {
-            if (e.key === "Enter") { e.preventDefault(); send(); }
+            // Enter sends, Shift+Enter inserts a newline (standard chat).
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
           }}
           onPaste={e => {
             // Force plaintext paste so rich content (e.g. styled text from
@@ -710,7 +711,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
             pointer-events: none;
           }
         `}</style>
-        <button onClick={send} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: NAVY, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={17} /></button>
+        <button onClick={send} style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 8, border: "none", background: NAVY, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="send" size={17} /></button>
       </div>
     </div>
   );
