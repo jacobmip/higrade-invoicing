@@ -5,6 +5,13 @@
 // COMPLETED, no money has actually moved. Once it does, we insert a row
 // into the `payments` table so the public viewer flips to "Paid in
 // full" and the in-app invoice list shows the receipt automatically.
+//
+// Estimate down-payment flow (2026-05-04): if the captured order's
+// reference_id points at an estimate row, that means the customer paid
+// a down payment. We auto-convert the estimate into a real INV####
+// (full-price items copied), record the down payment as a payment row
+// on the new invoice, and link the estimate -> invoice via
+// converted_to_id so the in-app history view can show both.
 
 import { notifyAll } from './_lib/notify.js';
 
@@ -49,6 +56,148 @@ function supabaseCfg() {
     Prefer: 'return=representation',
   };
   return { url, headers };
+}
+
+// base64url, ~12 chars — same shape as the in-app generateViewToken so
+// customer-facing /v/<token> URLs look consistent.
+function generateViewToken() {
+  const bytes = require('node:crypto').randomBytes(9);
+  return bytes.toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// If the reference row is an estimate, convert it into a real INV####
+// (items copied at full price), and return the new invoice id + token so
+// the caller records the down-payment against the new invoice. Idempotent:
+// if the estimate has already been converted (converted_to_id set), we
+// just return that existing id.
+async function convertEstimateToInvoice(estimateId) {
+  const { url, headers } = supabaseCfg();
+
+  // Load the estimate row
+  const estRes = await fetch(
+    `${url}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}&select=*&limit=1`,
+    { headers }
+  );
+  const estRows = await estRes.json();
+  if (!Array.isArray(estRows) || estRows.length === 0) {
+    throw new Error('Estimate not found: ' + estimateId);
+  }
+  const est = estRows[0];
+  if (est.type !== 'estimate') {
+    // Already an invoice — nothing to convert.
+    return { invoiceId: est.id, alreadyConverted: false, viewToken: est.view_token };
+  }
+  if (est.converted_to_id) {
+    // Already converted on a previous capture — re-use.
+    const linkRes = await fetch(
+      `${url}/rest/v1/invoices?id=eq.${encodeURIComponent(est.converted_to_id)}&select=id,view_token&limit=1`,
+      { headers }
+    );
+    const linkRows = await linkRes.json();
+    if (Array.isArray(linkRows) && linkRows.length > 0) {
+      return { invoiceId: linkRows[0].id, alreadyConverted: true, viewToken: linkRows[0].view_token };
+    }
+  }
+
+  // Pull items + settings (for next_num)
+  const [itemsRes, settingsRes, allInvRes] = await Promise.all([
+    fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(estimateId)}&order=sort_order.asc&select=*`, { headers }),
+    fetch(`${url}/rest/v1/settings?key=eq.next_num&select=*`, { headers }),
+    fetch(`${url}/rest/v1/invoices?type=eq.invoice&select=id&order=id.desc&limit=200`, { headers }),
+  ]);
+  const items = await itemsRes.json();
+  const settingRows = await settingsRes.json();
+  const allInv = await allInvRes.json();
+
+  let persistedNext = 1;
+  if (Array.isArray(settingRows) && settingRows.length > 0) {
+    persistedNext = parseInt(settingRows[0].value, 10) || 1;
+  }
+  let highestActual = 0;
+  if (Array.isArray(allInv)) {
+    for (const r of allInv) {
+      const m = /^INV(\d+)$/.exec(r.id || '');
+      if (m) highestActual = Math.max(highestActual, parseInt(m[1], 10));
+    }
+  }
+  const num = Math.max(persistedNext, highestActual + 1);
+  const newId = 'INV' + String(num).padStart(4, '0');
+  const viewToken = generateViewToken();
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Insert the new invoice row. Items are copied at full price.
+  const insertRes = await fetch(`${url}/rest/v1/invoices`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      id: newId,
+      type: 'invoice',
+      client_id: est.client_id || null,
+      client_name: est.client_name || '',
+      date: today,
+      due_date: null,
+      status: 'outstanding',
+      tax: est.tax ?? 4.712,
+      discount: est.discount ?? 0,
+      discount_type: est.discount_type || '$',
+      notes: est.notes || `Created from estimate ${estimateId}`,
+      year: new Date().getFullYear(),
+      client_info: est.client_info || null,
+      view_token: viewToken,
+      down_payment_pct: 0,
+    }),
+  });
+  if (!insertRes.ok) {
+    const t = await insertRes.text();
+    throw new Error(`Invoice insert failed: ${insertRes.status} ${t}`);
+  }
+
+  // Copy items at full price, preserving qty/unit/discount/taxable.
+  if (Array.isArray(items) && items.length > 0) {
+    const copiedItems = items.map((it, idx) => ({
+      invoice_id: newId,
+      name: it.name || '',
+      description: it.description || '',
+      qty: Number(it.qty) || 1,
+      price: Number(it.price) || 0,
+      unit: it.unit || 'ea',
+      discount: Number(it.discount) || 0,
+      discount_type: it.discount_type || '%',
+      taxable: it.taxable !== false,
+      sort_order: typeof it.sort_order === 'number' ? it.sort_order : idx,
+    }));
+    const itemsInsertRes = await fetch(`${url}/rest/v1/invoice_items`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(copiedItems),
+    });
+    if (!itemsInsertRes.ok) {
+      console.error('[paypal-capture] item copy failed:', await itemsInsertRes.text());
+    }
+  }
+
+  // Bump settings.next_num
+  await fetch(`${url}/rest/v1/settings?key=eq.next_num`, { method: 'DELETE', headers });
+  await fetch(`${url}/rest/v1/settings`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ key: 'next_num', value: String(num + 1) }),
+  });
+
+  // Link the estimate to the new invoice (status stays 'approved' if it
+  // was already signed — we just record the conversion). The estimate
+  // remains visible in the app for historical reference.
+  await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({
+      converted_to_id: newId,
+      status: est.status === 'approved' ? 'approved' : 'converted',
+    }),
+  });
+
+  return { invoiceId: newId, alreadyConverted: false, viewToken };
 }
 
 async function recordPayment({ invoiceId, amount, surcharge, paypalOrderId, paypalCaptureId }) {
@@ -223,8 +372,34 @@ export default async function handler(req, res) {
       return;
     }
 
+    // If the captured order's reference_id is an estimate, convert it into
+    // a real INV#### now (idempotent if it already has a converted_to_id).
+    // The down-payment is then recorded against the new invoice id.
+    let targetInvoiceId = invoiceId;
+    let convertedFromEstimateId = null;
+    let convertedViewToken = null;
+    try {
+      const refRes = await fetch(
+        `${supabaseCfg().url}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}&select=type,view_token&limit=1`,
+        { headers: supabaseCfg().headers }
+      );
+      const refRows = await refRes.json();
+      if (Array.isArray(refRows) && refRows.length > 0 && refRows[0].type === 'estimate') {
+        const conv = await convertEstimateToInvoice(invoiceId);
+        if (conv && conv.invoiceId) {
+          targetInvoiceId = conv.invoiceId;
+          convertedFromEstimateId = invoiceId;
+          convertedViewToken = conv.viewToken;
+        }
+      }
+    } catch (e) {
+      console.error('[paypal-capture] estimate conversion failed:', e);
+      // Fall through and record the payment against the original id so the
+      // money isn't lost. Jake can manually fix up the conversion if needed.
+    }
+
     const recordResult = await recordPayment({
-      invoiceId,
+      invoiceId: targetInvoiceId,
       amount,
       surcharge,
       paypalOrderId: orderID,
@@ -236,7 +411,7 @@ export default async function handler(req, res) {
     // still recorded and the in-app reconciliation can fix the status
     // on the next save. Don't block the success response on it.
     if (recordResult?.ok && !recordResult.deduped) {
-      try { await reconcileInvoiceStatus(invoiceId); }
+      try { await reconcileInvoiceStatus(targetInvoiceId); }
       catch (e) { console.error('[paypal-capture] status reconcile failed:', e); }
     }
 
@@ -244,12 +419,16 @@ export default async function handler(req, res) {
     // this capture is recorded (the webhook may also fire and we don't
     // want to double-notify).
     if (recordResult?.ok && !recordResult.deduped) {
+      const title = convertedFromEstimateId ? 'Down payment received' : 'PayPal payment received';
+      const body = convertedFromEstimateId
+        ? `$${amount.toFixed(2)} \u2014 ${convertedFromEstimateId} converted to ${targetInvoiceId}`
+        : `$${amount.toFixed(2)} on ${targetInvoiceId}`;
       await notifyAll({
         type: 'payment',
-        title: 'PayPal payment received',
-        body: `$${amount.toFixed(2)} on ${invoiceId}`,
-        invoiceId,
-        data: { amount, method: 'PayPal', captureId },
+        title,
+        body,
+        invoiceId: targetInvoiceId,
+        data: { amount, method: 'PayPal', captureId, convertedFromEstimateId },
       }).catch(e => console.error('[paypal-capture] notify failed:', e));
     }
 
@@ -260,7 +439,9 @@ export default async function handler(req, res) {
       amount,
       surcharge,
       gross: grossAmount,
-      invoiceId,
+      invoiceId: targetInvoiceId,
+      convertedFromEstimateId,
+      convertedViewToken,
     });
   } catch (e) {
     res.status(500).json({ error: 'server_error', message: String(e?.message || e) });

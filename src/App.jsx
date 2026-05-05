@@ -3057,9 +3057,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
-              {!isEstimate && (
-                <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
-              )}
+              <button onClick={isEstimate ? handleSendEstimate : handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={handlePrint} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="print" size={16} color="#444" /> Print / PDF</button>
@@ -4970,15 +4968,34 @@ function PublicViewerPage({ token }) {
   const totals = calcTotals(invForm);
   const isEstimate = invForm.type === 'estimate';
   const lateFeeInfo = calcLateFee(invForm, totals);
-  const balance = Math.max(0, totals.balance + (lateFeeInfo.fee || 0));
+  // Estimates with a down-payment % are payable on the public viewer:
+  // the customer pays total * (pct/100) and the estimate auto-converts to
+  // an INV#### (server-side). Estimates with pct === 0 stay non-payable.
+  const downPaymentPct = Math.max(0, Math.min(100, parseInt(state.invoice.down_payment_pct, 10) || 0));
+  const isPayableEstimate = isEstimate && downPaymentPct > 0 && !state.invoice.converted_to_id;
+  const downPaymentAmount = isPayableEstimate ? +(totals.total * (downPaymentPct / 100)).toFixed(2) : 0;
+  const balance = isEstimate
+    ? (isPayableEstimate ? downPaymentAmount : 0)
+    : Math.max(0, totals.balance + (lateFeeInfo.fee || 0));
   const paymentInstructionsText = resolvePaymentInstructions();
-  const surcharge = !isEstimate && balance > 0 ? calcSurcharge(balance) : { enabled: false, fee: 0, total: balance, pct: 0, flat: 0 };
+  const showPay = (!isEstimate && balance > 0) || isPayableEstimate;
+  const surcharge = showPay ? calcSurcharge(balance) : { enabled: false, fee: 0, total: balance, pct: 0, flat: 0 };
   const paypalClientId = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PAYPAL_CLIENT_ID) || '';
 
   // After a successful PayPal capture, refresh the invoice + payments
-  // from /api/public-invoice so the page flips to "Paid in full" without
-  // a manual reload. The capture endpoint has already inserted the row.
-  const refreshAfterPayment = async () => {
+  // from /api/public-invoice so the page flips to "Paid in full" (or
+  // redirects to the freshly-created INV#### viewer when the capture
+  // converted an estimate). The capture endpoint has already inserted
+  // the row; we just re-read.
+  const refreshAfterPayment = async (captureResult) => {
+    // If the capture converted this estimate into an INV####, take the
+    // customer to the new invoice's public viewer so they see their
+    // receipt + remaining balance for the rest of the job.
+    const newToken = captureResult?.convertedViewToken;
+    if (newToken && newToken !== token) {
+      window.location.assign(`/v/${newToken}`);
+      return;
+    }
     try {
       const r = await fetch(api(`/api/public-invoice?token=${encodeURIComponent(token)}`));
       if (!r.ok) return;
@@ -5047,14 +5064,16 @@ function PublicViewerPage({ token }) {
 
         {/* Pay-online card (desktop) — prominent above the paper sheet so the
             customer's first scroll lands on a clear pay action. Hidden on
-            estimates and on already-paid invoices. */}
-        {!isEstimate && balance > 0 && (
+            estimates with no down-payment % and on already-paid invoices.
+            For estimates with a down-payment, this charges the down-payment
+            amount and triggers server-side conversion to an INV####. */}
+        {showPay && (
           <div style={{ maxWidth: 850, margin: '24px auto 0', background: '#fff', borderRadius: 6, padding: '20px 28px', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 260px' }}>
-                <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1.5 }}>PAY ONLINE</div>
+                <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1.5 }}>{isPayableEstimate ? `PAY ${downPaymentPct}% DOWN PAYMENT` : 'PAY ONLINE'}</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: 14, color: '#555' }}>
-                  <span>Balance due</span><span>${balance.toFixed(2)}</span>
+                  <span>{isPayableEstimate ? `Down payment (${downPaymentPct}% of $${totals.total.toFixed(2)})` : 'Balance due'}</span><span>${balance.toFixed(2)}</span>
                 </div>
                 {surcharge.enabled && surcharge.fee > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 13, color: '#888' }}>
@@ -5254,17 +5273,25 @@ function PublicViewerPage({ token }) {
         {/* Top summary card */}
         <div style={{ background: '#fff', margin: '0 12px 16px', borderRadius: 12, padding: '20px 18px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', textAlign: 'center' }}>
           <div style={{ color: '#888', fontSize: 11, letterSpacing: 1.5, fontWeight: 700, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>{isEstimate ? `Estimate ${invForm.id}` : `Invoice ${invForm.id}`}</div>
-          <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 1, lineHeight: 1.1, marginTop: 8 }}>${balance.toFixed(2)}</div>
-          <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>{isEstimate ? 'Estimate total' : (balance > 0 ? 'Balance due' : 'Paid in full')}</div>
+          <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 1, lineHeight: 1.1, marginTop: 8 }}>${(isPayableEstimate ? downPaymentAmount : balance).toFixed(2)}</div>
+          <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>{isPayableEstimate ? `${downPaymentPct}% down payment due` : (isEstimate ? 'Estimate total' : (balance > 0 ? 'Balance due' : 'Paid in full'))}</div>
           {!isEstimate && lateFeeInfo.fee > 0 && (
             <div style={{ color: ORANGE, fontSize: 12, marginTop: 4, fontWeight: 600 }}>Includes ${lateFeeInfo.fee.toFixed(2)} late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)</div>
           )}
-          {!isEstimate && balance > 0 && (
+          {isPayableEstimate && (
+            <div style={{ color: '#666', fontSize: 12, marginTop: 6 }}>Estimate total: ${balance.toFixed(2)}</div>
+          )}
+          {showPay && (
             <div style={{ marginTop: 16, textAlign: 'left' }}>
+              {isPayableEstimate && (
+                <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: 1.5, textAlign: 'center', marginBottom: 10, textTransform: 'uppercase' }}>
+                  Pay {downPaymentPct}% Down Payment
+                </div>
+              )}
               {surcharge.enabled && surcharge.fee > 0 && (
                 <div style={{ background: '#f4f6fa', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#555' }}>
-                    <span>Balance due</span><span>${balance.toFixed(2)}</span>
+                    <span>{isPayableEstimate ? 'Down payment due' : 'Balance due'}</span><span>${(isPayableEstimate ? downPaymentAmount : balance).toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 12, color: '#888' }}>
                     <span>Online fee ({surcharge.pct}% + ${surcharge.flat.toFixed(2)})</span><span>+${surcharge.fee.toFixed(2)}</span>
@@ -5288,7 +5315,7 @@ function PublicViewerPage({ token }) {
               )}
             </div>
           )}
-          {isEstimate && (
+          {isEstimate && !isPayableEstimate && (
             <a href={`/sign?id=${encodeURIComponent(invForm.id)}&client=${encodeURIComponent(invForm.client)}&total=${totals.total.toFixed(2)}&job=${encodeURIComponent(invForm.items[0]?.name || 'Plumbing Work')}`} style={{ display: 'inline-block', marginTop: 16, background: ORANGE, color: '#fff', textDecoration: 'none', fontSize: 15, fontWeight: 700, padding: '13px 30px', borderRadius: 8 }}>
               Review &amp; Sign
             </a>

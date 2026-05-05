@@ -150,18 +150,35 @@ export default async function handler(req, res) {
     }
 
     const { inv, items, payments, settings } = await fetchInvoiceByToken(token);
-    if (inv.type === 'estimate') {
+
+    // Estimates with a down-payment % are payable: the customer pays
+    // total * (pct/100) and on capture the estimate is auto-converted into
+    // a real INV#### with the down-payment recorded as a payment row.
+    // Estimates with no down-payment % (or 0) are not payable.
+    const isEstimate = inv.type === 'estimate';
+    const downPaymentPct = Math.max(0, Math.min(100, parseInt(inv.down_payment_pct, 10) || 0));
+    if (isEstimate && downPaymentPct <= 0) {
       res.status(400).json({ error: 'estimates_not_payable' });
       return;
     }
 
     const totals = calcTotals(inv, items, payments);
     const lateFee = calcLateFee(inv, totals, settings);
-    const balanceWithLateFee = +(totals.balance + lateFee).toFixed(2);
-    if (balanceWithLateFee <= 0) {
+
+    // For invoices, the customer pays the outstanding balance + late fee.
+    // For estimates with a down-payment %, the customer pays
+    // total * (pct/100). No late fee on estimates.
+    let payable;
+    if (isEstimate) {
+      payable = +(totals.total * (downPaymentPct / 100)).toFixed(2);
+    } else {
+      payable = +(totals.balance + lateFee).toFixed(2);
+    }
+    if (payable <= 0) {
       res.status(400).json({ error: 'no_balance_due' });
       return;
     }
+    const balanceWithLateFee = payable;
 
     const surcharge = calcSurcharge(balanceWithLateFee, settings);
     const grandTotal = +(balanceWithLateFee + surcharge).toFixed(2);
@@ -178,7 +195,9 @@ export default async function handler(req, res) {
         purchase_units: [{
           reference_id: inv.id,
           custom_id: token, // we use this on capture to look the invoice back up
-          description: `Invoice ${inv.id} \u2014 HI Grade Plumbing`,
+          description: isEstimate
+            ? `Down payment (${downPaymentPct}%) for estimate ${inv.id} \u2014 HI Grade Plumbing`
+            : `Invoice ${inv.id} \u2014 HI Grade Plumbing`,
           invoice_id: inv.id,
           amount: {
             currency_code: 'USD',
@@ -189,7 +208,7 @@ export default async function handler(req, res) {
             },
           },
           items: [{
-            name: `Invoice ${inv.id}`,
+            name: isEstimate ? `Down Payment ${inv.id}` : `Invoice ${inv.id}`,
             quantity: '1',
             unit_amount: { currency_code: 'USD', value: balanceWithLateFee.toFixed(2) },
             // Venmo only supports PHYSICAL_GOODS line items — DIGITAL_GOODS
