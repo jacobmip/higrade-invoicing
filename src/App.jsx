@@ -2026,6 +2026,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
+  // Inline "+ Add new property" flow on the invoice/estimate form. When set,
+  // we render a tiny address form below the Job Site dropdown so the user can
+  // add a property without leaving the invoice. On save, we persist to the
+  // client and select the new address as the job site.
+  const [addingProperty, setAddingProperty] = useState(false);
+  const [propertyDraft, setPropertyDraft] = useState(null);
+  const [savingProperty, setSavingProperty] = useState(false);
   // Working draft of the client record while editing inline. The full client
   // shape (name/email/phone/addresses[]/billingAddress) so we can reuse the
   // same ClientEditFields component the Clients page uses. Only saved on
@@ -2738,7 +2745,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 }} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
               </div>
             )}
-            {selectedClient && !editingClient && clientAddresses.length > 1 && (
+            {selectedClient && !editingClient && clientAddresses.length > 1 && !addingProperty && (
               <div style={{ marginTop: 8 }}>
                 <label style={{ ...S.label, marginBottom: 4 }}>Job Site</label>
                 <select
@@ -2746,6 +2753,11 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   value={form.jobAddressId || clientAddresses[0]?.id || ""}
                   onChange={e => {
                     const newId = e.target.value;
+                    if (newId === "__add_property__") {
+                      setPropertyDraft({ id: newAddressId(), label: "", line1: "", line2: "", line3: "" });
+                      setAddingProperty(true);
+                      return;
+                    }
                     const picked = clientAddresses.find(a => a.id === newId) || null;
                     setForm(f => ({
                       ...f,
@@ -2772,7 +2784,96 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                     const display = a.label && sub ? `${label} — ${sub}` : (label || sub);
                     return <option key={a.id} value={a.id}>{display}</option>;
                   })}
+                  <option value="__add_property__">+ Add new property…</option>
                 </select>
+              </div>
+            )}
+            {selectedClient && !editingClient && clientAddresses.length === 1 && !addingProperty && (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPropertyDraft({ id: newAddressId(), label: "", line1: "", line2: "", line3: "" });
+                    setAddingProperty(true);
+                  }}
+                  style={{ background: "none", border: "none", color: ORANGE, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}
+                >+ Add another property to this client</button>
+              </div>
+            )}
+            {addingProperty && propertyDraft && (
+              <div style={{ background: "#fff", borderRadius: 8, padding: "14px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
+                <div style={{ ...S.label, marginBottom: 8 }}>Add Property</div>
+                <input
+                  style={{ ...S.input, marginBottom: 8 }}
+                  placeholder="Nickname (optional, e.g. Unit 4B)"
+                  value={propertyDraft.label}
+                  onChange={e => setPropertyDraft(p => ({ ...p, label: e.target.value }))}
+                />
+                <input
+                  style={{ ...S.input, marginBottom: 8 }}
+                  placeholder="Street address"
+                  value={propertyDraft.line1}
+                  onChange={e => setPropertyDraft(p => ({ ...p, line1: e.target.value }))}
+                />
+                <input
+                  style={{ ...S.input, marginBottom: 8 }}
+                  placeholder="Apt / Suite (optional)"
+                  value={propertyDraft.line2}
+                  onChange={e => setPropertyDraft(p => ({ ...p, line2: e.target.value }))}
+                />
+                <input
+                  style={{ ...S.input, marginBottom: 8 }}
+                  placeholder="City, State ZIP"
+                  value={propertyDraft.line3}
+                  onChange={e => setPropertyDraft(p => ({ ...p, line3: e.target.value }))}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => { setAddingProperty(false); setPropertyDraft(null); }}
+                    style={{ ...S.btn("ghost"), fontSize: 13, flex: 1, padding: "9px 0" }}
+                    disabled={savingProperty}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    disabled={savingProperty || !(propertyDraft.line1 || propertyDraft.label)}
+                    onClick={async () => {
+                      // Append the new property to the client's addresses, save
+                      // it, then select it as the job site on this invoice.
+                      setSavingProperty(true);
+                      try {
+                        const newProp = { ...propertyDraft };
+                        const updatedAddresses = [...(selectedClient.addresses || []), newProp];
+                        const updated = { ...selectedClient, addresses: updatedAddresses };
+                        if (selectedClient.id && onUpdateClient) {
+                          await onUpdateClient(updated);
+                        }
+                        setForm(f => ({
+                          ...f,
+                          jobAddressId: newProp.id,
+                          jobAddress: newProp,
+                          clientInfo: {
+                            ...(f.clientInfo || {}),
+                            name: f.clientInfo?.name || selectedClient.name,
+                            email: f.clientInfo?.email ?? (selectedClient.email || ""),
+                            phone: f.clientInfo?.phone ?? (selectedClient.phone || selectedClient.mobile || ""),
+                            address1: newProp.line1 || "",
+                            address2: newProp.line2 || "",
+                            address3: newProp.line3 || "",
+                          },
+                        }));
+                        setAddingProperty(false);
+                        setPropertyDraft(null);
+                      } catch (e) {
+                        console.error("Failed to add property:", e);
+                        alert("Could not add property. Please try again.");
+                      } finally {
+                        setSavingProperty(false);
+                      }
+                    }}
+                    style={{ ...S.btn("primary"), fontSize: 13, flex: 1, padding: "9px 0", opacity: savingProperty ? 0.7 : 1 }}
+                  >{savingProperty ? "Saving…" : "Save"}</button>
+                </div>
               </div>
             )}
             {editingClient && clientDraft && (
@@ -5134,19 +5235,40 @@ function PublicViewerPage({ token }) {
           </div>
 
           {/* Bill To */}
-          <div style={{ padding: '24px 40px 8px' }}>
-            <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
-            <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
-            {(ci.address || ci.city || ci.state || ci.zip) && (
-              <div style={{ color: '#555', fontSize: 14, marginTop: 4 }}>
-                {[ci.address, [ci.city, ci.state].filter(Boolean).join(', '), ci.zip].filter(Boolean).join(' · ')}
-              </div>
-            )}
-            {(ci.phone || ci.email) && (
-              <div style={{ color: '#555', fontSize: 14, marginTop: 2 }}>
-                {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
-              </div>
-            )}
+          <div style={{ padding: '24px 40px 8px', display: 'flex', gap: 40, flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 240px' }}>
+              <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
+              <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
+              {(ci.address || ci.city || ci.state || ci.zip) && (
+                <div style={{ color: '#555', fontSize: 14, marginTop: 4 }}>
+                  {[ci.address, [ci.city, ci.state].filter(Boolean).join(', '), ci.zip].filter(Boolean).join(' · ')}
+                </div>
+              )}
+              {(ci.phone || ci.email) && (
+                <div style={{ color: '#555', fontSize: 14, marginTop: 2 }}>
+                  {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
+                </div>
+              )}
+            </div>
+            {(() => {
+              const ja = invForm.jobAddress || null;
+              if (!ja) return null;
+              const jobLines = [ja.line1, ja.line2, ja.line3].filter(Boolean);
+              if (!jobLines.length && !ja.label) return null;
+              return (
+                <div style={{ flex: '1 1 240px' }}>
+                  <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>JOB SITE</div>
+                  {ja.label && (
+                    <div style={{ color: NAVY, fontSize: 16, fontWeight: 700, marginTop: 4 }}>{ja.label}</div>
+                  )}
+                  {jobLines.length > 0 && (
+                    <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
+                      {jobLines.map((l, i) => <div key={i}>{l}</div>)}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Items table */}
