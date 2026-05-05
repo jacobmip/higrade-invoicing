@@ -5,7 +5,7 @@
 // Node runtime so we get the full 10s function budget; Sonnet + web_search
 // can take 4-8s per estimate.
 
-export const config = { runtime: 'nodejs', maxDuration: 30 };
+export const config = { runtime: 'nodejs', maxDuration: 90 };
 
 // =====================================================================
 // SYSTEM PROMPT — Jake's voice, Option B markup, flat-rate default
@@ -53,9 +53,11 @@ Math: (materials × 1.35) + applicable labor floor = total. If markup-only total
 =========================================
 PRICING WATERFALL — IN THIS ORDER
 =========================================
-1. SAVED PRICES (provided in user message). If the job matches a saved item, use that exact price.
-2. WEB SEARCH for materials cost (use web_search tool). Search Ferguson Honolulu first, then Home Depot Honolulu, then Lowe's. Only use prices from these allowed sources.
-3. HONOLULU FALLBACK RANGE if web search fails: assume Honolulu materials cost 40-60% above mainland US retail.
+1. SAVED PRICES (provided in user message). If the job matches a saved item, USE THAT EXACT PRICE and DO NOT web search. Skip directly to output.
+2. WEB SEARCH for materials cost ONLY when no saved match exists AND the job requires specific materials pricing (e.g., new water heater model, specific fixture brand). Use web_search tool sparingly — at most 1-2 searches per estimate. Search Ferguson Honolulu first.
+3. HONOLULU FALLBACK RANGE if web search fails or isn't needed: assume Honolulu materials cost 40-60% above mainland US retail.
+
+IMPORTANT: Do NOT web search for repairs that are clearly labor-floor jobs (faucet repair, toilet repair, drain clearing, cartridge service). Those are saved-price matches — go straight to the floor.
 
 =========================================
 OUTPUT FORMAT — JSON ONLY
@@ -181,7 +183,7 @@ function buildDateContext() {
 const WEB_SEARCH_TOOL = {
   type: 'web_search_20250305',
   name: 'web_search',
-  max_uses: 4,
+  max_uses: 2,
   allowed_domains: [
     'ferguson.com',
     'homedepot.com',
@@ -205,6 +207,34 @@ function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
+// =====================================================================
+// Saved items fetch — cached per cold-start (~5 min on Vercel)
+// =====================================================================
+let _savedItemsCache = null;
+let _savedItemsCacheAt = 0;
+async function fetchSavedItems() {
+  const now = Date.now();
+  if (_savedItemsCache && (now - _savedItemsCacheAt) < 5 * 60 * 1000) {
+    return _savedItemsCache;
+  }
+  try {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    if (!url || !key) return [];
+    const r = await fetch(
+      `${url}/rest/v1/saved_items?select=category,name,price&order=category.asc,name.asc`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (!r.ok) return [];
+    const items = await r.json();
+    _savedItemsCache = Array.isArray(items) ? items : [];
+    _savedItemsCacheAt = now;
+    return _savedItemsCache;
+  } catch {
+    return [];
+  }
 }
 
 // =====================================================================
@@ -233,13 +263,19 @@ export default async function handler(req, res) {
 
     const {
       jobDescription,           // string — Jake's natural-language ask
-      savedItems = [],          // array of {category, name, price}
+      savedItems: bodySavedItems, // optional — if not provided, fetched from DB
       pastInvoiceContext = '',  // optional — recent similar invoices as reference
       messages: convoMessages,  // optional — for multi-turn refinement
     } = body;
 
     if (!jobDescription && !convoMessages) {
       return res.status(400).json({ error: 'jobDescription or messages required' });
+    }
+
+    // Auto-fetch saved items from Supabase if not provided. Cached per cold-start.
+    let savedItems = bodySavedItems;
+    if (!savedItems || !Array.isArray(savedItems) || savedItems.length === 0) {
+      savedItems = await fetchSavedItems();
     }
 
     // Build the user message — saved items list inline so the model can match.
