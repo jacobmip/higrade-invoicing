@@ -20,7 +20,15 @@ EXTRACT THESE FIELDS:
     line1: street number + street name
     line2: unit/apt/suite/floor (if any)
     line3: city, state, zip (e.g., "Honolulu, HI 96814")
-- notes: anything else worth capturing — gate codes, "prefers texts", "refers a lot of work", relationship context, the source ("Extracted from contact card screenshot 5/5/26"), etc.
+- notes: PERSISTENT property/client info ONLY — things that will still matter on the 10th job for this client. Examples: gate code, lock combo, dog on property, park in driveway not street, tenant access only, building has no elevator, property is uphill from gate, prefers texts not calls, owner lives on mainland (manager handles all work).
+
+  STRICT RULES for notes:
+  - DO NOT include the current job request ("reported clogged sewer line", "needs faucet repair"). That belongs on the invoice, not the client record.
+  - DO NOT include extraction meta ("Extracted from voicemail screenshot", "Phone call received 11:46 AM", "Contact appears as 'Maybe: ...'", "Saved as new contact").
+  - DO NOT include the date or time of when the screenshot was taken.
+  - DO NOT include relationship guesses unless explicitly stated ("likely a referral" — no).
+  - If there's nothing persistent worth saving, set notes to null. Empty is better than noise.
+  - Keep notes terse: "Gate code 1234. Dog on property." not full sentences.
 
 RULES:
 - If a field isn't present in the image, set it to null. Do NOT guess.
@@ -43,7 +51,7 @@ OUTPUT: JSON only, no markdown fences:
       "line2": "Suite 500" | null,
       "line3": "Honolulu, HI 96814" | null
     },
-    "notes": "Extracted from text thread screenshot. Prefers text over calls. Property manager — handles 12 units in Kakaako."
+    "notes": "Gate code 1234. Park in driveway, not street. Prefers texts." | null
   },
   "confidence": "high" | "medium" | "low",
   "concerns": ["Phone partially obscured", "Address might be wrong unit number"]
