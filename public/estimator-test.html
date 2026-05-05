@@ -78,17 +78,63 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .meta { font-size: 11px; color: #888; margin-top: 6px; }
+  #thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .thumb {
+    position: relative; width: 80px; height: 80px; border-radius: 8px;
+    background-size: cover; background-position: center; border: 1px solid #d0d3d8;
+  }
+  .thumb .x {
+    position: absolute; top: -6px; right: -6px; background: #c33; color: white;
+    border: none; border-radius: 50%; width: 22px; height: 22px; cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0;
+  }
+  .thumb-warn {
+    font-size: 11px; color: #b86a00; margin-top: 4px; flex-basis: 100%;
+  }
+  .tabs { display: flex; gap: 4px; margin: 8px 0 16px; border-bottom: 1px solid #d0d3d8; }
+  .tab {
+    background: transparent; color: #555; border: none; padding: 10px 16px;
+    font-size: 14px; cursor: pointer; border-bottom: 3px solid transparent;
+    margin-bottom: -1px; font-weight: 500; border-radius: 0;
+  }
+  .tab.active { color: #0066cc; border-bottom-color: #0066cc; }
+  .tab:hover:not(.active) { color: #1a1a1a; }
+  .tabpanel { display: none; }
+  .tabpanel.active { display: block; }
+  .field {
+    display: flex; align-items: baseline; padding: 6px 0;
+    border-bottom: 1px solid #f0f2f5; font-size: 14px;
+  }
+  .field .key { width: 90px; color: #888; font-size: 12px; text-transform: uppercase; }
+  .field .val { flex: 1; }
+  .field .val.empty { color: #aaa; font-style: italic; }
+  .conf-high { color: #0a7a35; }
+  .conf-medium { color: #b86a00; }
+  .conf-low { color: #c33; }
 </style>
 </head>
 <body>
-  <h1>AI Estimator — Test Harness</h1>
-  <div class="sub">Sonnet 4.6 + web search · Option B markup · Jake's voice. Throw real jobs at it.</div>
+  <h1>AI — Test Harness</h1>
+  <div class="sub">Sonnet 4.6 + vision + web search · Option B markup · Jake's voice.</div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="estimator">Estimator</button>
+    <button class="tab" data-tab="client">Client Extractor</button>
+  </div>
+
+  <div id="tab-estimator" class="tabpanel active">
+
+  <div class="sub" style="margin-top:0;">Throw real plumbing jobs at it. Add photos for visual context.</div>
 
   <textarea id="job" placeholder="Paste a real job description... e.g., '50 gallon electric water heater replacement in Hawaii Kai, customer wants standard, no permit'"></textarea>
 
+  <div id="thumbs"></div>
+
   <div class="row">
     <button id="go">Generate Estimate</button>
+    <button class="secondary" id="attach">📎 Add Photos</button>
     <button class="secondary" id="clear">Clear</button>
+    <input type="file" id="file" accept="image/*" multiple style="display:none" />
   </div>
 
   <div class="row" style="margin-top: 8px;">
@@ -101,10 +147,38 @@
   </div>
 
   <div id="result"></div>
+  </div><!-- /tab-estimator -->
+
+  <div id="tab-client" class="tabpanel">
+    <div class="sub" style="margin-top:0;">Drop a screenshot of a contact card, text thread, business card, or email signature.</div>
+
+    <textarea id="clientCtx" placeholder="(Optional) Extra context: 'this is a property manager from Kakaako'..." style="min-height:60px;"></textarea>
+
+    <div id="clientThumbs"></div>
+
+    <div class="row">
+      <button id="clientGo">Extract Client Info</button>
+      <button class="secondary" id="clientAttach">📎 Add Screenshots</button>
+      <button class="secondary" id="clientClear">Clear</button>
+      <input type="file" id="clientFile" accept="image/*" multiple style="display:none" />
+    </div>
+
+    <div id="clientResult"></div>
+  </div><!-- /tab-client -->
 
 <script>
 const $ = id => document.getElementById(id);
 const go = $('go');
+
+// ===== Tab switching =====
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tabpanel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+  });
+});
 
 document.querySelectorAll('.preset').forEach(btn => {
   btn.addEventListener('click', () => { $('job').value = btn.textContent; });
@@ -113,11 +187,68 @@ document.querySelectorAll('.preset').forEach(btn => {
 $('clear').addEventListener('click', () => {
   $('job').value = '';
   $('result').innerHTML = '';
+  photos.length = 0;
+  renderThumbs();
 });
+
+// ===== Photo handling =====
+const photos = []; // array of { dataUrl, name }
+
+$('attach').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', async e => {
+  const files = Array.from(e.target.files || []);
+  for (const f of files) {
+    const dataUrl = await resizeImage(f, 1600, 0.82);
+    photos.push({ dataUrl, name: f.name });
+  }
+  e.target.value = '';
+  renderThumbs();
+});
+
+function renderThumbs() {
+  const el = $('thumbs');
+  el.innerHTML = photos.map((p, i) =>
+    `<div class="thumb" style="background-image:url('${p.dataUrl}')">
+       <button class="x" data-i="${i}">×</button>
+     </div>`
+  ).join('');
+  if (photos.length >= 5) {
+    el.innerHTML += `<div class="thumb-warn">${photos.length} photos attached — each adds ~2-3 sec and ~1500 tokens.</div>`;
+  }
+  el.querySelectorAll('.x').forEach(btn => {
+    btn.addEventListener('click', () => {
+      photos.splice(Number(btn.dataset.i), 1);
+      renderThumbs();
+    });
+  });
+}
+
+function resizeImage(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = () => { img.src = reader.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 go.addEventListener('click', async () => {
   const job = $('job').value.trim();
-  if (!job) return;
+  if (!job && photos.length === 0) return;
   go.disabled = true;
   go.innerHTML = '<span class="spinner"></span>Thinking...';
   $('result').innerHTML = '';
@@ -127,7 +258,10 @@ go.addEventListener('click', async () => {
     const r = await fetch('/api/ai-estimator', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobDescription: job }),
+      body: JSON.stringify({
+        jobDescription: job,
+        images: photos.map(p => p.dataUrl),
+      }),
     });
     const data = await r.json();
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -220,6 +354,106 @@ function escapeHtml(s) {
   }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+// ===== Client extractor tab =====
+const clientPhotos = [];
+$('clientAttach').addEventListener('click', () => $('clientFile').click());
+$('clientFile').addEventListener('change', async e => {
+  const files = Array.from(e.target.files || []);
+  for (const f of files) {
+    const dataUrl = await resizeImage(f, 1600, 0.85);
+    clientPhotos.push({ dataUrl, name: f.name });
+  }
+  e.target.value = '';
+  renderClientThumbs();
+});
+$('clientClear').addEventListener('click', () => {
+  $('clientCtx').value = '';
+  $('clientResult').innerHTML = '';
+  clientPhotos.length = 0;
+  renderClientThumbs();
+});
+function renderClientThumbs() {
+  const el = $('clientThumbs');
+  el.innerHTML = clientPhotos.map((p, i) =>
+    `<div class="thumb" style="background-image:url('${p.dataUrl}')">
+       <button class="x" data-i="${i}">×</button>
+     </div>`
+  ).join('');
+  el.querySelectorAll('.x').forEach(btn => {
+    btn.addEventListener('click', () => {
+      clientPhotos.splice(Number(btn.dataset.i), 1);
+      renderClientThumbs();
+    });
+  });
+}
+$('clientGo').addEventListener('click', async () => {
+  if (!clientPhotos.length) {
+    $('clientResult').innerHTML = '<div class="err">Add at least one screenshot first.</div>';
+    return;
+  }
+  const btn = $('clientGo');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Reading...';
+  $('clientResult').innerHTML = '';
+  const t0 = Date.now();
+  try {
+    const r = await fetch('/api/ai-extract-client', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        images: clientPhotos.map(p => p.dataUrl),
+        extraContext: $('clientCtx').value.trim(),
+      }),
+    });
+    const data = await r.json();
+    renderClient(data, ((Date.now() - t0) / 1000).toFixed(1));
+  } catch (e) {
+    $('clientResult').innerHTML = `<div class="err">Request failed: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Extract Client Info';
+  }
+});
+function renderClient(data, elapsed) {
+  if (data.error) {
+    $('clientResult').innerHTML = `<div class="err">Error: ${escapeHtml(data.error)}<pre>${escapeHtml(data.detail || '')}</pre></div>`;
+    return;
+  }
+  const r = data.result || {};
+  let html = '';
+  if (r.action === 'no_contact_info' || r.action === 'unreadable') {
+    html += `<div class="err">${escapeHtml(r.message || 'Could not extract.')}</div>`;
+  } else if (r.action === 'extracted' && r.client) {
+    const c = r.client;
+    const fld = (k, v) => `<div class="field"><div class="key">${k}</div><div class="val${v ? '' : ' empty'}">${v ? escapeHtml(v) : 'not found'}</div></div>`;
+    html += `<div class="card"><h3>Extracted Client — confidence <span class="conf-${r.confidence || 'low'}">${escapeHtml(r.confidence || '?')}</span></h3>`;
+    html += fld('Name', c.name);
+    html += fld('Phone', c.phone);
+    html += fld('Email', c.email);
+    html += fld('Company', c.company);
+    const a = c.address || {};
+    const addr = [a.line1, a.line2, a.line3].filter(Boolean).join(' · ');
+    html += fld('Address', addr);
+    html += fld('Notes', c.notes);
+    html += `<div class="row" style="margin-top:14px;">
+      <button>Create Client</button>
+      <button class="secondary">Edit</button>
+      <button class="secondary">Cancel</button>
+    </div>`;
+    if (r.concerns && r.concerns.length) {
+      html += `<div class="block"><div class="label">Concerns</div><ul>${r.concerns.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>`;
+    }
+    html += `</div>`;
+  } else {
+    html += `<div class="err">Could not parse JSON. Raw text below.</div>`;
+  }
+  const usage = data.usage || {};
+  const tokens = (usage.input_tokens || 0) + (usage.output_tokens || 0);
+  html += `<div class="meta"><span class="pill">${elapsed}s</span><span class="pill">${tokens} tokens</span></div>`;
+  html += `<div class="card"><h3>Raw model output</h3><div class="raw">${escapeHtml(data.raw_text || '')}</div></div>`;
+  $('clientResult').innerHTML = html;
+}
 </script>
 </body>
 </html>

@@ -34,6 +34,17 @@ When relevant, add exclusions on a final line: "Exclusions: Structural/framing/m
 
 Customer-supplied items: include disclaimer line in description (warranty stays with manufacturer, no responsibility for product defects).
 
+=========================================
+WHEN PHOTOS ARE PROVIDED
+=========================================
+If photos are attached, identify what you see and use that as primary context. Look for: brand/model on fixtures, age/condition (corrosion, hard water buildup, leak staining), pipe material (copper, PEX, PVC, ABS, galvanized), accessibility (under-sink space, attic/crawl access, ladder needs), surrounding finishes that affect risk (tile, drywall, cabinet veneer), water damage, code red flags (no shutoffs, unsupported pipe, illegal Sharkbites in concealed spaces).
+
+In the assumptions block, explicitly note what you saw: "Photo: Moen 87480 single-handle kitchen faucet, ~5-7 yr old, light scaling at base. Cabinet has angle stops with handles in working position."
+
+If the photos contradict the user's description, flag it: "Photo shows galvanized pipe but user said copper — priced for galvanized; please confirm."
+
+If the photos are too unclear or don't show enough, ask via the clarify action.
+
 DO NOT write like a chatbot. No "I will", "Sure!", "Of course", "Please find below", "We will perform". Write the scope as a contractor's work order — direct, plain, in order.
 
 NEVER include the job location, neighborhood, or city in the line item description or title. Location is for travel-cost calculation only — it goes in the assumptions block, never in the customer-facing scope of work.
@@ -292,13 +303,14 @@ export default async function handler(req, res) {
 
     const {
       jobDescription,           // string — Jake's natural-language ask
+      images = [],              // array of data URLs (data:image/...;base64,...) or {url} objects
       savedItems: bodySavedItems, // optional — if not provided, fetched from DB
       pastInvoiceContext = '',  // optional — recent similar invoices as reference
       messages: convoMessages,  // optional — for multi-turn refinement
     } = body;
 
-    if (!jobDescription && !convoMessages) {
-      return res.status(400).json({ error: 'jobDescription or messages required' });
+    if (!jobDescription && !convoMessages && images.length === 0) {
+      return res.status(400).json({ error: 'jobDescription, images, or messages required' });
     }
 
     // Auto-fetch saved items from Supabase if not provided. Cached per cold-start.
@@ -318,11 +330,37 @@ export default async function handler(req, res) {
       ? `\nRECENT SIMILAR INVOICES (voice + price reference):\n${pastInvoiceContext}`
       : '';
 
+    // Build user content blocks. If images are provided, build a mixed
+    // text + image block array; otherwise plain text.
+    const userText = `${savedBlock}${pastBlock}\n\nJOB:\n${jobDescription || '(see attached photos)'}`;
+    const imageBlocks = images.map(img => {
+      // Accept either raw data URLs or {data, mediaType} objects
+      if (typeof img === 'string' && img.startsWith('data:')) {
+        const m = img.match(/^data:([^;]+);base64,(.+)$/);
+        if (!m) return null;
+        return {
+          type: 'image',
+          source: { type: 'base64', media_type: m[1], data: m[2] },
+        };
+      }
+      if (img && img.data && img.mediaType) {
+        return {
+          type: 'image',
+          source: { type: 'base64', media_type: img.mediaType, data: img.data },
+        };
+      }
+      if (img && img.url) {
+        return { type: 'image', source: { type: 'url', url: img.url } };
+      }
+      return null;
+    }).filter(Boolean);
+
+    const userContent = imageBlocks.length
+      ? [...imageBlocks, { type: 'text', text: userText }]
+      : userText;
+
     const initialMessages = convoMessages || [
-      {
-        role: 'user',
-        content: `${savedBlock}${pastBlock}\n\nJOB:\n${jobDescription}`,
-      },
+      { role: 'user', content: userContent },
     ];
 
     // -----------------------------------------------------------------
