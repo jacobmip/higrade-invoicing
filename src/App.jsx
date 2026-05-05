@@ -3057,7 +3057,9 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
-              <button onClick={isEstimate ? handleSendEstimate : handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name={isEstimate ? "pen" : "mail"} size={16} color="#fff" /> {emailStatus || (isEstimate ? "Send for Signature" : "Send Email")}</button>
+              {!isEstimate && (
+                <button onClick={handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
+              )}
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={handlePrint} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="print" size={16} color="#444" /> Print / PDF</button>
