@@ -692,10 +692,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
             setTimeout(() => { panelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, 350);
           }}
           onInput={e => setInput(e.currentTarget.innerText)}
-          onKeyDown={e => {
-            // Enter sends, Shift+Enter inserts a newline (standard chat).
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-          }}
+          // No Enter-to-send. Enter inserts a newline; the Send button is the
+          // only way to submit. Mobile-friendly since Shift+Enter doesn't
+          // exist on iOS keyboards.
           onPaste={e => {
             // Force plaintext paste so rich content (e.g. styled text from
             // Notes) doesn't bring HTML formatting into the chat input.
