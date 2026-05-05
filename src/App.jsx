@@ -1074,11 +1074,11 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
               </div>
               {downPct > 0 ? (
                 <div style={{ fontSize: 12, color: "#666" }}>
-                  When the customer signs, the app will create a new invoice for <strong>{fmt(downAmt)}</strong> ({downPct}% of {fmt(t.total)}) and email them a payment link.
+                  The customer will be able to pay <strong>{fmt(downAmt)}</strong> ({downPct}% of {fmt(t.total)}) right from the estimate link. When they pay, the estimate auto-converts to an invoice with the down payment applied.
                 </div>
               ) : (
                 <div style={{ fontSize: 12, color: "#888" }}>
-                  No down payment will be requested. The customer simply signs to approve.
+                  No down payment will be requested. The customer just gets the estimate to review and sign.
                 </div>
               )}
             </div>
