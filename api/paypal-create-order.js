@@ -161,6 +161,13 @@ export default async function handler(req, res) {
       res.status(400).json({ error: 'estimates_not_payable' });
       return;
     }
+    // Once an estimate has been converted to an invoice (down payment
+    // already received), reject further payment attempts. The customer
+    // should be paying the new invoice's balance, not the estimate again.
+    if (isEstimate && inv.converted_to_id) {
+      res.status(400).json({ error: 'estimate_already_converted', invoiceId: inv.converted_to_id });
+      return;
+    }
 
     const totals = calcTotals(inv, items, payments);
     const lateFee = calcLateFee(inv, totals, settings);

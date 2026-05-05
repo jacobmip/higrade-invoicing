@@ -187,15 +187,48 @@ async function convertEstimateToInvoice(estimateId) {
 
   // Link the estimate to the new invoice (status stays 'approved' if it
   // was already signed — we just record the conversion). The estimate
-  // remains visible in the app for historical reference.
-  await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
+  // remains visible in the app for historical reference. Be loud about
+  // failures here — a silent miss leaves an "open" estimate dangling next
+  // to its real invoice.
+  const newStatus = est.status === 'approved' ? 'approved' : 'converted';
+  const linkRes = await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
     method: 'PATCH',
     headers,
     body: JSON.stringify({
       converted_to_id: newId,
-      status: est.status === 'approved' ? 'approved' : 'converted',
+      status: newStatus,
     }),
   });
+  if (!linkRes.ok) {
+    const t = await linkRes.text();
+    console.error('[paypal-capture] link patch failed:', linkRes.status, t);
+    // Roll back the new invoice + items so we don't leave orphans.
+    try {
+      await fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(newId)}`, { method: 'DELETE', headers });
+      await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(newId)}`, { method: 'DELETE', headers });
+    } catch (cleanupErr) {
+      console.error('[paypal-capture] rollback failed:', cleanupErr);
+    }
+    throw new Error(`Estimate link patch failed: ${linkRes.status} ${t}`);
+  }
+  // Verify by re-reading. PostgREST PATCH returns 200 even when 0 rows
+  // are affected (e.g. RLS filter mismatch), so we explicitly confirm.
+  const verifyRes = await fetch(
+    `${url}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}&select=converted_to_id,status&limit=1`,
+    { headers }
+  );
+  const verifyRows = await verifyRes.json();
+  const verified = Array.isArray(verifyRows) && verifyRows[0];
+  if (!verified || verified.converted_to_id !== newId || verified.status !== newStatus) {
+    console.error('[paypal-capture] link patch did not persist:', verifyRows);
+    try {
+      await fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(newId)}`, { method: 'DELETE', headers });
+      await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(newId)}`, { method: 'DELETE', headers });
+    } catch (cleanupErr) {
+      console.error('[paypal-capture] rollback failed:', cleanupErr);
+    }
+    throw new Error('Estimate link patch did not persist');
+  }
 
   return { invoiceId: newId, alreadyConverted: false, viewToken };
 }
