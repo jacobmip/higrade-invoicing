@@ -570,21 +570,55 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   // re-scrolled the panel and made the chat feel like it was jumping.
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading]);
 
+  // Hold the active recognition instance so we can stop a stuck one and
+  // toggle the mic button off without crashing the whole app. iOS Safari
+  // throws synchronously from start() if a recognizer is already running
+  // or if mic permission is denied — both have to be caught.
+  const recRef = useRef(null);
   const startListening = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert("Voice not supported."); return; }
-    const r = new SR(); r.lang = "en-US";
-    r.onresult = e => {
-      setInput(p => {
-        const next = (p + " " + e.results[0][0].transcript).trim();
-        // Mirror into the uncontrolled contenteditable so the user sees it.
-        if (inputElRef.current) inputElRef.current.innerText = next;
-        return next;
-      });
+    // Toggle off if already listening.
+    if (recRef.current) {
+      try { recRef.current.stop(); } catch {}
+      recRef.current = null;
       setListening(false);
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert("Voice dictation isn\u2019t supported in this browser. Try Safari on iPhone or Chrome on desktop."); return; }
+    let r;
+    try { r = new SR(); } catch (err) { alert("Couldn\u2019t start voice: " + (err?.message || err)); return; }
+    r.lang = "en-US";
+    r.onresult = e => {
+      try {
+        const transcript = e.results?.[0]?.[0]?.transcript || "";
+        setInput(p => {
+          const next = (p + " " + transcript).trim();
+          if (inputElRef.current) inputElRef.current.innerText = next;
+          return next;
+        });
+      } catch {}
     };
-    r.onerror = () => setListening(false); r.onend = () => setListening(false);
-    r.start(); setListening(true);
+    r.onerror = (e) => {
+      setListening(false); recRef.current = null;
+      const code = e?.error;
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        alert("Microphone permission denied. Enable it in Settings \u2192 Safari \u2192 Microphone.");
+      } else if (code && code !== "aborted" && code !== "no-speech") {
+        console.warn("speech recognition error:", code);
+      }
+    };
+    r.onend = () => { setListening(false); recRef.current = null; };
+    try {
+      r.start();
+      recRef.current = r;
+      setListening(true);
+    } catch (err) {
+      // start() throws if called twice or before user gesture / on insecure origin.
+      console.warn("speech start() threw:", err);
+      recRef.current = null;
+      setListening(false);
+      alert("Couldn\u2019t start voice. If this keeps happening, reload the page.");
+    }
   };
 
   // Photo handling — paperclip button picks files, we resize and stash
@@ -1421,6 +1455,27 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  // Pending photos waiting to be sent with the next message. Same shape
+  // and behavior as AIChatPanel: paperclip button picks files, we resize
+  // and stash, send() includes them on the latest user message.
+  const [pendingPhotos, setPendingPhotos] = useState([]);
+  const fileInputRef = useRef(null);
+  const onPickPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    const added = [];
+    for (const f of files) {
+      try {
+        const dataUrl = await resizeImageToDataUrl(f, 1600, 0.82);
+        added.push({ dataUrl, name: f.name });
+      } catch {}
+    }
+    if (added.length) setPendingPhotos(p => [...p, ...added]);
+  };
+  const removePendingPhoto = (idx) => {
+    setPendingPhotos(p => p.filter((_, i) => i !== idx));
+  };
   // TTS defaults to OFF — only speaks when user explicitly taps the speaker button
   const [ttsOn, setTtsOn] = useState(false);
   const ttsRef = useRef(false);
@@ -1543,21 +1598,81 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
 
   useEffect(() => { return () => window.speechSynthesis?.cancel(); }, []);
 
+  // Same protected mic flow as AIChatPanel — see comments there. The
+  // earlier version threw synchronously from r.start() on iOS Safari and
+  // crashed the React tree.
+  const recRef = useRef(null);
   const startListening = () => {
+    if (recRef.current) {
+      try { recRef.current.stop(); } catch {}
+      recRef.current = null;
+      setListening(false);
+      return;
+    }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert("Voice not supported."); return; }
-    const r = new SR(); r.lang = "en-US";
-    r.onresult = e => { setInput(p => (p + " " + e.results[0][0].transcript).trim()); setListening(false); };
-    r.onerror = () => setListening(false); r.onend = () => setListening(false);
-    r.start(); setListening(true);
+    if (!SR) { alert("Voice dictation isn\u2019t supported in this browser. Try Safari on iPhone or Chrome on desktop."); return; }
+    let r;
+    try { r = new SR(); } catch (err) { alert("Couldn\u2019t start voice: " + (err?.message || err)); return; }
+    r.lang = "en-US";
+    r.onresult = e => {
+      try {
+        const transcript = e.results?.[0]?.[0]?.transcript || "";
+        setInput(p => (p + " " + transcript).trim());
+      } catch {}
+    };
+    r.onerror = (e) => {
+      setListening(false); recRef.current = null;
+      const code = e?.error;
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        alert("Microphone permission denied. Enable it in Settings \u2192 Safari \u2192 Microphone.");
+      } else if (code && code !== "aborted" && code !== "no-speech") {
+        console.warn("speech recognition error:", code);
+      }
+    };
+    r.onend = () => { setListening(false); recRef.current = null; };
+    try {
+      r.start();
+      recRef.current = r;
+      setListening(true);
+    } catch (err) {
+      console.warn("speech start() threw:", err);
+      recRef.current = null;
+      setListening(false);
+      alert("Couldn\u2019t start voice. If this keeps happening, reload the page.");
+    }
   };
 
   const send = async () => {
-    const text = input.trim(); if (!text || loading) return;
-    setInput(""); const userMsg = { role: "user", text };
+    const text = input.trim();
+    const hasPhotos = pendingPhotos.length > 0;
+    if ((!text && !hasPhotos) || loading) return;
+    setInput("");
+    const photosForSend = pendingPhotos;
+    setPendingPhotos([]);
+    const userMsg = {
+      role: "user",
+      text: text || (hasPhotos ? `[${photosForSend.length} photo${photosForSend.length === 1 ? "" : "s"} attached]` : ""),
+      photos: photosForSend.length ? photosForSend.map(p => p.dataUrl) : undefined,
+    };
     setMsgs(p => [...p, userMsg]); setLoading(true);
     try {
-      const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+      // Past photos are dropped from history to save tokens — only the
+      // current send carries raw image blocks.
+      const history = [...msgs, userMsg]
+        .filter(m => m.text?.trim() || m.photos?.length)
+        .map((m, i, arr) => {
+          const isLatest = i === arr.length - 1;
+          if (m.role === "user" && isLatest && m.photos?.length) {
+            const blocks = m.photos.map(dataUrl => {
+              const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+              if (!match) return null;
+              return { type: "image", source: { type: "base64", media_type: match[1], data: match[2] } };
+            }).filter(Boolean);
+            blocks.push({ type: "text", text: m.text || "(see attached photo)" });
+            return { role: "user", content: blocks };
+          }
+          return { role: m.role === "user" ? "user" : "assistant", content: m.text || "" };
+        });
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history, buildGlobalSystemPrompt(data));
       console.log('[AI reply]', reply);
@@ -1686,6 +1801,13 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={bubble(m.role === "user")}>
+              {m.photos?.length > 0 && (
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: m.text ? 6 : 0 }}>
+                  {m.photos.map((src, j) => (
+                    <img key={j} src={src} alt="" style={{ width: 80, height: 80, borderRadius: 6, objectFit: "cover" }} />
+                  ))}
+                </div>
+              )}
               {m.role === "assistant" ? stripActionBlocks(m.text) : m.text}
               {m.estimate && (
                 <div style={{ marginTop: 10, borderTop: "1px solid #f0f2f8", paddingTop: 10 }}>
@@ -1714,7 +1836,18 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
         {loading && <div style={{ display: "flex", marginBottom: 12 }}><div style={{ background: "#fff", borderRadius: "16px 16px 16px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>{[0,1,2].map(k => <span key={k} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}</div></div>}
         <div ref={endRef} style={{ height: 14 }} />
       </div>
+      {pendingPhotos.length > 0 && (
+        <div style={{ background: "#fff", borderTop: "1px solid #dde2ee", padding: "8px 10px", display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 90, overflowY: "auto", flexShrink: 0 }}>
+          {pendingPhotos.map((p, i) => (
+            <div key={i} style={{ position: "relative", width: 56, height: 56, borderRadius: 8, backgroundImage: `url('${p.dataUrl}')`, backgroundSize: "cover", backgroundPosition: "center", border: "1px solid #dde2ee" }}>
+              <button onClick={() => removePendingPhoto(i)} aria-label="Remove photo" style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", background: "#c33", color: "#fff", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ background: "#fff", borderTop: "1px solid #dde2ee", padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={onPickPhotos} />
+        <button onClick={() => fileInputRef.current?.click()} aria-label="Attach photos" title="Attach photos" style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: "#f0f2f8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="paperclip" size={18} color="#666" /></button>
         <button onClick={startListening} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="mic" size={18} color={listening ? "#fff" : "#666"} /></button>
         <input
           type="search"
