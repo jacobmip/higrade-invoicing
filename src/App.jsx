@@ -6899,7 +6899,7 @@ function MessageTemplatesCard() {
   );
 }
 
-function SettingsTab({ onAfterRestore }) {
+function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId, setViewAsUserId, refreshUsers }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
   const [importMode, setImportMode] = useState("merge"); // 'merge' | 'replace'
@@ -6959,6 +6959,42 @@ function SettingsTab({ onAfterRestore }) {
 
   return (
     <div style={{ padding: "16px", paddingBottom: 100 }}>
+      {isAdmin && (
+        <div style={card}>
+          <div style={heading}>Users (admin)</div>
+          <div style={body}>
+            You are signed in as <b>{profile?.display_name || "admin"}</b>. As admin you see every user's data. Pick a user below to filter the entire app to just their work — useful for auditing a journeyman's invoices without him seeing yours. Choose <b>All users</b> to see everything together.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: viewAsUserId === "" ? `2px solid ${ORANGE}` : "1px solid #dde2ee", background: viewAsUserId === "" ? "#fff7f1" : "#fff", cursor: "pointer" }}>
+              <input type="radio" name="viewas" checked={viewAsUserId === ""} onChange={() => setViewAsUserId("")} style={{ accentColor: ORANGE }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: NAVY }}>All users</div>
+                <div style={{ fontSize: 12, color: "#778" }}>Combined view across everyone</div>
+              </div>
+            </label>
+            {(allUsers || []).map(u => {
+              const selected = viewAsUserId === u.id;
+              return (
+                <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: selected ? `2px solid ${ORANGE}` : "1px solid #dde2ee", background: selected ? "#fff7f1" : "#fff", cursor: "pointer" }}>
+                  <input type="radio" name="viewas" checked={selected} onChange={() => setViewAsUserId(u.id)} style={{ accentColor: ORANGE }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: NAVY, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.displayName || "(no name)"}</span>
+                      {u.role === "admin" && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, padding: "1px 5px", borderRadius: 3 }}>ADMIN</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#778" }}>{u.invoiceCount} invoices · {u.estimateCount} estimates</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <button onClick={refreshUsers} style={{ ...S.btn("navy"), width: "100%" }}>Refresh user list</button>
+          <div style={{ marginTop: 10, fontSize: 11, color: "#889", lineHeight: 1.5 }}>
+            To add a journeyman: open the <a href="https://supabase.com/dashboard/project/cwhgcxxszyvevjpbnnkc/auth/users" target="_blank" rel="noreferrer" style={{ color: ORANGE, fontWeight: 600 }}>Supabase Auth dashboard</a>, click <b>Add user → Create new user</b>, set their email and password, save. Their profile is auto-created with role <code>plumber</code>. They land in an empty workspace; you keep seeing everything.
+          </div>
+        </div>
+      )}
       <MessageTemplatesCard />
       <PaymentInstructionsCard />
       <OnlinePaymentFeeCard />
@@ -7170,6 +7206,68 @@ export default function App() {
 
   const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 });
   const [dbLoading, setDbLoading] = useState(true);
+
+  // Multi-user state. profile is the row from the `profiles` table for the
+  // signed-in user — { id, display_name, role }. role is 'admin' or 'plumber'.
+  // viewAsUserId, when set by an admin, narrows the visible data to that
+  // user's owned rows. Persists in localStorage so reload preserves the view.
+  const [profile, setProfile] = useState(null);
+  const [allUsers, setAllUsers] = useState([]); // admin-only directory
+  const [viewAsUserId, setViewAsUserId] = useState(() => {
+    try { return localStorage.getItem("higrade_view_as") || ""; } catch { return ""; }
+  });
+  useEffect(() => {
+    try {
+      if (viewAsUserId) localStorage.setItem("higrade_view_as", viewAsUserId);
+      else localStorage.removeItem("higrade_view_as");
+    } catch {}
+  }, [viewAsUserId]);
+  const isAdmin = profile?.role === "admin";
+  // Effective owner filter — admins can View As another user, everyone else
+  // sees only their own rows (RLS already enforces this server-side; the
+  // client-side filter only matters for admins narrowing what they see).
+  const effectiveOwnerId = isAdmin && viewAsUserId ? viewAsUserId : null;
+  // Load profile + (if admin) the full user list any time the session changes.
+  useEffect(() => {
+    if (!session) { setProfile(null); setAllUsers([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await db.getMyProfile();
+        if (cancelled) return;
+        setProfile(p);
+        if (p?.role === "admin") {
+          try { const users = await db.listAllUsers(); if (!cancelled) setAllUsers(users); } catch {}
+        } else {
+          setAllUsers([]);
+          // Plumbers can never view-as anyone — clear any stale localStorage flag.
+          setViewAsUserId("");
+        }
+      } catch (e) {
+        console.warn("profile load failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
+  // Refresh user list (with invoice counts) on demand — SettingsTab uses this.
+  const refreshUsers = async () => {
+    if (!isAdmin) return;
+    try { setAllUsers(await db.listAllUsers()); } catch (e) { console.warn(e); }
+  };
+  // Apply the View-as filter to in-memory data. Admins viewing themselves or
+  // "All" see the full set. Plumbers always see everything they loaded (RLS
+  // already filtered to their own rows).
+  const filteredData = useMemo(() => {
+    if (!effectiveOwnerId) return data;
+    const match = (r) => r?.ownerId === effectiveOwnerId;
+    return {
+      ...data,
+      invoices:   (data.invoices   || []).filter(match),
+      clients:    (data.clients    || []).filter(match),
+      savedItems: (data.savedItems || []).filter(match),
+      expenses:   (data.expenses   || []).filter(match),
+    };
+  }, [data, effectiveOwnerId]);
   const [tab, setTab] = useState("invoices");
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -8132,8 +8230,10 @@ export default function App() {
     </div>
   );
 
-  const invoices = data.invoices.filter(i => i.type !== "estimate");
-  const estimates = data.invoices.filter(i => i.type === "estimate");
+  // Local memos kept for any leftover uses; both honor the View-as filter so
+  // counts stay consistent with what the user actually sees in tab content.
+  const invoices = (filteredData.invoices || []).filter(i => i.type !== "estimate");
+  const estimates = (filteredData.invoices || []).filter(i => i.type === "estimate");
 
   // 4 main tabs visible in the bottom bar; the rest live inside a “More” sheet.
   const mainNavItems = [
@@ -8194,8 +8294,15 @@ export default function App() {
         <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
           <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
-              <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>LLC · HONOLULU</span>
+              <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 8 }}>
+                HI GRADE PLUMBING
+                {isAdmin && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.2, padding: "2px 6px", borderRadius: 4 }}>ADMIN</span>}
+              </div>
+              <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>
+                {effectiveOwnerId
+                  ? `Viewing as · ${(allUsers.find(u => u.id === effectiveOwnerId)?.displayName) || "user"}`
+                  : (profile?.display_name ? `${profile.display_name.toUpperCase()}` : "LLC · HONOLULU")}
+              </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {(tab === "invoices" || tab === "estimates" || tab === "expenses") && (
@@ -8262,15 +8369,15 @@ export default function App() {
         />
       ) : (
         <>
-          {tab === "invoices"  && <InvoiceList invoices={invoices} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
-          {tab === "estimates" && <EstimatesTab invoices={estimates} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-          {tab === "clients"   && <ClientsTab clients={data.clients} invoices={data.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
-          {tab === "items"     && <ItemsTab savedItems={data.savedItems} onDelete={removeSavedItem} />}
-          {tab === "payments"  && <PaymentsTab invoices={data.invoices} />}
-          {tab === "expenses"  && <ExpensesTab expenses={data.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
-          {tab === "reports"   && <ReportsTab invoices={data.invoices} expenses={data.expenses || []} />}
-          {tab === "calendar"  && <CalendarTab invoices={data.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
-          {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} />}
+          {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
+          {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
+          {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
+          {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
+          {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
+          {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
+          {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
+          {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
+          {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         </>
       )}
 

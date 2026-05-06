@@ -37,6 +37,7 @@ function toInvoice(row, items = [], payments = []) {
     // pass it back on the next save so a concurrent edit on another device
     // can be detected before it overwrites changes.
     updatedAt: row.updated_at || null,
+    ownerId: row.owner_id || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -98,6 +99,7 @@ function toClient(row) {
     // New structured addresses
     addresses,
     billingAddress: row.billing_address || null,
+    ownerId: row.owner_id || null,
   }
 }
 
@@ -111,6 +113,7 @@ function toSavedItem(row) {
     price: parseFloat(row.price ?? 0),
     taxable: row.taxable !== false,
     unit: row.unit || '',
+    ownerId: row.owner_id || null,
   }
 }
 
@@ -123,7 +126,59 @@ function toExpense(row) {
     category: row.category || '',
     description: row.description || '',
     receiptData: row.receipt_data || null,
+    ownerId: row.owner_id || null,
   }
+}
+
+// ─── Profile / multi-user helpers ─────────────────────────────────────────────
+
+// Returns the current authenticated user's profile row { id, display_name,
+// role } or null if not signed in / no profile yet. Used by the App shell to
+// decide whether to show admin-only UI (header badge, Users settings panel,
+// View-as toggle).
+export async function getMyProfile() {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const uid = sessionData?.session?.user?.id
+  if (!uid) return null
+  const { data, error } = await supabase
+    .from('profiles').select('id, display_name, role').eq('id', uid).maybeSingle()
+  if (error) {
+    console.warn('getMyProfile failed:', error.message)
+    return null
+  }
+  return data || null
+}
+
+// Lists every profile in the system. Admin-only — RLS will return only the
+// caller's own row for non-admins, which is fine. For each profile we also
+// surface a quick invoice count so the admin Users panel can show activity
+// at a glance.
+export async function listAllUsers() {
+  const { data: profs, error } = await supabase
+    .from('profiles').select('id, display_name, role, created_at')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  const profiles = profs || []
+  if (profiles.length === 0) return []
+
+  // Count invoices per owner. RLS returns only rows the caller can see — for
+  // admin that's everything, so this works cleanly.
+  const { data: invs } = await supabase.from('invoices').select('owner_id, type')
+  const invCount = new Map()
+  const estCount = new Map()
+  for (const r of (invs || [])) {
+    if (!r.owner_id) continue
+    if (r.type === 'estimate') estCount.set(r.owner_id, (estCount.get(r.owner_id) || 0) + 1)
+    else invCount.set(r.owner_id, (invCount.get(r.owner_id) || 0) + 1)
+  }
+  return profiles.map(p => ({
+    id: p.id,
+    displayName: p.display_name || '',
+    role: p.role || 'plumber',
+    createdAt: p.created_at,
+    invoiceCount: invCount.get(p.id) || 0,
+    estimateCount: estCount.get(p.id) || 0,
+  }))
 }
 
 // ─── Load all ─────────────────────────────────────────────────────────────────
