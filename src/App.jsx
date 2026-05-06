@@ -7302,47 +7302,54 @@ export default function App() {
     return uid ? `higrade_global_ai_chat:${uid}` : null;
   }, [session?.user?.id]);
   const [globalAIMsgs, setGlobalAIMsgs] = useState(null);
-  // Reload chat history every time the active account changes.
+  // Reload chat history every time the active account changes. Source of
+  // truth is the ai_chat_history table on Supabase. localStorage is now
+  // only an offline cache so the chat shows up instantly while the network
+  // request is in flight, and so an offline reload still works.
   useEffect(() => {
     if (!chatStorageKey) { setGlobalAIMsgs(null); return; }
+    let cancelled = false;
+
+    // 1) Hydrate immediately from localStorage cache so the UI doesn't blink.
     try {
-      // One-time recovery (2026-05-06): an earlier release auto-migrated
-      // the legacy global chat key onto whichever user happened to log in
-      // first — which turned out to be the test journeyman account, not
-      // the admin. Move the journeyman's chat back onto the admin slot,
-      // then wipe the journeyman key so they start fresh. Guarded by a
-      // flag so it only runs once.
-      const RECOVERY_FLAG = "higrade_chat_recovery_2026_05_06";
-      const ADMIN_KEY     = "higrade_global_ai_chat:0a3bcefd-6faf-4bae-b43b-cd4492dd9938";
-      const TEST_KEY      = "higrade_global_ai_chat:fbf88c7c-ae9c-4601-af22-d0959d59a040";
-      if (!localStorage.getItem(RECOVERY_FLAG)) {
-        const stranded = localStorage.getItem(TEST_KEY);
-        if (stranded) {
-          // Only overwrite admin if admin slot is empty — don't clobber
-          // anything legitimate the admin may have started since.
-          if (!localStorage.getItem(ADMIN_KEY)) {
-            localStorage.setItem(ADMIN_KEY, stranded);
-          }
-          localStorage.removeItem(TEST_KEY);
-        }
-        // Also clear the original legacy key if it's still hanging around.
-        localStorage.removeItem("higrade_global_ai_chat");
-        localStorage.setItem(RECOVERY_FLAG, "1");
-      }
       const raw = localStorage.getItem(chatStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) {
-          if (parsed.length === 1 && parsed[0].role === "assistant" && /I can see \d+ invoices and \d+ clients/.test(parsed[0].text || "")) {
-            setGlobalAIMsgs(null);
-            return;
-          }
-          setGlobalAIMsgs(parsed);
-          return;
-        }
+        if (Array.isArray(parsed) && parsed.length) setGlobalAIMsgs(parsed);
       }
     } catch {}
-    setGlobalAIMsgs(null);
+
+    // 2) Then fetch the authoritative copy from Supabase.
+    (async () => {
+      const remote = await db.loadChatHistory();
+      if (cancelled) return;
+      if (remote === null) {
+        // Network/permission error — keep whatever the cache gave us.
+        return;
+      }
+      if (Array.isArray(remote) && remote.length > 0) {
+        // Filter out the legacy empty-greeting message if it slipped in.
+        const filtered = remote.filter(m => !(m.role === "assistant" && /I can see \d+ invoices and \d+ clients/.test(m.text || "")));
+        setGlobalAIMsgs(filtered.length ? filtered : null);
+        try { localStorage.setItem(chatStorageKey, JSON.stringify(filtered)); } catch {}
+        return;
+      }
+      // No server-side history yet. If localStorage has something, push it
+      // up so we don't lose it (one-shot migration per device per user).
+      try {
+        const cached = localStorage.getItem(chatStorageKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length) {
+            await db.saveChatHistory(parsed);
+            return;
+          }
+        }
+      } catch {}
+      setGlobalAIMsgs(null);
+    })();
+
+    return () => { cancelled = true; };
   }, [chatStorageKey]);
   const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
@@ -7622,11 +7629,14 @@ export default function App() {
   // survives page reloads. Cap at 200 messages to keep the payload small.
   useEffect(() => {
     if (!Array.isArray(globalAIMsgs)) return;
-    try {
-      const trimmed = globalAIMsgs.length > 200 ? globalAIMsgs.slice(-200) : globalAIMsgs;
-      if (chatStorageKey) localStorage.setItem(chatStorageKey, JSON.stringify(trimmed));
-    } catch {}
-  }, [globalAIMsgs]);
+    const trimmed = globalAIMsgs.length > 200 ? globalAIMsgs.slice(-200) : globalAIMsgs;
+    // Mirror to localStorage immediately so an offline reload still has it.
+    try { if (chatStorageKey) localStorage.setItem(chatStorageKey, JSON.stringify(trimmed)); } catch {}
+    // Debounced server save so we're not hammering Supabase on every
+    // keystroke-driven render. 600 ms after the last change wins.
+    const handle = setTimeout(() => { db.saveChatHistory(trimmed); }, 600);
+    return () => clearTimeout(handle);
+  }, [globalAIMsgs, chatStorageKey]);
 
   // Reset the global AI chat: clears history and restores the greeting.
   const resetGlobalAIChat = () => {

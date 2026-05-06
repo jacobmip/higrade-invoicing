@@ -181,7 +181,48 @@ export async function listAllUsers() {
   }))
 }
 
-// ─── Load all ─────────────────────────────────────────────────────────────────
+// ─── AI chat history (server-side, per user) ─────────────────────────────────
+
+// Loads the signed-in user's saved chat thread from the ai_chat_history table.
+// Returns an array of {role, text, ...} message objects, or null if no row
+// exists yet. Returns null on any error so the caller falls back to whatever
+// it had locally cached — we never want a transient network blip to make
+// chat appear deleted.
+export async function loadChatHistory() {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const uid = sessionData?.session?.user?.id
+  if (!uid) return null
+  const { data, error } = await supabase
+    .from('ai_chat_history').select('messages').eq('user_id', uid).maybeSingle()
+  if (error) {
+    console.warn('loadChatHistory failed:', error.message)
+    return null
+  }
+  if (!data) return [] // no row yet — fresh user, empty thread
+  const msgs = data.messages
+  return Array.isArray(msgs) ? msgs : []
+}
+
+// Saves the full chat thread for the signed-in user. Uses upsert so the
+// first save creates the row and subsequent ones update it. Returns true
+// on success, false on any failure. Caller is expected to keep its
+// localStorage cache up to date so a failed save doesn't lose the thread.
+export async function saveChatHistory(messages) {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const uid = sessionData?.session?.user?.id
+  if (!uid) return false
+  const trimmed = Array.isArray(messages) ? messages.slice(-200) : []
+  const { error } = await supabase
+    .from('ai_chat_history')
+    .upsert({ user_id: uid, messages: trimmed }, { onConflict: 'user_id' })
+  if (error) {
+    console.warn('saveChatHistory failed:', error.message)
+    return false
+  }
+  return true
+}
+
+// ─── Load all ─────────────────────────────────────────────────────────────
 
 // Supabase caps a single .select() at 1,000 rows by default. Once the
 // invoice_items table grew past that (which happened the moment we
