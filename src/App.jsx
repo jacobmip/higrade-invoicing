@@ -399,6 +399,7 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     ai:        <svg {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>,
     plus:      <svg {...p} strokeWidth={2.5}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
     mic:       <svg {...p}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>,
+    paperclip: <svg {...p}><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>,
     send:      <svg {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
     trash:     <svg {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>,
     back:      <svg {...p}><polyline points="15 18 9 12 15 6"/></svg>,
@@ -524,13 +525,45 @@ const S = {
 };
 
 // ─── AI Chat Panel (per-invoice with full app control) ───────────────────────
+// Resize an image File to a max dimension and return a base64 data URL.
+// Used by the AI chat to keep payloads sane for the Vercel function body
+// limit (~4.5MB) and to cap per-photo token cost (~1500 tokens).
+function resizeImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  // Pending photos waiting to be sent with the next message.
+  // Each entry: { dataUrl, name }.
+  const [pendingPhotos, setPendingPhotos] = useState([]);
   const endRef = useRef(null);
   const panelRef = useRef(null);
   const inputElRef = useRef(null);
+  const fileInputRef = useRef(null);
   // Only auto-scroll when new messages arrive or the loading indicator
   // toggles. Earlier this also fired on every visualViewport change, which
   // meant every keystroke (iOS keyboard animation tweaks the viewport)
@@ -554,13 +587,44 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
     r.start(); setListening(true);
   };
 
+  // Photo handling — paperclip button picks files, we resize and stash
+  // until the user hits send. Each send call includes any pending photos
+  // as image content blocks, then clears the queue.
+  const onPickPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-picking the same file later
+    if (!files.length) return;
+    const added = [];
+    for (const f of files) {
+      try {
+        const dataUrl = await resizeImageToDataUrl(f, 1600, 0.82);
+        added.push({ dataUrl, name: f.name });
+      } catch (err) {
+        // Skip files that won't decode — don't fail the whole pick.
+      }
+    }
+    if (added.length) setPendingPhotos(p => [...p, ...added]);
+  };
+  const removePendingPhoto = (idx) => {
+    setPendingPhotos(p => p.filter((_, i) => i !== idx));
+  };
+
   const send = async () => {
-    const text = input.trim(); if (!text || loading) return;
+    const text = input.trim();
+    const hasPhotos = pendingPhotos.length > 0;
+    if ((!text && !hasPhotos) || loading) return;
     setInput("");
     // The contenteditable div is uncontrolled — React's setInput("") doesn't
     // touch the DOM, so manually clear its innerText after sending.
     if (inputElRef.current) inputElRef.current.innerText = "";
-    const userMsg = { role: "user", text };
+    // Snapshot photos for this send and clear the input queue.
+    const photosForSend = pendingPhotos;
+    setPendingPhotos([]);
+    const userMsg = {
+      role: "user",
+      text: text || (hasPhotos ? `[${photosForSend.length} photo${photosForSend.length === 1 ? "" : "s"} attached]` : ""),
+      photos: photosForSend.length ? photosForSend.map(p => p.dataUrl) : undefined,
+    };
     setMsgs(p => [...p, userMsg]); setLoading(true);
     try {
       // Context-aware system prompt: global knowledge + the open invoice.
@@ -573,7 +637,29 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
       }
       const systemPrompt = systemBase ? systemBase + invoiceContext : null;
-      const history = [...msgs, userMsg].filter(m => m.text?.trim()).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+      // Build history. Past user messages with photos get converted to
+      // text-only references ("[photo from earlier]") so we don't blow
+      // the token budget by re-sending every prior image. Only the
+      // CURRENT send includes raw image blocks.
+      const history = [...msgs, userMsg]
+        .filter(m => m.text?.trim() || m.photos?.length)
+        .map((m, i, arr) => {
+          const isLatest = i === arr.length - 1;
+          if (m.role === "user" && isLatest && m.photos?.length) {
+            // Multimodal content: image blocks + text block.
+            const blocks = m.photos.map(dataUrl => {
+              const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+              if (!match) return null;
+              return {
+                type: "image",
+                source: { type: "base64", media_type: match[1], data: match[2] },
+              };
+            }).filter(Boolean);
+            blocks.push({ type: "text", text: m.text || "(see attached photo)" });
+            return { role: "user", content: blocks };
+          }
+          return { role: m.role === "user" ? "user" : "assistant", content: m.text || "" };
+        });
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt);
       const actions = extractActionsJSON(reply);
@@ -647,6 +733,13 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 10, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={{ maxWidth: "85%", background: m.role === "user" ? NAVY : "#fff", color: m.role === "user" ? "#fff" : "#1a1a1a", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px", padding: "10px 13px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.09)" }}>
+              {m.photos?.length > 0 && (
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: m.text ? 6 : 0 }}>
+                  {m.photos.map((src, j) => (
+                    <img key={j} src={src} alt="" style={{ width: 80, height: 80, borderRadius: 6, objectFit: "cover" }} />
+                  ))}
+                </div>
+              )}
               {m.text}
               {m.estimate && (
                 <div style={{ marginTop: 10, borderTop: "1px solid #e8ecf4", paddingTop: 8 }}>
@@ -665,7 +758,36 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         {loading && <div style={{ display: "flex", marginBottom: 10 }}><div style={{ background: "#fff", borderRadius: "14px 14px 14px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>{[0,1,2].map(i => <span key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${i*0.18}s infinite` }}/>)}</div></div>}
         <div ref={endRef} />
       </div>
+      {/* Pending-photos thumbnail strip, shown above the input bar when
+          Jake has attached photos but hasn't sent yet. */}
+      {pendingPhotos.length > 0 && (
+        <div style={{ position: "absolute", bottom: 62, left: 0, right: 0, background: "#fff", borderTop: "1px solid #dde2ee", padding: "8px 10px", display: "flex", gap: 6, flexWrap: "wrap", maxHeight: 90, overflowY: "auto" }}>
+          {pendingPhotos.map((p, i) => (
+            <div key={i} style={{ position: "relative", width: 56, height: 56, borderRadius: 8, backgroundImage: `url('${p.dataUrl}')`, backgroundSize: "cover", backgroundPosition: "center", border: "1px solid #dde2ee" }}>
+              <button
+                onClick={() => removePendingPhoto(i)}
+                aria-label="Remove photo"
+                style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", background: "#c33", color: "#fff", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 }}
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, minHeight: 62, background: "#fff", borderTop: "1px solid #dde2ee", display: "flex", alignItems: "flex-end", gap: 8, padding: "12px 10px" }}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: "none" }}
+          onChange={onPickPhotos}
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Attach photos"
+          title="Attach photos"
+          style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 8, border: "none", background: "#f0f2f8", color: "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+        ><Icon name="paperclip" size={18} /></button>
         <button onClick={startListening} style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
         {/*
           Use a contenteditable div instead of <input>/<textarea> so iOS

@@ -467,6 +467,21 @@ export async function insertClient(client) {
   return data.id
 }
 
+// Build the client_info JSON shape that invoices snapshot. Mirrors
+// the structure created in App.jsx when an invoice is first saved.
+function buildClientInfoForInvoices(client) {
+  const addresses = Array.isArray(client.addresses) ? client.addresses : []
+  const primary = addresses[0] || {}
+  return {
+    name: client.name || null,
+    email: client.email || null,
+    phone: client.mobile || client.phone || null,
+    address1: primary.line1 || client.address1 || null,
+    address2: primary.line2 || client.address2 || null,
+    address3: primary.line3 || client.address3 || null,
+  }
+}
+
 export async function updateClient(client) {
   const payload = clientPayload(client)
   const { error } = await supabase.from('clients').update(payload).eq('id', client.id)
@@ -475,10 +490,41 @@ export async function updateClient(client) {
       const { addresses, billing_address, ...legacy } = payload
       const { error: e2 } = await supabase.from('clients').update(legacy).eq('id', client.id)
       if (e2) throw e2
-      return
+    } else {
+      throw error
     }
-    throw error
   }
+  // Propagate fresh client info to all existing invoices for this client
+  // so edits show up live across past and future docs. Best-effort — if
+  // the RPC isn't deployed yet (migration 008 not run), fall back to a
+  // direct table update so the bug is still fixed.
+  await propagateClientToInvoices(client).catch((e) => {
+    console.warn('propagateClientToInvoices failed:', e?.message || e)
+  })
+}
+
+async function propagateClientToInvoices(client) {
+  const info = buildClientInfoForInvoices(client)
+  const billing = client.billingAddress || null
+  // Try the RPC first (atomic, future-proof if we add audit logging there).
+  const rpcResp = await supabase.rpc('propagate_client_to_invoices', {
+    p_client_id: client.id,
+    p_client_name: client.name || null,
+    p_client_info: info,
+    p_billing_address: billing,
+  })
+  if (!rpcResp.error) return rpcResp.data
+  // Fallback: direct UPDATE if the function isn't installed yet.
+  const fallback = await supabase
+    .from('invoices')
+    .update({
+      client_name: client.name || null,
+      client_info: info,
+      billing_address: billing,
+    })
+    .eq('client_id', client.id)
+  if (fallback.error) throw fallback.error
+  return null
 }
 
 // ─── Saved Items ──────────────────────────────────────────────────────────────
