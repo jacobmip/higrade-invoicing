@@ -7306,10 +7306,17 @@ export default function App() {
   useEffect(() => {
     if (!chatStorageKey) { setGlobalAIMsgs(null); return; }
     try {
-      // NOTE: an earlier version of this code migrated a legacy global key
-      // (higrade_global_ai_chat) onto whichever user logged in first — which
-      // could clobber the wrong account's history. That auto-migration has
-      // been removed. Any leftover legacy key is now ignored.
+      // One-time cleanup (2026-05-06): an earlier release accidentally
+      // copied one user's chat onto another user's storage slot. Clear
+      // every per-user chat key once on load, then mark the cleanup done
+      // so subsequent loads don't wipe legitimate new chats.
+      const CLEANUP_FLAG = "higrade_chat_cleanup_2026_05_06";
+      if (!localStorage.getItem(CLEANUP_FLAG)) {
+        Object.keys(localStorage)
+          .filter(k => k === "higrade_global_ai_chat" || k.startsWith("higrade_global_ai_chat:"))
+          .forEach(k => localStorage.removeItem(k));
+        localStorage.setItem(CLEANUP_FLAG, "1");
+      }
       const raw = localStorage.getItem(chatStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
