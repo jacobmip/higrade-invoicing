@@ -7213,15 +7213,25 @@ export default function App() {
   // user's owned rows. Persists in localStorage so reload preserves the view.
   const [profile, setProfile] = useState(null);
   const [allUsers, setAllUsers] = useState([]); // admin-only directory
-  const [viewAsUserId, setViewAsUserId] = useState(() => {
-    try { return localStorage.getItem("higrade_view_as") || ""; } catch { return ""; }
-  });
+  // Per-user View-as selection — keyed by the signed-in admin's id so it
+  // doesn't leak between accounts on the same device. Initial state stays
+  // empty until the session loads, then the load effect below populates it.
+  const [viewAsUserId, setViewAsUserId] = useState("");
+  const viewAsStorageKey = useMemo(() => {
+    const uid = session?.user?.id;
+    return uid ? `higrade_view_as:${uid}` : null;
+  }, [session?.user?.id]);
   useEffect(() => {
+    if (!viewAsStorageKey) { setViewAsUserId(""); return; }
+    try { setViewAsUserId(localStorage.getItem(viewAsStorageKey) || ""); } catch { setViewAsUserId(""); }
+  }, [viewAsStorageKey]);
+  useEffect(() => {
+    if (!viewAsStorageKey) return;
     try {
-      if (viewAsUserId) localStorage.setItem("higrade_view_as", viewAsUserId);
-      else localStorage.removeItem("higrade_view_as");
+      if (viewAsUserId) localStorage.setItem(viewAsStorageKey, viewAsUserId);
+      else localStorage.removeItem(viewAsStorageKey);
     } catch {}
-  }, [viewAsUserId]);
+  }, [viewAsUserId, viewAsStorageKey]);
   const isAdmin = profile?.role === "admin";
   // Effective owner filter — admins can View As another user, everyone else
   // sees only their own rows (RLS already enforces this server-side; the
@@ -7282,23 +7292,42 @@ export default function App() {
   // so closing/reopening the modal preserves history. Also mirrored to
   // localStorage so it survives a page reload. The greeting is added on
   // first mount only when there's no saved history.
-  const [globalAIMsgs, setGlobalAIMsgs] = useState(() => {
+  // Per-user chat history. The storage key is suffixed with the signed-in
+  // user's id so two accounts on the same device (e.g. you and your
+  // journeyman both signing in on your Mac) never see each other's chat.
+  // We also one-time migrate any pre-existing global key onto your account
+  // so your existing history isn't lost when this lands.
+  const chatStorageKey = useMemo(() => {
+    const uid = session?.user?.id;
+    return uid ? `higrade_global_ai_chat:${uid}` : null;
+  }, [session?.user?.id]);
+  const [globalAIMsgs, setGlobalAIMsgs] = useState(null);
+  // Reload chat history every time the active account changes.
+  useEffect(() => {
+    if (!chatStorageKey) { setGlobalAIMsgs(null); return; }
     try {
-      const raw = localStorage.getItem("higrade_global_ai_chat");
+      // One-time migration: if this user has no per-user history yet but a
+      // legacy global key exists, claim it for them and delete the global.
+      const legacy = localStorage.getItem("higrade_global_ai_chat");
+      if (legacy && !localStorage.getItem(chatStorageKey)) {
+        localStorage.setItem(chatStorageKey, legacy);
+        localStorage.removeItem("higrade_global_ai_chat");
+      }
+      const raw = localStorage.getItem(chatStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length) {
-          // Migration: if the only message is an old greeting, drop it so the
-          // new greeting gets seeded fresh. Real conversation history is kept.
           if (parsed.length === 1 && parsed[0].role === "assistant" && /I can see \d+ invoices and \d+ clients/.test(parsed[0].text || "")) {
-            return null;
+            setGlobalAIMsgs(null);
+            return;
           }
-          return parsed;
+          setGlobalAIMsgs(parsed);
+          return;
         }
       }
     } catch {}
-    return null; // null means "not yet seeded — seed once data is available"
-  });
+    setGlobalAIMsgs(null);
+  }, [chatStorageKey]);
   const [showMore, setShowMore] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
   // Counter bumped by the header "+" button when on the Expenses tab. The
@@ -7579,7 +7608,7 @@ export default function App() {
     if (!Array.isArray(globalAIMsgs)) return;
     try {
       const trimmed = globalAIMsgs.length > 200 ? globalAIMsgs.slice(-200) : globalAIMsgs;
-      localStorage.setItem("higrade_global_ai_chat", JSON.stringify(trimmed));
+      if (chatStorageKey) localStorage.setItem(chatStorageKey, JSON.stringify(trimmed));
     } catch {}
   }, [globalAIMsgs]);
 
