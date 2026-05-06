@@ -7306,16 +7306,28 @@ export default function App() {
   useEffect(() => {
     if (!chatStorageKey) { setGlobalAIMsgs(null); return; }
     try {
-      // One-time cleanup (2026-05-06): an earlier release accidentally
-      // copied one user's chat onto another user's storage slot. Clear
-      // every per-user chat key once on load, then mark the cleanup done
-      // so subsequent loads don't wipe legitimate new chats.
-      const CLEANUP_FLAG = "higrade_chat_cleanup_2026_05_06";
-      if (!localStorage.getItem(CLEANUP_FLAG)) {
-        Object.keys(localStorage)
-          .filter(k => k === "higrade_global_ai_chat" || k.startsWith("higrade_global_ai_chat:"))
-          .forEach(k => localStorage.removeItem(k));
-        localStorage.setItem(CLEANUP_FLAG, "1");
+      // One-time recovery (2026-05-06): an earlier release auto-migrated
+      // the legacy global chat key onto whichever user happened to log in
+      // first — which turned out to be the test journeyman account, not
+      // the admin. Move the journeyman's chat back onto the admin slot,
+      // then wipe the journeyman key so they start fresh. Guarded by a
+      // flag so it only runs once.
+      const RECOVERY_FLAG = "higrade_chat_recovery_2026_05_06";
+      const ADMIN_KEY     = "higrade_global_ai_chat:0a3bcefd-6faf-4bae-b43b-cd4492dd9938";
+      const TEST_KEY      = "higrade_global_ai_chat:fbf88c7c-ae9c-4601-af22-d0959d59a040";
+      if (!localStorage.getItem(RECOVERY_FLAG)) {
+        const stranded = localStorage.getItem(TEST_KEY);
+        if (stranded) {
+          // Only overwrite admin if admin slot is empty — don't clobber
+          // anything legitimate the admin may have started since.
+          if (!localStorage.getItem(ADMIN_KEY)) {
+            localStorage.setItem(ADMIN_KEY, stranded);
+          }
+          localStorage.removeItem(TEST_KEY);
+        }
+        // Also clear the original legacy key if it's still hanging around.
+        localStorage.removeItem("higrade_global_ai_chat");
+        localStorage.setItem(RECOVERY_FLAG, "1");
       }
       const raw = localStorage.getItem(chatStorageKey);
       if (raw) {
