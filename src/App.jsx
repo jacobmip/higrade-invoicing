@@ -243,8 +243,11 @@ Record a payment on an invoice:
 Remove a line item from an invoice (1-based index as it appears in the invoice):
 {"action":"remove_item","invoiceId":"INV0000","itemIndex":1,"summary":"one sentence"}
 
-Update an existing line item on an invoice (1-based index; only include fields to change):
+Update an existing line item on an invoice (1-based index; only include fields to change). USE THIS for ANY change to an existing line — description rewrites, name changes, qty/price tweaks, marking taxable. "Adjust the description", "rewrite the desc", "change the price", "tweak line 1", "add a step to the description", "include that I'm replacing the 1 inch drain" → ALL update_item:
 {"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"name":"...","desc":"...","qty":1,"price":000,"taxable":true},"summary":"one sentence"}
+
+Example — Jake says "adjust the invoice so the description includes that I'm replacing the 1 inch drain":
+{"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"desc":"Cut out failing 1 inch PVC section below drain\nRemove elbow fitting from existing line\nReplace 1 inch drain pipe (the failing leaking part)\nInstall new 1 inch female adapter\nGlue and prime new fittings\nPressure test repair for leaks"},"summary":"Updated description to call out the 1 inch drain replacement."}
 
 Update a client's contact info (only include fields to change):
 {"action":"update_client","clientName":"exact name","changes":{"email":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
@@ -259,6 +262,7 @@ RULES:
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
 - Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
 - For plain questions or conversation, reply in plain text without JSON.
+- CRITICAL: If Jake asks you to change, edit, adjust, tweak, rewrite, modify, or update ANY field on an existing line item — name, description, qty, price, taxable — you MUST emit an update_item action JSON. NEVER reply in plain text saying you updated something. The app only changes when it sees the JSON. If you reply "I've updated..." or "Updated the description..." without emitting the JSON action, the change does NOT happen and Jake sees a lie. Always emit the JSON.
 - When asked to create multiple invoices or estimates (e.g. "create 10 invoices", "make 5 sample estimates", "create 10 invoices and 10 estimates"), you MUST return ONE single JSON array containing one action object per document — never just one. If asked for 10 invoices, the array MUST have exactly 10 create_invoice objects. If asked for "10 invoices and 10 estimates", return ONE array with 20 objects total (10 create_invoice + 10 create_estimate). Do not split across multiple turns; do not stop after the first object. Vary clients, dates, and items across the documents. Keep desc concise (6 short steps) when generating in bulk so the full array fits in your response. Example shape: [{"action":"create_invoice",...},{"action":"create_invoice",...}, ...]
 - IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.
 - NO BULK DELETES: You can delete ONE invoice or estimate at a time using delete_invoice. Never delete more than one in a single turn. If Jake asks to "delete all invoices", "wipe everything", "clear them all", or anything similar, refuse politely and tell him bulk deletes are handled outside the chat for safety — he should ask Computer (the agent that built this app) to do it directly.`;
@@ -698,6 +702,24 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt);
       const actions = extractActionsJSON(reply);
       const cleanText = stripActionBlocks(reply);
+
+      // Defensive guard: the model sometimes claims it updated a line item
+      // ("I've updated the description...") without emitting the action JSON.
+      // If we detect that pattern with no actions, retry once forcing JSON.
+      const claimsChange = /\b(i'?ve\s+updated|i\s+updated|i'?ve\s+changed|i\s+changed|updated\s+the\s+(description|line|item|price|qty|name)|changed\s+the\s+(description|line|item|price|qty|name))\b/i.test(cleanText || "");
+      if (actions.length === 0 && claimsChange && currentInvoice) {
+        const retryReply = await callAI(
+          [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: "You replied in plain text but the app only applies changes when you emit JSON. Re-send the SAME change as a proper update_item action JSON now. Reply with ONLY the JSON, nothing else." }],
+          systemPrompt
+        );
+        const retryActions = extractActionsJSON(retryReply);
+        if (retryActions.length) {
+          actions.push(...retryActions);
+        } else {
+          setMsgs(p => [...p, { role: "assistant", text: "⚠️ I claimed to update something but didn't emit the action. Try rephrasing, e.g. \"update line 1 description to: <new text>\"." }]);
+          setLoading(false); return;
+        }
+      }
 
       // The legacy 'estimate' action stays as a preview-then-confirm card.
       const previewEstimate = actions.find(a => a.action === "estimate" && a.items?.length);
