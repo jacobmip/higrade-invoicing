@@ -7306,13 +7306,10 @@ export default function App() {
   useEffect(() => {
     if (!chatStorageKey) { setGlobalAIMsgs(null); return; }
     try {
-      // One-time migration: if this user has no per-user history yet but a
-      // legacy global key exists, claim it for them and delete the global.
-      const legacy = localStorage.getItem("higrade_global_ai_chat");
-      if (legacy && !localStorage.getItem(chatStorageKey)) {
-        localStorage.setItem(chatStorageKey, legacy);
-        localStorage.removeItem("higrade_global_ai_chat");
-      }
+      // NOTE: an earlier version of this code migrated a legacy global key
+      // (higrade_global_ai_chat) onto whichever user logged in first — which
+      // could clobber the wrong account's history. That auto-migration has
+      // been removed. Any leftover legacy key is now ignored.
       const raw = localStorage.getItem(chatStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
