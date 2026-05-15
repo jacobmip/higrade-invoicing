@@ -119,3 +119,21 @@ Paste this entire spec as the first message to Claude Code, then iterate. It can
 - [ ] Capacitor build verified on iPhone
 - [ ] Vercel deploy at higrade-invoicing.vercel.app passes regression
 - [ ] VPS deploy at app.higradeplumbing.com receives feature after vps-deploy merge
+
+
+---
+
+## Build & delivery
+
+**Build delivery: systemd timer on VPS, polls `vps-deploy` every 60s.**
+
+The VPS runs `higrade-deploy.timer`, which fires `higrade-deploy.service` every 60 seconds. The service runs `/home/deploy/app/auto_deploy.sh`, which `git fetch`-es `origin/vps-deploy`; if HEAD has moved, it executes `deploy.sh` (which does `git reset --hard origin/vps-deploy && docker compose up -d --build`). No GitHub Actions are involved.
+
+Full pipeline reference: see [`DEPLOY.md`](./DEPLOY.md).
+
+Applied side effects from this feature so far:
+- `supabase/migrations/20260514_invoice_drafts.sql` — already applied to the prod Supabase DB via the SQL editor.
+- `src/invoiceDrafts.js` — module shipping in the live VPS bundle.
+- `src/App.jsx` — imports the module; `window.online → flushQueue` auto-flush listener is live.
+
+Remaining for Claude Code on the Mac mini: wire `drafts.makeAutosave(...)` into the invoice form's state changes and render a "Resume draft?" banner using `drafts.listRemoteDrafts()` on mount.
