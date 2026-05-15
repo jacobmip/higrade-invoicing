@@ -2852,7 +2852,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       ? `Convert this invoice back to an estimate? The original invoice will be DELETED — only the new estimate will remain.`
       : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
     if (!confirm(msg)) return;
-    onConvert?.(form, targetType);
+    onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
   };
 
   // Save button now means "save and exit". Auto-save already handles the
