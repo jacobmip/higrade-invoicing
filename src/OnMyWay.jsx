@@ -13,10 +13,10 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   const [error, setError] = useState("");
 
   function openSms(etaMinutes) {
-    const name = clientName || "there";
+    const firstName = (clientName || "").split(" ")[0] || "there";
     const body = etaMinutes != null
-      ? `Hi ${name}, this is Jake from HI Grade Plumbing. I'm on my way and should arrive in approximately ${etaMinutes} minutes. See you soon!`
-      : `Hi ${name}, this is Jake from HI Grade Plumbing. I'm on my way! See you soon!`;
+      ? `Aloha ${firstName}, this is Jake from HI Grade Plumbing. I'm on my way and should arrive in approximately ${etaMinutes} minutes. See you soon!`
+      : `Aloha ${firstName}, this is Jake from HI Grade Plumbing. I'm on my way! See you soon!`;
     const phone = (clientPhone || "").replace(/\D/g, "");
     window.location.href = `sms:${phone}&body=${encodeURIComponent(body)}`;
   }
