@@ -11,6 +11,7 @@ function buildDestination(jobAddress) {
 
 export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   const [loading, setLoading] = useState(false);
+  const [debugMsg, setDebugMsg] = useState("");
 
   function openSms(etaMinutes) {
     const name = clientName || "there";
@@ -30,7 +31,8 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     const destination = buildDestination(jobAddress);
 
     if (!destination) {
-      openSms(null);
+      setDebugMsg("No address");
+      setTimeout(() => { setDebugMsg(""); openSms(null); }, 2000);
       return;
     }
 
@@ -45,10 +47,12 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       if (data.minutes) {
         openSms(data.minutes);
       } else {
-        openSms(null);
+        setDebugMsg(`API: ${data.error || JSON.stringify(data)}`);
+        setTimeout(() => { setDebugMsg(""); openSms(null); }, 3000);
       }
-    } catch {
-      openSms(null);
+    } catch (err) {
+      setDebugMsg(`Error: ${err?.message || err}`);
+      setTimeout(() => { setDebugMsg(""); openSms(null); }, 3000);
     } finally {
       setLoading(false);
     }
@@ -79,7 +83,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
         boxShadow: loading ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
       }}
     >
-      {loading ? "Getting ETA…" : "On My Way"}
+      {debugMsg || (loading ? "Getting ETA…" : "On My Way")}
     </button>
   );
 }
