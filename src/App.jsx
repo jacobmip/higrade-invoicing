@@ -8159,8 +8159,10 @@ export default function App() {
       gcalDate: null,
       followUpEventId: null,
       followUpDate: null,
-      // Don't carry the convertedToId from the source — the copy is brand new.
+      // Don't carry the convertedToId or viewToken from the source — the copy
+      // is brand new and viewToken must be unique across all invoices.
       convertedToId: null,
+      viewToken: null,
       notes: form.notes ? form.notes : "",
     };
     // Two flows:
