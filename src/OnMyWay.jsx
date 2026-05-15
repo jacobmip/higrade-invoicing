@@ -28,12 +28,8 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     }
 
     const destination = buildDestination(jobAddress);
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
-    console.log("[OnMyWay] destination:", destination, "| apiKey set:", !!apiKey);
-
-    if (!destination || !apiKey) {
-      console.warn("[OnMyWay] Missing destination or API key — sending without ETA");
+    if (!destination) {
       openSms(null);
       return;
     }
@@ -44,20 +40,14 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
         navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
       );
       const { latitude, longitude } = pos.coords;
-      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${latitude},${longitude}&destinations=${encodeURIComponent(destination)}&key=${apiKey}`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/eta?origin=${latitude},${longitude}&destination=${encodeURIComponent(destination)}`);
       const data = await res.json();
-      console.log("[OnMyWay] Distance Matrix response:", JSON.stringify(data));
-      const element = data?.rows?.[0]?.elements?.[0];
-      if (element?.status === "OK" && element?.duration?.value) {
-        const minutes = Math.round(element.duration.value / 60);
-        openSms(minutes);
+      if (data.minutes) {
+        openSms(data.minutes);
       } else {
-        console.warn("[OnMyWay] No ETA — element:", element);
         openSms(null);
       }
-    } catch (err) {
-      console.warn("[OnMyWay] Error:", err);
+    } catch {
       openSms(null);
     } finally {
       setLoading(false);
