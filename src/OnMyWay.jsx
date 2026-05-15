@@ -31,8 +31,8 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     const destination = buildDestination(jobAddress);
 
     if (!destination) {
-      setDebugMsg("No address");
-      setTimeout(() => { setDebugMsg(""); openSms(null); }, 2000);
+      alert("[OnMyWay] No destination address found on this invoice.");
+      openSms(null);
       return;
     }
 
@@ -47,12 +47,12 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       if (data.minutes) {
         openSms(data.minutes);
       } else {
-        setDebugMsg(`API: ${data.error || JSON.stringify(data)}`);
-        setTimeout(() => { setDebugMsg(""); openSms(null); }, 3000);
+        alert(`[OnMyWay] API response: ${JSON.stringify(data)}`);
+        openSms(null);
       }
     } catch (err) {
-      setDebugMsg(`Error: ${err?.message || err}`);
-      setTimeout(() => { setDebugMsg(""); openSms(null); }, 3000);
+      alert(`[OnMyWay] Error: ${err?.message || String(err)}`);
+      openSms(null);
     } finally {
       setLoading(false);
     }
