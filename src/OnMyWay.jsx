@@ -23,6 +23,10 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   }
 
   async function handlePress() {
+    if (debugMsg) {
+      openSms(null);
+      return;
+    }
     if (!clientPhone) {
       openSms(null);
       return;
@@ -31,8 +35,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     const destination = buildDestination(jobAddress);
 
     if (!destination) {
-      alert("[OnMyWay] No destination address found on this invoice.");
-      openSms(null);
+      setDebugMsg("No address — tap to send anyway");
       return;
     }
 
@@ -47,12 +50,10 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       if (data.minutes) {
         openSms(data.minutes);
       } else {
-        alert(`[OnMyWay] API response: ${JSON.stringify(data)}`);
-        openSms(null);
+        setDebugMsg(`API err: ${data.error || JSON.stringify(data)} — tap to send`);
       }
     } catch (err) {
-      alert(`[OnMyWay] Error: ${err?.message || String(err)}`);
-      openSms(null);
+      setDebugMsg(`${err?.message || String(err)} — tap to send`);
     } finally {
       setLoading(false);
     }
