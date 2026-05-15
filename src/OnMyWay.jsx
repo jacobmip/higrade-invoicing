@@ -1,7 +1,6 @@
 import { useState } from "react";
 
 const ORANGE = "#E8622A";
-const NAVY = "#0a1628";
 
 function buildDestination(jobAddress) {
   if (!jobAddress) return "";
@@ -11,7 +10,7 @@ function buildDestination(jobAddress) {
 
 export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   const [loading, setLoading] = useState(false);
-  const [debugMsg, setDebugMsg] = useState("");
+  const [error, setError] = useState("");
 
   function openSms(etaMinutes) {
     const name = clientName || "there";
@@ -23,19 +22,15 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   }
 
   async function handlePress() {
-    if (debugMsg) {
+    if (error) {
       openSms(null);
-      return;
-    }
-    if (!clientPhone) {
-      setDebugMsg("No phone on file — tap to send anyway");
       return;
     }
 
     const destination = buildDestination(jobAddress);
 
-    if (!destination) {
-      setDebugMsg("No address — tap to send anyway");
+    if (!clientPhone || !destination) {
+      openSms(null);
       return;
     }
 
@@ -50,10 +45,10 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       if (data.minutes) {
         openSms(data.minutes);
       } else {
-        setDebugMsg(`${data.error}${data.error_message ? ': ' + data.error_message : ''} — tap to send`);
+        setError("Could not get ETA — tap to send anyway");
       }
-    } catch (err) {
-      setDebugMsg(`${err?.message || String(err)} — tap to send`);
+    } catch {
+      setError("Location unavailable — tap to send anyway");
     } finally {
       setLoading(false);
     }
@@ -84,7 +79,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
         boxShadow: loading ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
       }}
     >
-      {debugMsg || (loading ? "Getting ETA…" : "On My Way v2")}
+      {error || (loading ? "Getting ETA…" : "On My Way")}
     </button>
   );
 }

@@ -38,11 +38,7 @@ export default async function handler(req) {
     });
   }
 
-  return new Response(JSON.stringify({
-    error: data?.status || 'No route found',
-    error_message: data?.error_message || null,
-    element_status: element?.status || null,
-  }), {
+  return new Response(JSON.stringify({ error: data?.status || 'No route found' }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
