@@ -5376,7 +5376,7 @@ function PayPalCheckout({ token, invoiceId, balance, onPaid, clientId }) {
 // /api/track-open is also pinged once per mount so the activity log gets
 // an "opened" entry.
 function PublicViewerPage({ token }) {
-  const [state, setState] = useState({ loading: true, error: null, invoice: null, items: [], payments: [], company: null });
+  const [state, setState] = useState({ loading: true, error: null, invoice: null, items: [], payments: [], photos: [], company: null });
   const trackedRef = useRef(false);
 
   // Reactive viewport-width detection so the page switches between the
@@ -5403,9 +5403,9 @@ function PublicViewerPage({ token }) {
           return;
         }
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        const { invoice, items, payments } = await r.json();
+        const { invoice, items, payments, photos } = await r.json();
         if (cancelled) return;
-        setState({ loading: false, error: null, invoice, items: items || [], payments: payments || [] });
+        setState({ loading: false, error: null, invoice, items: items || [], payments: payments || [], photos: photos || [] });
         // Fire-and-forget open tracker. Guarded so React StrictMode double
         // mount doesn't double-log; the server also de-dupes by IP/hour.
         if (!trackedRef.current) {
@@ -5413,7 +5413,7 @@ function PublicViewerPage({ token }) {
           fetch(api(`/api/track-open?token=${encodeURIComponent(token)}`), { method: 'POST' }).catch(() => {});
         }
       } catch (e) {
-        if (!cancelled) setState({ loading: false, error: e.message || 'Error loading', invoice: null, items: [], payments: [] });
+        if (!cancelled) setState({ loading: false, error: e.message || 'Error loading', invoice: null, items: [], payments: [], photos: [] });
       }
     })();
     return () => { cancelled = true; };
@@ -5927,7 +5927,7 @@ function PublicViewerPage({ token }) {
           </div>
         )}
         {/* Reuse the in-app PDF preview for full details */}
-        <PDFPreview form={invForm} clients={[]} />
+        <PDFPreview form={invForm} clients={[]} photos={state.photos || []} />
         {/* Footer */}
         <div style={{ textAlign: 'center', color: '#aaa', fontSize: 12, padding: '20px 16px 0' }}>
           Questions? Call or text 808-393-0015<br />higradeplumbing@gmail.com

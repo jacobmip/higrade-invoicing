@@ -64,14 +64,16 @@ export default async function handler(req, res) {
     const inv = invRows && invRows[0];
     if (!inv) return send(res, 404, { error: 'not_found' });
 
-    const [itemsRes, paymentsRes] = await Promise.all([
+    const [itemsRes, paymentsRes, photosRes] = await Promise.all([
       fetch(`${base}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(inv.id)}&order=sort_order`, { headers }),
       fetch(`${base}/rest/v1/payments?invoice_id=eq.${encodeURIComponent(inv.id)}&order=date`, { headers }),
+      fetch(`${base}/rest/v1/job_photos?invoice_id=eq.${encodeURIComponent(inv.id)}&order=created_at`, { headers }),
     ]);
     const items = itemsRes.ok ? await itemsRes.json() : [];
     const payments = paymentsRes.ok ? await paymentsRes.json() : [];
+    const photos = photosRes.ok ? await photosRes.json() : [];
 
-    return send(res, 200, { invoice: inv, items, payments });
+    return send(res, 200, { invoice: inv, items, payments, photos });
   } catch (e) {
     console.error('[public-invoice] error:', e);
     return send(res, 500, { error: e.message || String(e) });
