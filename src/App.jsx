@@ -3333,7 +3333,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             )}
           </div>
 
-          {(effectiveClientInfo?.phone || selectedClient?.mobile || selectedClient?.phone) && (
+          {form.client && (
             <div style={{ padding: "12px 16px 0" }}>
               <OnMyWay
                 clientName={effectiveClientInfo?.name || form.client || ""}
