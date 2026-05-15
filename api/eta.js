@@ -25,7 +25,9 @@ export default async function handler(req) {
   }
 
   const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&key=${apiKey}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: { Referer: 'https://higrade-invoicing.vercel.app' },
+  });
   const data = await res.json();
 
   const element = data?.rows?.[0]?.elements?.[0];
