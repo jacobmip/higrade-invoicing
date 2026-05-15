@@ -50,7 +50,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       if (data.minutes) {
         openSms(data.minutes);
       } else {
-        setDebugMsg(`API err: ${data.error || JSON.stringify(data)} — tap to send`);
+        setDebugMsg(`${data.error}${data.error_message ? ': ' + data.error_message : ''} — tap to send`);
       }
     } catch (err) {
       setDebugMsg(`${err?.message || String(err)} — tap to send`);
