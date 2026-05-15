@@ -6,7 +6,7 @@ import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
-import JobPhotos from './JobPhotos.jsx';
+import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -2016,7 +2016,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
 }
 
 // ─── PDF Preview ──────────────────────────────────────────────────────────────
-function PDFPreview({ form, clients }) {
+function PDFPreview({ form, clients, photos = [] }) {
   const t = calcTotals(form);
   const clientRecord = clients.find(c => c.name === form.client) || {};
   const clientData = form.clientInfo || clientRecord;
@@ -2145,6 +2145,49 @@ function PDFPreview({ form, clients }) {
             <div style={{ fontSize: 12, color: "#555", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{paymentInstructionsText}</div>
           </div>
         )}
+        {photos.length > 0 && (() => {
+          const before = photos.filter(p => p.type === 'before');
+          const after  = photos.filter(p => p.type === 'after');
+          const other  = photos.filter(p => p.type === 'other');
+          return (
+            <div style={{ padding: '13px 24px 16px', borderTop: '1px solid #f0f2f8' }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#6677aa', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 10 }}>Job Photos</div>
+              {(before.length > 0 || after.length > 0) && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Before</div>
+                    {before.map(p => (
+                      <div key={p.id} style={{ marginBottom: 8 }}>
+                        <img src={p.url} alt={p.caption || 'before'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                        {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>After</div>
+                    {after.map(p => (
+                      <div key={p.id} style={{ marginBottom: 8 }}>
+                        <img src={p.url} alt={p.caption || 'after'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                        {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {other.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Additional Photos</div>
+                  {other.map(p => (
+                    <div key={p.id} style={{ marginBottom: 8 }}>
+                      <img src={p.url} alt={p.caption || 'photo'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                      {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <div style={{ background: NAVY, padding: "13px 24px", textAlign: "center" }}>
           <div style={{ color: "#8899bb", fontSize: 11 }}>Thank you for your business!</div>
           <div style={{ color: "#6677aa", fontSize: 10, marginTop: 3 }}>higradeplumbing.com · (808) 393-0015</div>
@@ -2390,6 +2433,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   }, [autoSendKind]);
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
+  const [invoicePhotos, setInvoicePhotos] = useState([]);
   // Per-invoice AI chat history. Lives on the form so toggling the panel
   // closed/open preserves the conversation. Each invoice gets its own bucket
   // in localStorage keyed by id; an unsaved draft uses "draft" until autosave
@@ -2469,6 +2513,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Refresh events when the History tab is opened (catches opens that happened
   // since the form was loaded).
   useEffect(() => { if (activeTab === 'history') refreshEvents(); /* eslint-disable-next-line */ }, [activeTab]);
+  useEffect(() => { const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [form.id, autoSavedId]);
   const [autoSaving, setAutoSaving] = useState(false);
   // Debounced auto-save — persists silently while the user edits so the back
   // button and the Save button are interchangeable. We skip the very first
@@ -3520,7 +3565,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 1 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 1 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
-        <PDFPreview form={form} clients={clients} />
+        <PDFPreview form={form} clients={clients} photos={invoicePhotos} />
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 2 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 2 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div style={{ padding: 16 }}>
@@ -5475,9 +5520,11 @@ function PublicViewerPage({ token }) {
   const handlePrintPdf = async () => {
     try {
       const mod = await import('./printablePdf.js');
-      const blob = mod.buildPrintablePdf(invForm, {
+      const photos = invForm.id ? await fetchInvoicePhotos(invForm.id) : [];
+      const blob = await mod.buildPrintablePdf(invForm, {
         lateFee: lateFeeInfo,
         paymentInstructions: paymentInstructionsText,
+        photos,
       });
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank', 'noopener,noreferrer');
@@ -7892,7 +7939,8 @@ export default function App() {
     const t = calcTotals(inv);
     const lateFee = calcLateFee(inv, t);
     const paymentInstructions = inv.type === 'estimate' ? '' : resolvePaymentInstructions();
-    return mod.buildPrintablePdf(inv, { lateFee, paymentInstructions });
+    const photos = inv.id ? await fetchInvoicePhotos(inv.id) : [];
+    return await mod.buildPrintablePdf(inv, { lateFee, paymentInstructions, photos });
   };
 
   const shareInvoice = async (inv) => {

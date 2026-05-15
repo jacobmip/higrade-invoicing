@@ -13,6 +13,16 @@ const TYPE_COLORS = {
   other:  '#8899bb',
 };
 
+export async function fetchInvoicePhotos(invoiceId) {
+  if (!invoiceId) return [];
+  const { data } = await supabase
+    .from('job_photos')
+    .select('*')
+    .eq('invoice_id', invoiceId)
+    .order('created_at', { ascending: true });
+  return data || [];
+}
+
 export default function JobPhotos({ invoiceId }) {
   const [photos, setPhotos]       = useState([]);
   const [loading, setLoading]     = useState(true);

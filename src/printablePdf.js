@@ -404,9 +404,108 @@ function drawNotesAndFooter(doc, form, startY, paymentInstructions) {
   doc.text(tag, (PAGE_W - doc.getTextWidth(tag)) / 2, footerY + 52);
 }
 
+// ── Photo helpers ─────────────────────────────────────────────────────────
+
+async function fetchImageAsBase64(url) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ""));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function drawPhotos(doc, form, photos) {
+  if (!photos || photos.length === 0) return;
+
+  const before = photos.filter(p => p.type === 'before');
+  const after  = photos.filter(p => p.type === 'after');
+  const other  = photos.filter(p => p.type === 'other');
+
+  doc.addPage();
+  drawHeader(doc, form);
+
+  let y = 158;
+  const colW = (PAGE_W - 2 * MARGIN - 16) / 2; // two columns with 16pt gap
+  const colH = Math.round(colW * 0.75);          // 4:3 per photo
+  const fullW = PAGE_W - 2 * MARGIN;
+  const fullH = Math.round(fullW * 0.5);          // 2:1 for other photos
+
+  const pageBottom = PAGE_H - 80;
+
+  // Section header
+  setText(doc, "#6677aa");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text("JOB PHOTOS", MARGIN, y);
+  y += 20;
+
+  // Before / After two-column grid
+  if (before.length > 0 || after.length > 0) {
+    setText(doc, NAVY);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("Before", MARGIN, y);
+    doc.text("After", MARGIN + colW + 16, y);
+    y += 14;
+
+    const rows = Math.max(before.length, after.length);
+    for (let i = 0; i < rows; i++) {
+      if (y + colH + 20 > pageBottom) { doc.addPage(); drawHeader(doc, form); y = 158; }
+      for (const [photo, xOff] of [[before[i], 0], [after[i], colW + 16]]) {
+        if (!photo) continue;
+        const b64 = await fetchImageAsBase64(photo.url);
+        if (b64) {
+          const fmt = b64.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+          try { doc.addImage(b64, fmt, MARGIN + xOff, y, colW, colH); } catch {}
+        }
+        if (photo.caption) {
+          setText(doc, TEXT_LIGHT);
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(9);
+          doc.text(photo.caption, MARGIN + xOff, y + colH + 11);
+        }
+      }
+      y += colH + 24;
+    }
+  }
+
+  // Other — full width
+  if (other.length > 0) {
+    if (y + 20 > pageBottom) { doc.addPage(); drawHeader(doc, form); y = 158; }
+    setText(doc, NAVY);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("Additional Photos", MARGIN, y);
+    y += 14;
+
+    for (const photo of other) {
+      if (y + fullH + 20 > pageBottom) { doc.addPage(); drawHeader(doc, form); y = 158; }
+      const b64 = await fetchImageAsBase64(photo.url);
+      if (b64) {
+        const fmt = b64.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+        try { doc.addImage(b64, fmt, MARGIN, y, fullW, fullH); } catch {}
+      }
+      if (photo.caption) {
+        setText(doc, TEXT_LIGHT);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text(photo.caption, MARGIN, y + fullH + 11);
+      }
+      y += fullH + 24;
+    }
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 
-export function buildPrintablePdf(form, opts = {}) {
+export async function buildPrintablePdf(form, opts = {}) {
   const doc = new jsPDF({ unit: "pt", format: "letter", compress: true });
 
   drawHeader(doc, form);
@@ -414,6 +513,7 @@ export function buildPrintablePdf(form, opts = {}) {
   const itemsEndY = drawItemsTable(doc, form, billY + 12);
   const totalsEndY = drawTotals(doc, form, itemsEndY, opts.lateFee);
   drawNotesAndFooter(doc, form, totalsEndY, opts.paymentInstructions);
+  if (opts.photos?.length) await drawPhotos(doc, form, opts.photos);
 
   return doc.output("blob");
 }
