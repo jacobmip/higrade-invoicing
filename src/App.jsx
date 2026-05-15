@@ -2514,6 +2514,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // since the form was loaded).
   useEffect(() => { if (activeTab === 'history') refreshEvents(); /* eslint-disable-next-line */ }, [activeTab]);
   useEffect(() => { const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [form.id, autoSavedId]);
+  useEffect(() => { if (activeTab !== 'preview') return; const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [activeTab]);
   const [autoSaving, setAutoSaving] = useState(false);
   // Debounced auto-save — persists silently while the user edits so the back
   // button and the Save button are interchangeable. We skip the very first
