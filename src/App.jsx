@@ -2029,6 +2029,9 @@ function PDFPreview({ form, clients, photos = [] }) {
   // the receipt can show 'Processing Fee' on its own line. Without this,
   // the customer sees the gross paid amount and thinks they overpaid.
   const totalSurcharge = (form.payments || []).reduce((s, p) => s + (parseFloat(p.surcharge) || 0), 0);
+  const beforePhotos = photos.filter(p => p.type === 'before');
+  const afterPhotos  = photos.filter(p => p.type === 'after');
+  const otherPhotos  = photos.filter(p => p.type === 'other');
 
   return (
     <div className="print-area" style={{ padding: "16px 12px 40px" }}>
@@ -2145,49 +2148,44 @@ function PDFPreview({ form, clients, photos = [] }) {
             <div style={{ fontSize: 12, color: "#555", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{paymentInstructionsText}</div>
           </div>
         )}
-        {photos.length > 0 && (() => {
-          const before = photos.filter(p => p.type === 'before');
-          const after  = photos.filter(p => p.type === 'after');
-          const other  = photos.filter(p => p.type === 'other');
-          return (
-            <div style={{ padding: '13px 24px 16px', borderTop: '1px solid #f0f2f8' }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#6677aa', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 10 }}>Job Photos</div>
-              {(before.length > 0 || after.length > 0) && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Before</div>
-                    {before.map(p => (
-                      <div key={p.id} style={{ marginBottom: 8 }}>
-                        <img src={p.url} alt={p.caption || 'before'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
-                        {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
-                      </div>
-                    ))}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>After</div>
-                    {after.map(p => (
-                      <div key={p.id} style={{ marginBottom: 8 }}>
-                        <img src={p.url} alt={p.caption || 'after'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
-                        {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {other.length > 0 && (
+        {photos.length > 0 && (
+          <div style={{ padding: '13px 24px 16px', borderTop: '1px solid #f0f2f8' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#6677aa', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 10 }}>Job Photos</div>
+            {(beforePhotos.length > 0 || afterPhotos.length > 0) && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
                 <div>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Additional Photos</div>
-                  {other.map(p => (
+                  <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Before</div>
+                  {beforePhotos.map(p => (
                     <div key={p.id} style={{ marginBottom: 8 }}>
-                      <img src={p.url} alt={p.caption || 'photo'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                      <img src={p.url} alt={p.caption || 'before'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
                       {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          );
-        })()}
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>After</div>
+                  {afterPhotos.map(p => (
+                    <div key={p.id} style={{ marginBottom: 8 }}>
+                      <img src={p.url} alt={p.caption || 'after'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                      {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {otherPhotos.length > 0 && (
+              <div>
+                <div style={{ fontSize: 9, fontWeight: 700, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Additional Photos</div>
+                {otherPhotos.map(p => (
+                  <div key={p.id} style={{ marginBottom: 8 }}>
+                    <img src={p.url} alt={p.caption || 'photo'} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                    {p.caption && <div style={{ fontSize: 10, color: '#888', marginTop: 3 }}>{p.caption}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ background: NAVY, padding: "13px 24px", textAlign: "center" }}>
           <div style={{ color: "#8899bb", fontSize: 11 }}>Thank you for your business!</div>
           <div style={{ color: "#6677aa", fontSize: 10, marginTop: 3 }}>higradeplumbing.com · (808) 393-0015</div>

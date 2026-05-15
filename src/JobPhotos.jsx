@@ -15,11 +15,12 @@ const TYPE_COLORS = {
 
 export async function fetchInvoicePhotos(invoiceId) {
   if (!invoiceId) return [];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('job_photos')
     .select('*')
     .eq('invoice_id', invoiceId)
     .order('created_at', { ascending: true });
+  if (error) console.warn('[fetchInvoicePhotos]', error.message);
   return data || [];
 }
 
