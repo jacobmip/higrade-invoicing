@@ -30,7 +30,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     const destination = buildDestination(jobAddress);
 
     if (!clientPhone || !destination) {
-      openSms(null);
+      setError(`missing: ${!clientPhone ? "phone " : ""}${!destination ? "address" : ""} — tap to send`);
       return;
     }
 
