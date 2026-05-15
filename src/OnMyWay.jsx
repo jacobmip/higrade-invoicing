@@ -28,7 +28,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       return;
     }
     if (!clientPhone) {
-      openSms(null);
+      setDebugMsg("No phone on file — tap to send anyway");
       return;
     }
 
