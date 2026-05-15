@@ -7,6 +7,7 @@ import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
+import OnMyWay from './OnMyWay.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -3331,6 +3332,16 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               </div>
             )}
           </div>
+
+          {(effectiveClientInfo?.phone || selectedClient?.mobile || selectedClient?.phone) && (
+            <div style={{ padding: "12px 16px 0" }}>
+              <OnMyWay
+                clientName={effectiveClientInfo?.name || form.client || ""}
+                clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
+                jobAddress={form.jobAddress}
+              />
+            </div>
+          )}
 
           {/* Dates — estimates have no due date by default. Show a single full-width */}
           {/* date picker for estimates and the usual two-column grid for invoices. */}
