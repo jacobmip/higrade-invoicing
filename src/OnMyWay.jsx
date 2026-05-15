@@ -45,10 +45,10 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       if (data.minutes) {
         openSms(data.minutes);
       } else {
-        setError("Could not get ETA — tap to send anyway");
+        setError(`${JSON.stringify(data)} — tap to send`);
       }
-    } catch {
-      setError("Location unavailable — tap to send anyway");
+    } catch (err) {
+      setError(`${err?.message || err} — tap to send`);
     } finally {
       setLoading(false);
     }
