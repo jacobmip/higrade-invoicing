@@ -2,9 +2,6 @@ name: Deploy to VPS
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ vps-deploy ]
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
