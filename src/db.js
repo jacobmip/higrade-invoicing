@@ -480,6 +480,24 @@ export function generateViewToken() {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// Delete any invoices that share the given viewToken but are not keepId.
+// Called before stamping convertedToId on a source estimate so orphaned
+// invoices left by previous failed conversion attempts don't block the
+// unique constraint on view_token.
+export async function deleteOrphansByViewToken(viewToken, keepId) {
+  if (!viewToken) return [];
+  const { data } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('view_token', viewToken)
+    .neq('id', keepId);
+  const ids = (data || []).map(r => r.id);
+  for (const id of ids) {
+    await supabase.from('invoices').delete().eq('id', id);
+  }
+  return ids;
+}
+
 // Make sure the invoice has a view_token. Returns the (possibly new) token.
 // Persists it on the row if it was newly minted.
 export async function ensureViewToken(invoice) {

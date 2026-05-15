@@ -8194,6 +8194,16 @@ export default function App() {
       if (deleteSource) {
         await db.deleteInvoice(form.id);
       } else {
+        // Before stamping convertedToId on the source estimate, delete any
+        // invoices that share its viewToken. Those are orphans left by a
+        // previous failed conversion (step 1 succeeded but step 2 threw),
+        // and they block the unique constraint on view_token.
+        if (form.viewToken) {
+          const orphanIds = await db.deleteOrphansByViewToken(form.viewToken, form.id);
+          if (orphanIds.length) {
+            setData(d => ({ ...d, invoices: d.invoices.filter(inv => !orphanIds.includes(inv.id)) }));
+          }
+        }
         await db.upsertInvoice({ ...form, convertedToId: newId }, false);
       }
     } catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
