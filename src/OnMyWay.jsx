@@ -83,7 +83,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
         boxShadow: loading ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
       }}
     >
-      {debugMsg || (loading ? "Getting ETA…" : "On My Way")}
+      {debugMsg || (loading ? "Getting ETA…" : "On My Way v2")}
     </button>
   );
 }
