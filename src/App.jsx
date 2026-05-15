@@ -6,6 +6,7 @@ import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
+import JobPhotos from './JobPhotos.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -2867,7 +2868,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     }).filter(Boolean),
   ].sort((a, b) => b.sortKey - a.sortKey);
 
-  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }];
+  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }];
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
 
   // Real carousel swipe between Edit / Preview / History. All three panels
@@ -3578,6 +3579,11 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               ))}
             </div>
           )}
+        </div>
+      </div>
+      <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 3 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 3 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
+        <div style={{ padding: 16 }}>
+          <JobPhotos invoiceId={form.id || autoSavedId} />
         </div>
       </div>
       </div>
