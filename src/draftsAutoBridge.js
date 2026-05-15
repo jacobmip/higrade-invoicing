@@ -11,7 +11,7 @@
 //
 // The Phase 2 UI wiring (banner mount, More-sheet entry, finalize call) can
 // be added incrementally; this bridge is the foundation and is safe to ship
-// on its own — it has zero effect until something calls window.higradeDrafts.
+// on its own - it has zero effect until something calls window.higradeDrafts.
 
 import * as drafts from './invoiceDrafts.js';
 
@@ -58,7 +58,10 @@ async function flush() {
   }
 }
 
-function setActiveDraft(id) { state.lastId = id || null; }
+function setActiveDraft(id) {
+  state.lastId = id || null;
+}
+
 function clearActiveDraft() {
   state.lastForm = null;
   state.lastId = null;
@@ -71,15 +74,25 @@ function clearActiveDraft() {
 async function finalize(id) {
   const useId = id || state.lastId;
   if (!useId) return;
-  try { await drafts.finalizeDraft(useId); } catch (e) { console.warn(e); }
+  try {
+    await drafts.finalizeDraft(useId);
+  } catch (e) {
+    console.warn(e);
+  }
   clearActiveDraft();
 }
 
 async function discard(id) {
   const useId = id || state.lastId;
   if (!useId) return;
-  try { await drafts.discardDraft(useId); } catch (e) { console.warn(e); }
+  try {
+    await drafts.discardDraft(useId);
+  } catch (e) {
+    console.warn(e);
+  }
   clearActiveDraft();
+}
+
 if (typeof window !== 'undefined') {
   window.higradeDrafts = {
     save: (form) => scheduleSave(form),
