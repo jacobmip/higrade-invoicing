@@ -8,6 +8,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
+import PriceBook from './PriceBook.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -2393,6 +2394,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
   const [showSaved, setShowSaved] = useState(false);
+  const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -3362,7 +3364,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 </button>
                 {!reordering && <>
                   <button onClick={() => { setShowAI(!showAI); setShowSaved(false); }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
-                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}>Saved</button>
+                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}>Saved</button>
+                  <button onClick={() => { setShowPriceBook(true); setShowSaved(false); setShowAI(false); }} style={{ ...S.btn("ghost"), fontSize: 11, padding: "5px 9px" }}>Price Book</button>
                   <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px" }}><Icon name="plus" size={16} color="#fff" /></button>
                 </>}
               </div>
@@ -3643,6 +3646,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       </div>
       </div>
       </div>
+      {showPriceBook && (
+        <PriceBook
+          items={savedItems}
+          onSelect={item => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable }] }))}
+          onClose={() => setShowPriceBook(false)}
+        />
+      )}
     </div>
   );
 }
