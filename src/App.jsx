@@ -2387,7 +2387,7 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onRegisterAddItem, data, onAIAction, autoSendKind, onAutoSendConsumed }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -2591,11 +2591,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
   const addItem = (name = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name, price }] }));
-  useEffect(() => {
-    onRegisterAddItem?.(item => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable }] })));
-    return () => { onRegisterAddItem?.(null); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const removeItem = (i) => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }));
   const moveItem = (from, to) => setForm(f => { const items = [...f.items]; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...f, items }; });
 
@@ -7444,7 +7439,6 @@ export default function App() {
   }, [chatStorageKey]);
   const [showMore, setShowMore] = useState(false);
   const [showPriceBook, setShowPriceBook] = useState(false);
-  const addItemToFormRef = useRef(null);
   const [openClientId, setOpenClientId] = useState(null);
   // Counter bumped by the header "+" button when on the Expenses tab. The
   // ExpensesTab watches this with useEffect and opens its modal in response.
@@ -8527,7 +8521,6 @@ export default function App() {
           }}
           onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
           onConvert={convertInvoice}
-          onRegisterAddItem={fn => { addItemToFormRef.current = fn; }}
         />
       ) : (
         <>
@@ -8562,9 +8555,15 @@ export default function App() {
       {showPriceBook && (
         <PriceBook
           items={data.savedItems}
-          onSelect={item => {
-            addItemToFormRef.current?.(item);
+          onSelect={async item => {
             setShowPriceBook(false);
+            try {
+              const newInv = await handleGlobalAIAction({
+                action: "create_invoice",
+                invoice: { date: today(), dueDate: today(), items: [{ name: item.name, desc: item.desc || "", qty: 1, price: item.price, taxable: item.taxable, unit: item.unit || "ea", discount: 0, discountType: "%" }], tax: TAX_RATE, discount: 0 },
+              });
+              if (newInv) { setSelected(newInv); setView("form"); setNewDocType("invoice"); }
+            } catch (e) { alert("Could not create invoice: " + (e.message || e)); }
           }}
           onClose={() => setShowPriceBook(false)}
         />
