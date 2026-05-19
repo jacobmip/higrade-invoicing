@@ -2394,6 +2394,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
   const [showSaved, setShowSaved] = useState(false);
+  const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -3355,16 +3356,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
           {/* Line Items */}
           <div style={{ padding: "16px 16px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Line Items</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => { setReordering(!reordering); setShowAI(false); setShowSaved(false); }} style={{ ...S.btn(reordering ? "primary" : "ghost"), fontSize: 11, padding: "5px 9px", display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>Line Items</span>
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", flexShrink: 1, minWidth: 0 }}>
+                <button onClick={() => { setReordering(!reordering); setShowAI(false); setShowSaved(false); setShowPriceBook(false); }} style={{ ...S.btn(reordering ? "primary" : "ghost"), fontSize: 11, padding: "5px 9px", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
                   <Icon name="grip" size={12} color={reordering ? "#fff" : "#444"} />{reordering ? "Done" : "Reorder"}
                 </button>
                 {!reordering && <>
-                  <button onClick={() => { setShowAI(!showAI); setShowSaved(false); }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
-                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}>Saved</button>
-                  <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px" }}><Icon name="plus" size={16} color="#fff" /></button>
+                  <button onClick={() => { setShowAI(!showAI); setShowSaved(false); setShowPriceBook(false); }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
+                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Saved</button>
+                  <button onClick={() => { setShowPriceBook(!showPriceBook); setShowAI(false); setShowSaved(false); }} style={{ ...S.btn(showPriceBook ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Price Book</button>
+                  <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
                 </>}
               </div>
             </div>
@@ -3385,6 +3387,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   </div>
                 ))}
               </div>
+            )}
+
+            {showPriceBook && (
+              <PriceBook
+                items={savedItems}
+                onSelect={item => {
+                  setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] }));
+                  setShowPriceBook(false);
+                }}
+                onClose={() => setShowPriceBook(false)}
+              />
             )}
 
             {/* Item rows */}
