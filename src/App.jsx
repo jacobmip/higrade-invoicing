@@ -3018,6 +3018,16 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           onSaveToLibrary={onSaveItem}
         />
       )}
+      {showPriceBook && activeTab === "edit" && (
+        <PriceBook
+          items={savedItems}
+          onSelect={item => {
+            setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] }));
+            setShowPriceBook(false);
+          }}
+          onClose={() => setShowPriceBook(false)}
+        />
+      )}
 
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <button onClick={handleBack} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
@@ -3388,17 +3398,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   </div>
                 ))}
               </div>
-            )}
-
-            {showPriceBook && activeTab === "edit" && (
-              <PriceBook
-                items={savedItems}
-                onSelect={item => {
-                  setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] }));
-                  setShowPriceBook(false);
-                }}
-                onClose={() => setShowPriceBook(false)}
-              />
             )}
 
             {/* Item rows */}
