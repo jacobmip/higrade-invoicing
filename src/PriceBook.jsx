@@ -37,12 +37,12 @@ export default function PriceBook({ items, onSelect, onClose }) {
         {/* Header */}
         <div style={{ background: NAVY, padding: "14px 16px 12px", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, letterSpacing: 1.5, textTransform: "uppercase" }}>
+            <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase" }}>
               Price Book
             </span>
             <button
               onClick={onClose}
-              style={{ background: "rgba(255,255,255,0.13)", border: "none", borderRadius: "50%", width: 28, height: 28, color: "#fff", fontSize: 19, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0 }}
+              style={{ background: "rgba(255,255,255,0.13)", border: "none", borderRadius: "50%", width: 24, height: 24, color: "#fff", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0 }}
             >
               ×
             </button>
@@ -53,7 +53,7 @@ export default function PriceBook({ items, onSelect, onClose }) {
             placeholder="Search items…"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "none", fontSize: 15, outline: "none", boxSizing: "border-box", background: "rgba(255,255,255,0.13)", color: "#fff", fontFamily: "'Barlow', sans-serif" }}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "none", fontSize: 13, outline: "none", boxSizing: "border-box", background: "rgba(255,255,255,0.13)", color: "#fff", fontFamily: "'Barlow', sans-serif" }}
           />
         </div>
 
@@ -64,27 +64,27 @@ export default function PriceBook({ items, onSelect, onClose }) {
           )}
           {categories.map(cat => (
             <div key={cat}>
-              <div style={{ background: "#f4f6fa", padding: "6px 14px", fontSize: 11, fontWeight: 700, color: ORANGE, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>
+              <div style={{ background: "#f4f6fa", padding: "5px 12px", fontSize: 10, fontWeight: 700, color: ORANGE, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>
                 {cat}
               </div>
               {filtered.filter(i => (i.category || "Other") === cat).map(item => (
                 <div
                   key={item.id}
-                  style={{ display: "flex", alignItems: "center", padding: "11px 14px", borderBottom: "1px solid #f0f2f8", gap: 10 }}
+                  style={{ display: "flex", alignItems: "center", padding: "9px 12px", borderBottom: "1px solid #f0f2f8", gap: 8 }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: "#1a1a1a", fontWeight: 500, lineHeight: 1.3 }}>{item.name}</div>
+                    <div style={{ fontSize: 13, color: "#1a1a1a", fontWeight: 500, lineHeight: 1.3 }}>{item.name}</div>
                     {item.desc && (
-                      <div style={{ fontSize: 12, color: "#8899bb", marginTop: 2, lineHeight: 1.3 }}>{item.desc}</div>
+                      <div style={{ fontSize: 11, color: "#8899bb", marginTop: 2, lineHeight: 1.3 }}>{item.desc}</div>
                     )}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                    <span style={{ color: ORANGE, fontWeight: 700, fontSize: 14, fontFamily: "'Barlow Condensed', sans-serif" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <span style={{ color: ORANGE, fontWeight: 700, fontSize: 13, fontFamily: "'Barlow Condensed', sans-serif" }}>
                       {fmtPrice(item.price)}
                     </span>
                     <button
                       onClick={() => { onSelect(item); onClose(); }}
-                      style={{ width: 30, height: 30, borderRadius: "50%", background: ORANGE, border: "none", color: "#fff", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, flexShrink: 0 }}
+                      style={{ width: 26, height: 26, borderRadius: "50%", background: ORANGE, border: "none", color: "#fff", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, flexShrink: 0 }}
                     >
                       +
                     </button>

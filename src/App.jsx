@@ -2936,6 +2936,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   const goToTab = (nextId) => {
     if (nextId === activeTab) { setDragX(0); return; }
+    setShowPriceBook(false);
     setAnimating(true);
     setActiveTab(nextId);
     setDragX(0);
@@ -3389,7 +3390,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               </div>
             )}
 
-            {showPriceBook && (
+            {showPriceBook && activeTab === "edit" && (
               <PriceBook
                 items={savedItems}
                 onSelect={item => {
