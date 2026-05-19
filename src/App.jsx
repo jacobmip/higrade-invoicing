@@ -2387,14 +2387,13 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onRegisterAddItem, data, onAIAction, autoSendKind, onAutoSendConsumed }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
   const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
   const [activeTab, setActiveTab] = useState("edit");
   const [showSaved, setShowSaved] = useState(false);
-  const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -2592,6 +2591,11 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
   const addItem = (name = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name, price }] }));
+  useEffect(() => {
+    onRegisterAddItem?.(item => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable }] })));
+    return () => { onRegisterAddItem?.(null); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const removeItem = (i) => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }));
   const moveItem = (from, to) => setForm(f => { const items = [...f.items]; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...f, items }; });
 
@@ -3364,8 +3368,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 </button>
                 {!reordering && <>
                   <button onClick={() => { setShowAI(!showAI); setShowSaved(false); }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
-                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}>Saved</button>
-                  <button onClick={() => { setShowPriceBook(true); setShowSaved(false); setShowAI(false); }} style={{ ...S.btn("ghost"), fontSize: 11, padding: "5px 9px" }}>Price Book</button>
+                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px" }}>Saved</button>
                   <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px" }}><Icon name="plus" size={16} color="#fff" /></button>
                 </>}
               </div>
@@ -3646,13 +3649,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       </div>
       </div>
       </div>
-      {showPriceBook && (
-        <PriceBook
-          items={savedItems}
-          onSelect={item => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable }] }))}
-          onClose={() => setShowPriceBook(false)}
-        />
-      )}
     </div>
   );
 }
@@ -7447,6 +7443,8 @@ export default function App() {
     return () => { cancelled = true; };
   }, [chatStorageKey]);
   const [showMore, setShowMore] = useState(false);
+  const [showPriceBook, setShowPriceBook] = useState(false);
+  const addItemToFormRef = useRef(null);
   const [openClientId, setOpenClientId] = useState(null);
   // Counter bumped by the header "+" button when on the Expenses tab. The
   // ExpensesTab watches this with useEffect and opens its modal in response.
@@ -8406,9 +8404,9 @@ export default function App() {
     { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
-    { id: "payments", label: "Payments", icon: "dollar"   },
-    { id: "items",    label: "Items",    icon: "items"    },
-    { id: "reports",  label: "Reports",  icon: "chart"    },
+    { id: "payments",  label: "Payments",   icon: "dollar"   },
+    { id: "pricebook", label: "Price Book", icon: "items"    },
+    { id: "reports",   label: "Reports",    icon: "chart"    },
     { id: "calendar", label: "Calendar", icon: "calendar" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
@@ -8529,6 +8527,7 @@ export default function App() {
           }}
           onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
           onConvert={convertInvoice}
+          onRegisterAddItem={fn => { addItemToFormRef.current = fn; }}
         />
       ) : (
         <>
@@ -8560,6 +8559,16 @@ export default function App() {
         </nav>
       )}
 
+      {showPriceBook && (
+        <PriceBook
+          items={data.savedItems}
+          onSelect={item => {
+            addItemToFormRef.current?.(item);
+            setShowPriceBook(false);
+          }}
+          onClose={() => setShowPriceBook(false)}
+        />
+      )}
       {showMore && (
         <div onClick={() => setShowMore(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "10px 0 max(20px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" }}>
@@ -8567,7 +8576,7 @@ export default function App() {
             <div style={{ padding: "0 18px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#8899bb", letterSpacing: 1.5, textTransform: "uppercase" }}>More</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, padding: "4px 8px 8px" }}>
               {moreNavItems.map(n => (
-                <button key={n.id} onClick={() => { setTab(n.id); setShowMore(false); }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                <button key={n.id} onClick={() => { if (n.id === "pricebook") { setShowPriceBook(true); setShowMore(false); } else { setTab(n.id); setShowMore(false); } }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>
                   <Icon name={n.icon} size={26} color={tab === n.id ? ORANGE : NAVY} />
                   {n.label}
                 </button>
