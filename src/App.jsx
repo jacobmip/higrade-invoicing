@@ -1326,6 +1326,18 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
           <input value={name} onChange={e => setName(e.target.value)} style={S.input} placeholder="Client name" />
 
           <label style={{ ...S.label, marginTop: 10 }}>Send to email</label>
+          {client?.email2 && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+              {[client.email, client.email2].filter(Boolean).map(addr => (
+                <button
+                  key={addr}
+                  type="button"
+                  onClick={() => setEmail(addr)}
+                  style={{ flex: 1, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${email === addr ? ORANGE : "#dde2ee"}`, background: email === addr ? ORANGE : "#fff", color: email === addr ? "#fff" : "#444", fontFamily: "'Barlow', sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >{addr}</button>
+              ))}
+            </div>
+          )}
           <input value={email} onChange={e => setEmail(e.target.value)} style={S.input} placeholder="name@example.com" type="email" autoCapitalize="none" autoCorrect="off" />
           {!valid && email.length > 0 && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 4 }}>That doesn't look like a valid email.</div>}
 
