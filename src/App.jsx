@@ -115,6 +115,57 @@ function statusDisplay(inv) {
 }
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
 
+// Persists component state to localStorage as a safety net for iOS Safari
+// backgrounding. Restores the draft on mount if it is newer than the last
+// server-saved version. Saving is debounced 500 ms. Returns a clearDraft()
+// function to call after a successful explicit save.
+//
+// Usage:
+//   const clearDraft = useDraftPersistence(key, state, setState, serverUpdatedAt);
+//
+// • state = null/undefined → immediately removes the draft (edit closed).
+// • serverUpdatedAt → ISO string; draft is skipped if server version is newer.
+function useDraftPersistence(key, state, setState, serverUpdatedAt) {
+  const timerRef = useRef(null);
+  // skipSaveRef starts true so the first render does not overwrite an existing
+  // draft before the restore check in useLayoutEffect has a chance to run.
+  const skipSaveRef = useRef(true);
+
+  useLayoutEffect(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const { state: draft, savedAt } = JSON.parse(raw);
+        const serverMs = serverUpdatedAt ? new Date(serverUpdatedAt).getTime() : 0;
+        if (savedAt > serverMs) setState(draft);
+      }
+    } catch {}
+    skipSaveRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (skipSaveRef.current) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (state == null) {
+      try { localStorage.removeItem(key); } catch {}
+      return;
+    }
+    timerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(key, JSON.stringify({ state, savedAt: Date.now() }));
+      } catch {}
+    }, 500);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
+
+  return function clearDraft() {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    try { localStorage.removeItem(key); } catch {}
+  };
+}
+
 // Match an invoice/estimate against a search query. Searches across:
 //   - invoice ID (e.g. "INV0753")
 //   - client name
@@ -2430,6 +2481,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Done so the user can cancel out by collapsing the editor.
   const [clientDraft, setClientDraft] = useState(null);
   const [savingClient, setSavingClient] = useState(false);
+  // Draft persistence for the inline client editor. null state auto-clears the draft.
+  const clearClientDraft = useDraftPersistence(
+    'higrade_client_draft',
+    clientDraft,
+    (draft) => { setClientDraft(draft); setEditingClient(true); },
+    null
+  );
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sendMethodFor, setSendMethodFor] = useState(null); // null | "invoice" | "estimate"
@@ -2573,6 +2631,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     // Run once on mount; the client-picker onSelect handles the live case.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Draft persistence — saves form to localStorage on every change so that
+  // iOS Safari backgrounding / reload doesn't lose unsaved edits.
+  const _invoiceDraftKey = 'higrade_invoice_draft_' + (invoice?.id || 'new');
+  const clearInvoiceDraft = useDraftPersistence(_invoiceDraftKey, form, setForm, invoice?.updatedAt);
+
   const flushAutoSaveRef = useRef(async () => {});
   flushAutoSaveRef.current = async () => {
     if (autoSaveTimerRef.current) {
@@ -2602,6 +2666,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       });
       if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
       if (saved?.updatedAt) updatedAtRef.current = saved.updatedAt;
+      if (saved) clearInvoiceDraft();
       return saved;
     } catch (e) {
       console.error('Auto-save failed (kept local):', e);
@@ -2901,6 +2966,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       onCancel?.();
     } else {
       onSave(form);
+      clearInvoiceDraft();
     }
   };
   // Back arrow flushes pending edits then navigates away.
@@ -3325,7 +3391,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                   <button
                     type="button"
-                    onClick={() => { setEditingClient(false); setClientDraft(null); }}
+                    onClick={() => { setEditingClient(false); setClientDraft(null); clearClientDraft(); }}
                     style={{ ...S.btn("ghost"), fontSize: 13, flex: 1, padding: "9px 0" }}
                     disabled={savingClient}
                   >Cancel</button>
@@ -3371,6 +3437,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                         }));
                         setEditingClient(false);
                         setClientDraft(null);
+                        clearClientDraft();
                       } catch (e) {
                         console.error('Failed to save client profile:', e);
                         alert('Could not save client. Please try again.');
