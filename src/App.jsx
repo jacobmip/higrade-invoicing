@@ -2510,6 +2510,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // When set, suppresses the unmount-flush autosave. Used by Delete so the
   // form doesn't re-create the row we just deleted.
   const skipFlushRef = useRef(false);
+  // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
+  // so paddingTop is correct on first render — no content hidden on load.
+  const formHeaderRef = useRef(null);
+  const [formHeaderH, setFormHeaderH] = useState(0);
+  useLayoutEffect(() => {
+    const el = formHeaderRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setFormHeaderH(el.offsetHeight));
+    ro.observe(el);
+    setFormHeaderH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
@@ -3007,7 +3019,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (swipeRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
 
   return (
-    <div style={{ paddingBottom: 100, background: LIGHT, minHeight: "100vh" }}>
+    <div style={{ paddingBottom: 100, paddingTop: formHeaderH, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
       {sendMethodFor && <SendMethodSheet
         kind={sendMethodFor}
@@ -3041,7 +3053,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         />
       )}
 
-      <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+      <div ref={formHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 100 }}>
+      <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <button onClick={handleBack} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
         <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
@@ -3059,12 +3072,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         <button onClick={handleSave} style={S.btn("primary")}>Done</button>
       </div>
 
-      <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0", position: "sticky", top: 54, zIndex: 90 }}>
+      <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0" }}>
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => goToTab(tab.id)} style={{ flex: 1, padding: "10px 4px 9px", background: "none", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent", color: activeTab === tab.id ? ORANGE : "#999", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
             <Icon name={tab.icon} size={15} color={activeTab === tab.id ? ORANGE : "#bbb"} />{tab.label}
           </button>
         ))}
+      </div>
       </div>
 
       <div ref={trackRef} onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ overflow: "hidden", touchAction: "pan-y" }}>
@@ -7493,20 +7507,8 @@ export default function App() {
   // together by `display: flex; flex-direction: column`. No JS measurement —
   // measurement-based offsets caused micro-jitter on iOS Safari during scroll
   // because the brand header's getBoundingClientRect height changes by ~1px
-  // when transitioning to sticky. The header is now position:fixed (immune to
-  // scroll jitter). A ResizeObserver fires only when the header height changes
-  // (tab switch / subHeader mount), not on every scroll frame — no jitter.
+  // when transitioning to sticky.
   const rootRef = useRef(null);
-  const listHeaderRef = useRef(null);
-  const [listHeaderH, setListHeaderH] = useState(0);
-  useEffect(() => {
-    const el = listHeaderRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setListHeaderH(el.offsetHeight));
-    ro.observe(el);
-    setListHeaderH(el.offsetHeight);
-    return () => ro.disconnect();
-  }, []);
   // Edge-swipe-from-left back gesture. Mirrors iOS: starting a touch within
   // the leftmost ~22px of the viewport and dragging right by >70px (and
   // mostly horizontal) fires a window 'app-back' custom event. Active
@@ -8489,8 +8491,7 @@ export default function App() {
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
-        <>
-        <div ref={listHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
           <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 8 }}>
@@ -8534,8 +8535,6 @@ export default function App() {
           </div>
           {subHeader.key === tab ? subHeader.content : null}
         </div>
-        <div style={{ height: listHeaderH }} />
-        </>
       )}
 
       {view === "form" ? (
