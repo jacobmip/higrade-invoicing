@@ -7487,8 +7487,20 @@ export default function App() {
   // together by `display: flex; flex-direction: column`. No JS measurement —
   // measurement-based offsets caused micro-jitter on iOS Safari during scroll
   // because the brand header's getBoundingClientRect height changes by ~1px
-  // when transitioning to sticky.
+  // when transitioning to sticky. The header is now position:fixed (immune to
+  // scroll jitter). A ResizeObserver fires only when the header height changes
+  // (tab switch / subHeader mount), not on every scroll frame — no jitter.
   const rootRef = useRef(null);
+  const listHeaderRef = useRef(null);
+  const [listHeaderH, setListHeaderH] = useState(0);
+  useEffect(() => {
+    const el = listHeaderRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setListHeaderH(el.offsetHeight));
+    ro.observe(el);
+    setListHeaderH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   // Edge-swipe-from-left back gesture. Mirrors iOS: starting a touch within
   // the leftmost ~22px of the viewport and dragging right by >70px (and
   // mostly horizontal) fires a window 'app-back' custom event. Active
@@ -8471,7 +8483,8 @@ export default function App() {
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       {view === "list" && (
-        <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+        <>
+        <div ref={listHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
           <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 8 }}>
@@ -8515,6 +8528,8 @@ export default function App() {
           </div>
           {subHeader.key === tab ? subHeader.content : null}
         </div>
+        <div style={{ height: listHeaderH }} />
+        </>
       )}
 
       {view === "form" ? (
