@@ -8,11 +8,11 @@ function buildDestination(jobAddress) {
   return parts.join(", ");
 }
 
-export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
+export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAddress }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const destination = buildDestination(jobAddress);
+  const destination = buildDestination(jobAddress) || buildDestination(billingAddress);
   const noAddress = !destination;
 
   function openSms(etaMinutes) {
@@ -66,7 +66,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
       style={{
         width: "100%",
         padding: "13px 16px",
-        background: (loading || noAddress) ? "#ccc" : ORANGE,
+        background: loading ? "#ccc" : ORANGE,
         color: "#fff",
         border: "none",
         borderRadius: 10,
@@ -75,12 +75,13 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
         fontSize: 16,
         letterSpacing: 1,
         textTransform: "uppercase",
-        cursor: (loading || noAddress) ? "default" : "pointer",
+        cursor: loading ? "default" : "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        boxShadow: (loading || noAddress) ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
+        boxShadow: loading ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
+        opacity: noAddress ? 0.4 : 1,
       }}
     >
       {error || (loading ? "Getting ETA…" : "On My Way")}

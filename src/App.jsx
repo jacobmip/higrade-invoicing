@@ -3390,13 +3390,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               <OnMyWay
                 clientName={effectiveClientInfo?.name || form.client || ""}
                 clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
-                jobAddress={
-                  form.jobAddress ||
-                  (form.billingAddress?.line1 ? form.billingAddress : null) ||
-                  (effectiveClientInfo?.address1 ? { line1: effectiveClientInfo.address1, line2: effectiveClientInfo.address2, line3: effectiveClientInfo.address3 } : null) ||
-                  clientAddresses[0] ||
-                  null
-                }
+                jobAddress={form.jobAddress || null}
+                billingAddress={form.billingAddress || null}
               />
             </div>
           )}
