@@ -12,6 +12,9 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const destination = buildDestination(jobAddress);
+  const noAddress = !destination;
+
   function openSms(etaMinutes) {
     const firstName = (clientName || "").split(" ")[0] || "there";
     const body = etaMinutes != null
@@ -22,14 +25,14 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
   }
 
   async function handlePress() {
+    if (noAddress) return;
+
     if (error) {
       openSms(null);
       return;
     }
 
-    const destination = buildDestination(jobAddress);
-
-    if (!clientPhone || !destination) {
+    if (!clientPhone) {
       openSms(null);
       return;
     }
@@ -52,6 +55,14 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (noAddress) {
+    return (
+      <div style={{ fontSize: 12, color: "#cc4444", padding: "8px 0", textAlign: "center" }}>
+        No job address found — please add an address to this invoice.
+      </div>
+    );
   }
 
   return (
