@@ -57,23 +57,16 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
     }
   }
 
-  if (noAddress) {
-    return (
-      <div style={{ fontSize: 12, color: "#cc4444", padding: "8px 0", textAlign: "center" }}>
-        No job address found — please add an address to this invoice.
-      </div>
-    );
-  }
-
   return (
     <button
       type="button"
       onClick={handlePress}
-      disabled={loading}
+      disabled={loading || noAddress}
+      title={noAddress ? "Add an address to this invoice" : undefined}
       style={{
         width: "100%",
         padding: "13px 16px",
-        background: loading ? "#ccc" : ORANGE,
+        background: (loading || noAddress) ? "#ccc" : ORANGE,
         color: "#fff",
         border: "none",
         borderRadius: 10,
@@ -82,12 +75,12 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress }) {
         fontSize: 16,
         letterSpacing: 1,
         textTransform: "uppercase",
-        cursor: loading ? "default" : "pointer",
+        cursor: (loading || noAddress) ? "default" : "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        boxShadow: loading ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
+        boxShadow: (loading || noAddress) ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
       }}
     >
       {error || (loading ? "Getting ETA…" : "On My Way")}

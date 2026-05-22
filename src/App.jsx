@@ -2561,6 +2561,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.id]);
+  // If an invoice loaded without a job_address but has a billing_address,
+  // copy billing into job so ETA / address display always has something to use.
+  useEffect(() => {
+    setForm(f => {
+      if (!f.jobAddress && f.billingAddress?.line1) {
+        return { ...f, jobAddress: f.billingAddress };
+      }
+      return f;
+    });
+    // Run once on mount; the client-picker onSelect handles the live case.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const flushAutoSaveRef = useRef(async () => {});
   flushAutoSaveRef.current = async () => {
     if (autoSaveTimerRef.current) {
@@ -3116,13 +3128,14 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   const displayLine1 = defaultAddr?.line1 || c.address1 || "";
                   const displayLine2 = defaultAddr?.line2 || c.address2 || "";
                   const displayLine3 = defaultAddr?.line3 || c.address3 || "";
+                  const billing = c.billingAddress || null;
                   setForm(f => ({
                     ...f,
                     client: c.name,
                     clientInfo: { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: displayLine1, address2: displayLine2, address3: displayLine3 },
                     jobAddressId: defaultAddr?.id || null,
-                    jobAddress: defaultAddr || null,
-                    billingAddress: c.billingAddress || null,
+                    jobAddress: defaultAddr || billing || null,
+                    billingAddress: billing,
                   }));
                   setEditingClient(false);
                   setClientDraft(null);
