@@ -4821,10 +4821,12 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
   const [detailId, setDetailId] = useState(null);
-  const [editId, setEditId] = useState(null);
+  const [editId, setEditId] = useState(() => { try { const s = localStorage.getItem('higrade_clients_nav'); return s ? JSON.parse(s).editId : null; } catch { return null; } });
   const [form, setForm] = useState(emptyClient());
   const [search, setSearch] = useState("");
   const [showImport, setShowImport] = useState(false);
+
+  const saveClientsNav = (m, eid) => { try { if (m === 'edit') localStorage.setItem('higrade_clients_nav', JSON.stringify({ mode: m, editId: eid })); else localStorage.removeItem('higrade_clients_nav'); } catch {} };
 
   const clientTabDraftKey = `higrade_client_edit_${editId || "none"}`;
   const clearClientTabDraft = useDraftPersistence(
@@ -4834,8 +4836,22 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     null
   );
 
+  // Restore edit mode if there's a saved nav state with a matching draft.
+  useEffect(() => {
+    try {
+      const nav = JSON.parse(localStorage.getItem('higrade_clients_nav') || 'null');
+      if (!nav || nav.mode !== 'edit') return;
+      const draftRaw = localStorage.getItem(`higrade_client_edit_${nav.editId || "none"}`);
+      if (!draftRaw) { localStorage.removeItem('higrade_clients_nav'); return; }
+      setEditId(nav.editId);
+      setMode('edit');
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const startEdit = (c) => {
-    setEditId(c?.id ?? "new");
+    const eid = c?.id ?? "new";
+    setEditId(eid);
     // Make sure the form has an addresses array — even legacy clients should
     // get one entry from their flat address fields (toClient already does this).
     setForm(c ? {
@@ -4843,6 +4859,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
       ...c,
       addresses: Array.isArray(c.addresses) ? c.addresses : [],
     } : emptyClient());
+    saveClientsNav('edit', eid);
     setMode("edit");
   };
   const openDetail = (c) => {
@@ -4865,6 +4882,8 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   useEffect(() => {
     const onSwipeBack = () => {
       if (mode === "edit") {
+        saveClientsNav('list', null);
+        clearClientTabDraft();
         setMode(detailId ? "detail" : "list");
         setEditId(null);
       } else if (mode === "detail") {
@@ -4878,6 +4897,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
 
   const save = () => {
     clearClientTabDraft();
+    saveClientsNav('list', null);
     // Make sure each address has an id and a label so dropdowns work later.
     onSave(normalizeClientDraft(form), editId);
     // After save, slide back to detail (or list for new clients).
@@ -4887,6 +4907,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   const handleDelete = () => {
     if (!confirm(`Delete ${form.name}?`)) return;
     clearClientTabDraft();
+    saveClientsNav('list', null);
     onDelete(editId);
     setMode("list"); setEditId(null); setDetailId(null);
   };
@@ -4896,7 +4917,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     return (
       <div style={{ padding: 16, paddingBottom: 40 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <button onClick={() => { setMode(detailId ? "detail" : "list"); setEditId(null); }} style={{ background: "none", border: "none", cursor: "pointer" }}><Icon name="back" size={22} /></button>
+          <button onClick={() => { saveClientsNav('list', null); clearClientTabDraft(); setMode(detailId ? "detail" : "list"); setEditId(null); }} style={{ background: "none", border: "none", cursor: "pointer" }}><Icon name="back" size={22} /></button>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{editId === "new" ? "New Client" : "Edit Client"}</span>
         </div>
         <ClientEditFields value={form} onChange={setForm} isAdmin={isAdmin} />
@@ -7613,7 +7634,8 @@ export default function App() {
       expenses:   (data.expenses   || []).filter(match),
     };
   }, [data, effectiveOwnerId]);
-  const [tab, setTab] = useState("invoices");
+  const [tab, setTabRaw] = useState(() => { try { return localStorage.getItem('higrade_nav_tab') || "invoices"; } catch { return "invoices"; } });
+  const setTab = (t) => { try { localStorage.setItem('higrade_nav_tab', t); } catch {} setTabRaw(t); };
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [newDocType, setNewDocType] = useState("invoice");
@@ -7906,7 +7928,26 @@ export default function App() {
     // Don't fire the heavy loadAll until we know the user is signed in.
     // Without this, RLS would reject every query on a fresh page load.
     if (!session) return;
-    setDbLoading(true);
+
+    // Hydrate from localStorage cache immediately so the app renders
+    // without a loading screen on every iOS background/foreground cycle.
+    let hasCached = false;
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const cached = JSON.parse(raw);
+        setData(cached);
+        nextNumRef.current = cached.nextNum || 753;
+        nextEstimateNumRef.current = cached.nextEstimateNum || 712;
+        hydrateTemplatesFromSettings(cached.settings);
+        hasCached = true;
+      }
+    } catch {}
+    // If we have cached data, skip the loading screen and refresh silently
+    // in the background. First-ever load still shows the splash.
+    if (hasCached) setDbLoading(false);
+    else setDbLoading(true);
+
     db.loadAll()
       .then(d => {
         setData(d);
@@ -7918,10 +7959,12 @@ export default function App() {
       })
       .catch(e => {
         console.error('Supabase load failed:', e);
-        try {
-          const raw = localStorage.getItem(CACHE_KEY);
-          if (raw) { setData(JSON.parse(raw)); } else { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
-        } catch { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
+        if (!hasCached) {
+          try {
+            const raw = localStorage.getItem(CACHE_KEY);
+            if (raw) { setData(JSON.parse(raw)); } else { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
+          } catch { setData({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 }); }
+        }
         setDbLoading(false);
       });
   }, [session]);
