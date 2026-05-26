@@ -283,7 +283,7 @@ Save or update a price in Jake's memory (use when Jake says "save", "remember", 
 {"action":"save_item","item":{"name":"Item Name","category":"Category","price":000},"summary":"one sentence"}
 
 Create a new client:
-{"action":"create_client","client":{"name":"Full Name","email":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
+{"action":"create_client","client":{"name":"Full Name","email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
 
 Update an existing invoice (set client, dates, status, notes — only include the fields you want to change):
 {"action":"update_invoice","invoiceId":"INV0000","changes":{"client":"exact name","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","status":"outstanding|paid|partial|net30","notes":"text","discount":0,"tax":4.712},"summary":"one sentence"}
@@ -304,7 +304,7 @@ Example — Jake says "adjust the invoice so the description includes that I'm r
 {"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"desc":"Cut out failing 1 inch PVC section below drain\nRemove elbow fitting from existing line\nReplace 1 inch drain pipe (the failing leaking part)\nInstall new 1 inch female adapter\nGlue and prime new fittings\nPressure test repair for leaks"},"summary":"Updated description to call out the 1 inch drain replacement."}
 
 Update a client's contact info (only include fields to change):
-{"action":"update_client","clientName":"exact name","changes":{"email":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
+{"action":"update_client","clientName":"exact name","changes":{"email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
@@ -432,6 +432,7 @@ async function sendInvoiceEmail(invoice, client, message, viewLink) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       to: client.email,
+      cc: client.email2 || "",
       clientName: client.name,
       invoiceId: invoice.id,
       total: t.total.toFixed(2),
@@ -2267,7 +2268,7 @@ function PDFPreview({ form, clients, photos = [] }) {
 function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, onOpenEdit }) {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", email: "", phone: "", address1: "", address2: "", address3: "" });
+  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", address2: "", address3: "" });
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
 
@@ -2327,7 +2328,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
           </div>
-          {[["name", "Name"], ["email", "Email", "email"], ["phone", "Phone", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
+          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
             <div key={k} style={{ marginBottom: 10 }}>
               <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
               <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
@@ -2357,7 +2358,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         />
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { setNewForm({ name: search, email: "", phone: "", address1: "", address2: "", address3: "" }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", address2: "", address3: "" }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Icon name="plus" size={14} color="#fff" /> New Client
           </button>
           <button onClick={handleImport} disabled={importing} style={{ ...S.btn("navy"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: importing ? 0.6 : 1 }}>
@@ -8001,6 +8002,7 @@ export default function App() {
       const updated = {
         ...target,
         ...(typeof c.email === "string" ? { email: c.email } : {}),
+        ...(typeof c.email2 === "string" ? { email2: c.email2 } : {}),
         ...(typeof c.phone === "string" ? { phone: c.phone, mobile: c.phone } : {}),
         ...(typeof c.address1 === "string" ? { address1: c.address1 } : {}),
         ...(typeof c.address2 === "string" ? { address2: c.address2 } : {}),

@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
+    const { to, cc, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
@@ -132,6 +132,7 @@ export default async function handler(req) {
       body: JSON.stringify({
         from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
         to: [to],
+        ...(cc && cc.trim() ? { cc: [cc.trim()] } : {}),
         // BCC Jake on every outbound customer email so he can see exactly
         // what the customer received. Resend silently hides this from the
         // primary recipient.
