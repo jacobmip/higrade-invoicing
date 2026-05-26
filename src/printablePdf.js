@@ -173,16 +173,28 @@ function drawBillTo(doc, form, y) {
   if (contact) { setText(doc, TEXT_LIGHT); doc.text(contact, MARGIN, cy); cy += 14; }
 
   // Job address if it differs (some invoices use a separate work site).
-  if (form.jobAddress && form.jobAddress !== addr) {
+  // form.jobAddress is an object {id, label, line1, line2, line3}.
+  const ja = form.jobAddress && typeof form.jobAddress === "object" ? form.jobAddress : null;
+  const jaLines = ja ? [ja.line1, ja.line2, ja.line3].filter(Boolean) : [];
+  const jaAddr = jaLines.join(", ");
+  if (ja && (ja.label || jaAddr) && jaAddr !== addr) {
+    const jx = PAGE_W / 2 + 12;
+    const jw = PAGE_W / 2 - MARGIN - 12;
     setText(doc, "#6677aa");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
-    doc.text("JOB SITE", PAGE_W / 2 + 12, y);
+    doc.text("JOB SITE", jx, y);
+    let jy = y + 18;
+    if (ja.label) {
+      setText(doc, TEXT_DARK);
+      doc.setFontSize(11);
+      doc.text(ja.label, jx, jy);
+      jy += 14;
+    }
     setText(doc, TEXT_MID);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
-    const lines = wrap(doc, form.jobAddress, PAGE_W / 2 - MARGIN - 12);
-    lines.forEach((ln, i) => doc.text(ln, PAGE_W / 2 + 12, y + 18 + i * 14));
+    jaLines.forEach(ln => { doc.text(ln, jx, jy); jy += 14; });
   }
 
   return Math.max(cy, y + 60); // bottom of section
