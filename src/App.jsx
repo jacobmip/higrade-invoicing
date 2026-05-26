@@ -2451,7 +2451,7 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3376,7 +3376,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             )}
             {editingClient && clientDraft && (
               <div style={{ background: "#fff", borderRadius: 8, padding: "14px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
-                <ClientEditFields value={clientDraft} onChange={setClientDraft} compact />
+                <ClientEditFields value={clientDraft} onChange={setClientDraft} compact isAdmin={isAdmin} />
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                   <button
                     type="button"
@@ -4265,6 +4265,7 @@ function newAddressId() {
 function emptyClient() {
   return {
     name: "", email: "", email2: "", phone: "", fax: "", contact: "",
+    notes: "",
     addresses: [],
     billingAddress: null,
     // Legacy flat fields kept blank
@@ -4276,7 +4277,7 @@ function emptyClient() {
 // new property from inside an invoice goes through the same UI as editing on
 // the Clients page. Pure controlled component: render the working draft and
 // emit changes upward via `onChange`.
-function ClientEditFields({ value, onChange, compact }) {
+function ClientEditFields({ value, onChange, compact, isAdmin }) {
   const form = value || emptyClient();
   const setField = (k, v) => onChange({ ...form, [k]: v });
   const addresses = Array.isArray(form.addresses) ? form.addresses : [];
@@ -4327,7 +4328,15 @@ function ClientEditFields({ value, onChange, compact }) {
           <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
           <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Address Line 1" />
           <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Address Line 2 (optional)" />
-          <input style={S.input} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, Zip" />
+          <input style={{ ...S.input, marginBottom: isAdmin ? 6 : 0 }} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, Zip" />
+          {isAdmin && (
+            <textarea
+              style={{ ...S.input, height: 60, resize: "none", fontSize: 12 }}
+              value={a.notes || ""}
+              onChange={e => setAddrField(idx, "notes", e.target.value)}
+              placeholder="Admin notes — gate code, water shutoff, tenant info…"
+            />
+          )}
         </div>
       ))}
 
@@ -4341,6 +4350,18 @@ function ClientEditFields({ value, onChange, compact }) {
         <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Address Line 2 (optional)" />
         <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, Zip" />
       </div>
+
+      {isAdmin && (
+        <div style={{ marginTop: compact ? 14 : 18 }}>
+          <div style={{ ...sectionLabelStyle, marginBottom: 6 }}>Admin Notes</div>
+          <textarea
+            style={{ ...S.input, height: 72, resize: "none" }}
+            value={form.notes || ""}
+            onChange={e => setField("notes", e.target.value)}
+            placeholder="Internal notes — visible to admin only. Gate codes, account history, special instructions…"
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -4356,6 +4377,7 @@ function normalizeClientDraft(draft) {
       line1: a.line1 || "",
       line2: a.line2 || "",
       line3: a.line3 || "",
+      notes: a.notes || "",
     })),
   };
 }
@@ -4686,7 +4708,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   );
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient }) {
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -4759,7 +4781,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <button onClick={() => { setMode(detailId ? "detail" : "list"); setEditId(null); }} style={{ background: "none", border: "none", cursor: "pointer" }}><Icon name="back" size={22} /></button>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{editId === "new" ? "New Client" : "Edit Client"}</span>
         </div>
-        <ClientEditFields value={form} onChange={setForm} />
+        <ClientEditFields value={form} onChange={setForm} isAdmin={isAdmin} />
         <button onClick={save} style={{ ...S.btn("primary"), width: "100%", marginTop: 12, fontSize: 16, padding: 14 }}>Save Client</button>
         <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
           <button onClick={() => alert("Import from Contacts \u2014 coming soon")} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13 }}>Import from Contacts</button>
@@ -8631,12 +8653,13 @@ export default function App() {
           }}
           onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
           onConvert={convertInvoice}
+          isAdmin={isAdmin}
         />
       ) : (
         <>
           {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
           {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-          {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} />}
+          {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
           {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
           {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
           {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
