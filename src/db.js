@@ -468,7 +468,36 @@ export async function loadInvoiceVersions(invoiceId) {
   return data || []
 }
 
-// ─── Invoice events (sent / opened / etc.) ───────────────────────────────────
+// ─── Client version snapshots ─────────────────────────────────────────────────
+
+export async function recordClientVersion(client, note) {
+  const { data: existing } = await supabase
+    .from('client_versions')
+    .select('version_number')
+    .eq('client_id', client.id)
+    .order('version_number', { ascending: false })
+    .limit(1)
+  const nextVersion = (existing?.[0]?.version_number || 0) + 1
+  const { error } = await supabase.from('client_versions').insert({
+    client_id: client.id,
+    version_number: nextVersion,
+    snapshot: client,
+    note: note || null,
+  })
+  if (error) throw error
+  return nextVersion
+}
+
+export async function loadClientVersions(clientId) {
+  const { data, error } = await supabase
+    .from('client_versions')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('version_number', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
 
 // Generate a short URL-safe random token for trackable view links.
 // Crypto API is available in modern browsers and on Vercel edge runtime.

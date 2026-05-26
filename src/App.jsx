@@ -8161,7 +8161,7 @@ export default function App() {
         ...(typeof c.address2 === "string" ? { address2: c.address2 } : {}),
         ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
       };
-      try { await db.updateClient(updated); } catch (e) { console.error(e); }
+      try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { console.error(e); }
       setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
     }
     if (parsed.action === "delete_client") {
@@ -8364,10 +8364,14 @@ export default function App() {
   const saveClient = async (form, editing) => {
     if (editing === "new") {
       const id = await db.insertClient(form);
-      setData(d => ({ ...d, clients: [...d.clients, { ...form, id }] }));
+      const saved = { ...form, id };
+      setData(d => ({ ...d, clients: [...d.clients, saved] }));
+      db.recordClientVersion(saved, "Created").catch(() => {});
     } else {
-      await db.updateClient({ ...form, id: editing });
-      setData(d => ({ ...d, clients: d.clients.map(c => c.id === editing ? { ...form, id: editing } : c) }));
+      const saved = { ...form, id: editing };
+      await db.updateClient(saved);
+      setData(d => ({ ...d, clients: d.clients.map(c => c.id === editing ? saved : c) }));
+      db.recordClientVersion(saved, "Saved").catch(() => {});
     }
   };
 
@@ -8786,11 +8790,13 @@ export default function App() {
           onSaveItem={saveItemToLibrary}
           onUpdateClient={async (updated) => {
             await db.updateClient(updated);
+            db.recordClientVersion(updated, "Saved").catch(() => {});
             setData(d => ({ ...d, clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c) }));
           }}
           onCreateClient={async (form) => {
             const id = await db.insertClient(form);
             const newClient = { ...form, id };
+            db.recordClientVersion(newClient, "Created").catch(() => {});
             setData(d => ({ ...d, clients: [...d.clients, newClient] }));
             return newClient;
           }}
