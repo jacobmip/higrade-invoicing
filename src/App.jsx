@@ -566,6 +566,7 @@ const S = {
     width: "100%", minWidth: 0, maxWidth: "100%", border: "1.5px solid #dde2ee", borderRadius: 8,
     padding: "9px 12px", fontSize: 14, fontFamily: "'Barlow', sans-serif",
     outline: "none", background: "#fff", boxSizing: "border-box",
+    touchAction: "manipulation",
   },
   label: {
     fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1,
@@ -3055,6 +3056,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     // gets interpreted as a tab swipe, which translates the whole track
     // horizontally and visibly shoves the chat box around.
     if (e.target?.closest?.('[data-no-swipe="true"]')) {
+      swipeRef.current = { x: 0, y: 0, active: false, locked: null, width: 0 };
+      return;
+    }
+    // Don't engage the swiper when the user touches a text field — they
+    // need to tap, drag to select text, and scroll without swiping tabs.
+    const tag = e.target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
       swipeRef.current = { x: 0, y: 0, active: false, locked: null, width: 0 };
       return;
     }
