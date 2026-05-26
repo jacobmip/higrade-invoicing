@@ -2585,19 +2585,25 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
-  const refreshEvents = async () => {
+  const [versions, setVersions] = useState([]);
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
+  const refreshHistory = async () => {
     if (!form.id) return;
     setRefreshingEvents(true);
-    try { setEvents(await db.loadInvoiceEvents(form.id)); }
-    catch (e) { console.warn('loadInvoiceEvents failed:', e); }
-    // Tiny minimum spinner so the user sees something happen even if the
-    // request comes back instantly.
+    try {
+      const [evs, vers] = await Promise.all([
+        db.loadInvoiceEvents(form.id),
+        db.loadInvoiceVersions(form.id),
+      ]);
+      setEvents(evs);
+      setVersions(vers);
+    } catch (e) { console.warn('loadHistory failed:', e); }
     setTimeout(() => setRefreshingEvents(false), 450);
   };
-  useEffect(() => { refreshEvents(); /* eslint-disable-next-line */ }, [form.id]);
-  // Refresh events when the History tab is opened (catches opens that happened
-  // since the form was loaded).
-  useEffect(() => { if (activeTab === 'history') refreshEvents(); /* eslint-disable-next-line */ }, [activeTab]);
+  // Keep old name as alias so existing call-sites don't need to change.
+  const refreshEvents = refreshHistory;
+  useEffect(() => { refreshHistory(); /* eslint-disable-next-line */ }, [form.id]);
+  useEffect(() => { if (activeTab === 'history') refreshHistory(); /* eslint-disable-next-line */ }, [activeTab]);
   useEffect(() => { const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [form.id, autoSavedId]);
   useEffect(() => { if (activeTab !== 'preview') return; const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [activeTab]);
   const [autoSaving, setAutoSaving] = useState(false);
@@ -2960,11 +2966,27 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
   };
 
+  const saveSnapshot = async (note) => {
+    const id = form.id || autoSavedId;
+    if (!id) return;
+    setSavingSnapshot(true);
+    try {
+      await flushAutoSaveRef.current();
+      await db.recordInvoiceVersion({ ...formRef.current, id }, null, note || "Manual snapshot");
+      await refreshHistory();
+    } catch (e) { console.warn('saveSnapshot failed:', e); }
+    setSavingSnapshot(false);
+  };
+
   // Save button now means "save and exit". Auto-save already handles the
   // persistence on its own — we just flush any pending change and close.
   const handleSave = async () => {
     if (onAutoSave) {
       await flushAutoSaveRef.current();
+      // Record a version snapshot each time the user explicitly saves so
+      // the history tab has something to restore from even if never sent.
+      const id = form.id || autoSavedId;
+      if (id) db.recordInvoiceVersion({ ...formRef.current, id }, null, "Saved").catch(() => {});
       onCancel?.();
     } else {
       onSave(form);
@@ -3750,6 +3772,55 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color }}>{val}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Version snapshots */}
+          {(form.id || autoSavedId) && (
+            <div style={{ marginTop: 24 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Saved Versions</span>
+                <button
+                  onClick={() => saveSnapshot()}
+                  disabled={savingSnapshot}
+                  style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 12px", border: "1px solid #dde2ee", opacity: savingSnapshot ? 0.6 : 1 }}
+                >{savingSnapshot ? "Saving…" : "Save snapshot"}</button>
+              </div>
+              {versions.length === 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "14px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", fontSize: 13, color: "#aaa" }}>
+                  No snapshots yet. Versions are saved each time you send or save.
+                </div>
+              )}
+              {versions.map((v) => {
+                const snap = v.snapshot || {};
+                const snapTotals = calcTotals(snap);
+                const fmtTs = (ts) => { try { return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ts; } };
+                const itemCount = (snap.items || []).length;
+                return (
+                  <div key={v.id} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>
+                          v{v.version_number} — {v.note || "Snapshot"}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{fmtTs(v.created_at)}</div>
+                        <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
+                          {itemCount} line item{itemCount !== 1 ? "s" : ""} · Total {fmt(snapTotals.total)}
+                        </div>
+                        {v.sent_to && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>Sent to {v.sent_to}</div>}
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (!confirm(`Restore v${v.version_number}? Your current edits will be replaced.`)) return;
+                          setForm({ discountType: "$", ...snap });
+                          goToTab("edit");
+                        }}
+                        style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 12px", border: "1px solid #dde2ee", flexShrink: 0 }}
+                      >Restore</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
