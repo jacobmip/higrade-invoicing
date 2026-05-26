@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="HI Grade" />
     <meta name="theme-color" content="#0a1628" />
+    <link rel="manifest" href="/manifest.json" />
     <title>HI Grade Plumbing – Invoicing</title>
     <!-- Vite builds with base='./' so the bundle works under capacitor:// (iOS).
          On the web that breaks nested paths like /v/<token> because the script
@@ -89,5 +91,12 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>
