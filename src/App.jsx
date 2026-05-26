@@ -130,6 +130,8 @@ function useDraftPersistence(key, state, setState, serverUpdatedAt) {
   // skipSaveRef starts true so the first render does not overwrite an existing
   // draft before the restore check in useLayoutEffect has a chance to run.
   const skipSaveRef = useRef(true);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useLayoutEffect(() => {
     try {
@@ -141,6 +143,20 @@ function useDraftPersistence(key, state, setState, serverUpdatedAt) {
       }
     } catch {}
     skipSaveRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Flush to localStorage immediately when iOS backgrounds the page so we
+  // never lose edits that are still inside the 500 ms debounce window.
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState !== 'hidden') return;
+      if (skipSaveRef.current || stateRef.current == null) return;
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      try { localStorage.setItem(key, JSON.stringify({ state: stateRef.current, savedAt: Date.now() })); } catch {}
+    };
+    document.addEventListener('visibilitychange', flush);
+    return () => document.removeEventListener('visibilitychange', flush);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2272,6 +2288,12 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", address2: "", address3: "" });
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  const clearNewClientDraft = useDraftPersistence(
+    'higrade_quick_add_client',
+    creating ? newForm : null,
+    (draft) => { setNewForm(draft); setCreating(true); },
+    null
+  );
 
   const q = search.trim().toLowerCase();
   const filtered = q
@@ -2310,6 +2332,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
     if (!newForm.name?.trim()) { alert("Name is required"); return; }
     const saved = await onSave(newForm);
     if (saved) {
+      clearNewClientDraft();
       onSelect(saved);
       onClose();
     }
@@ -2325,7 +2348,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
       <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
         <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "0 0 16px 16px", padding: "20px 18px 28px", maxHeight: "90vh", overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 14, gap: 10 }}>
-            <button onClick={() => setCreating(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={20} /></button>
+            <button onClick={() => { clearNewClientDraft(); setCreating(false); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={20} /></button>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
           </div>
@@ -2694,6 +2717,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // On unmount (back button, navigation away), flush any pending changes.
   useEffect(() => {
     return () => { flushAutoSaveRef.current(); };
+  }, []);
+  // Also flush to Supabase immediately when iOS sends the page to background.
+  useEffect(() => {
+    const flush = () => { if (document.visibilityState === 'hidden') flushAutoSaveRef.current(); };
+    document.addEventListener('visibilitychange', flush);
+    return () => document.removeEventListener('visibilitychange', flush);
   }, []);
 
   const t = calcTotals(form);
@@ -4797,6 +4826,14 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   const [search, setSearch] = useState("");
   const [showImport, setShowImport] = useState(false);
 
+  const clientTabDraftKey = `higrade_client_edit_${editId || "none"}`;
+  const clearClientTabDraft = useDraftPersistence(
+    clientTabDraftKey,
+    mode === "edit" ? form : null,
+    setForm,
+    null
+  );
+
   const startEdit = (c) => {
     setEditId(c?.id ?? "new");
     // Make sure the form has an addresses array — even legacy clients should
@@ -4840,6 +4877,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   }, [mode, detailId]);
 
   const save = () => {
+    clearClientTabDraft();
     // Make sure each address has an id and a label so dropdowns work later.
     onSave(normalizeClientDraft(form), editId);
     // After save, slide back to detail (or list for new clients).
@@ -4848,6 +4886,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   };
   const handleDelete = () => {
     if (!confirm(`Delete ${form.name}?`)) return;
+    clearClientTabDraft();
     onDelete(editId);
     setMode("list"); setEditId(null); setDetailId(null);
   };
