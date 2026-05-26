@@ -3255,7 +3255,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 }} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
               </div>
             )}
-            {selectedClient && !editingClient && clientAddresses.length > 1 && !addingProperty && (
+            {selectedClient && !editingClient && clientAddresses.length >= 1 && !addingProperty && (
               <div style={{ marginTop: 8 }}>
                 <label style={{ ...S.label, marginBottom: 4 }}>Job Site</label>
                 <select
@@ -3296,18 +3296,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   })}
                   <option value="__add_property__">+ Add new property…</option>
                 </select>
-              </div>
-            )}
-            {selectedClient && !editingClient && clientAddresses.length === 1 && !addingProperty && (
-              <div style={{ marginTop: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPropertyDraft({ id: newAddressId(), label: "", line1: "", line2: "", line3: "" });
-                    setAddingProperty(true);
-                  }}
-                  style={{ background: "none", border: "none", color: ORANGE, fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}
-                >+ Add another property to this client</button>
               </div>
             )}
             {addingProperty && propertyDraft && (
