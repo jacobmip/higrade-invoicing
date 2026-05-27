@@ -4908,7 +4908,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   );
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin, keyboardH = 0, globalHeaderH = 60 }) {
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -5122,8 +5122,6 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     const hay = [c.name, c.email, c.email2, c.phone, ...(c.addresses || []).map(a => `${a.label} ${a.line1} ${a.line2} ${a.line3}`)].join(" ").toLowerCase();
     return hay.includes(q);
   });
-  const listBottomGap = keyboardH > 100 ? keyboardH + 58 : 140;
-  const listMaxHeight = "calc(100vh - " + globalHeaderH + "px - " + listBottomGap + "px)";
   return (
     <div>
       {showImport && (
@@ -5133,7 +5131,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           onImport={(c) => onImportClient ? onImportClient(c) : onSave(c, "new")}
         />
       )}
-      <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", maxHeight: listMaxHeight, padding: "12px 12px 16px" }}>
+      <div style={{ padding: "12px 12px 80px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
           <div style={{ display: "flex", gap: 6 }}>
@@ -5160,7 +5158,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: keyboardH > 100 ? keyboardH + 8 : `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
+      <div style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
         <div style={{ pointerEvents: "auto" }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search clients" floating />
         </div>
@@ -7722,46 +7720,6 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [view]);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const [keyboardH, setKeyboardH] = useState(0);
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const onResize = () => {
-      const kbH = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      const open = kbH > 100;
-      setKeyboardH(kbH);
-      setKeyboardOpen(open);
-    };
-    vv.addEventListener('resize', onResize);
-    vv.addEventListener('scroll', onResize);
-    onResize();
-    return () => {
-      vv.removeEventListener('resize', onResize);
-      vv.removeEventListener('scroll', onResize);
-    };
-  }, []);
-  // Lock the body while on the Clients tab. useLayoutEffect fires synchronously
-  // before the browser paints, so the body is locked before the user can
-  // interact — no first-tap timing gap. Root div handles list scrolling instead.
-  useLayoutEffect(() => {
-    const lock = view === 'list' && tab === 'clients';
-    if (lock) {
-      document.body.style.position = 'fixed';
-      document.body.style.overflow = 'hidden';
-      document.body.style.top = '0';
-      document.body.style.left = '0';
-      document.body.style.right = '0';
-      document.body.style.width = '100%';
-    } else {
-      document.body.style.position = '';
-      document.body.style.overflow = '';
-      document.body.style.top = '';
-      document.body.style.left = '';
-      document.body.style.right = '';
-      document.body.style.width = '';
-    }
-  }, [view, tab]);
   const globalHeaderRef = useRef(null);
   const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
@@ -8866,7 +8824,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", ...(view === "list" && tab === "clients" ? { height: "100vh", overflow: "hidden" } : {}), maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
@@ -8955,7 +8913,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} keyboardH={keyboardH} globalHeaderH={globalHeaderH} />}
+        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
@@ -9001,7 +8959,7 @@ export default function App() {
         </div>
       )}
 
-      {view === "list" && !keyboardOpen && (
+      {view === "list" && (
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
