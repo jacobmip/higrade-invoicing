@@ -7738,25 +7738,8 @@ export default function App() {
       setKeyboardOpen(open);
       // iOS Safari scrolls the page up to keep a focused input above the
       // keyboard. With a bottom-anchored input that shoves the header and
-      // list off-screen. Pin the body in place while the keyboard is up.
-      if (open) {
-        window.scrollTo(0, 0);
-        document.documentElement.style.overflow = 'hidden';
-        document.body.style.overflow = 'hidden';
-        document.body.style.position = 'fixed';
-        document.body.style.top = '0';
-        document.body.style.left = '0';
-        document.body.style.right = '0';
-        document.body.style.width = '100%';
-      } else {
-        document.documentElement.style.overflow = '';
-        document.body.style.overflow = '';
-        document.body.style.position = '';
-        document.body.style.top = '';
-        document.body.style.left = '';
-        document.body.style.right = '';
-        document.body.style.width = '';
-      }
+      // list off-screen — pin scroll to 0 while the keyboard is up.
+      if (open) window.scrollTo(0, 0);
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
