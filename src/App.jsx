@@ -3045,8 +3045,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
   // Edge-swipe-from-left back gesture. App dispatches 'app-back-form'
   // when the form is the active back-able view.
+  const editingClientRef = useRef(editingClient);
+  useEffect(() => { editingClientRef.current = editingClient; }, [editingClient]);
   useEffect(() => {
-    const onSwipeBack = () => { handleBack(); };
+    const onSwipeBack = () => {
+      if (editingClientRef.current) {
+        // Close the client-edit overlay without saving.
+        setEditingClient(false); setClientDraft(null); clearClientDraft();
+        try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+      } else {
+        handleBack();
+      }
+    };
     window.addEventListener('app-back-form', onSwipeBack);
     return () => window.removeEventListener('app-back-form', onSwipeBack);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3173,6 +3183,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const trackTransition = animating ? "transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)" : (swipeRef.current.locked === "x" ? "none" : "transform 0.2s ease-out");
 
   return (
+    <>
     <div style={{ paddingBottom: 100, paddingTop: formHeaderH, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
       {sendMethodFor && <SendMethodSheet
@@ -3449,72 +3460,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 </div>
               </div>
             )}
-            {editingClient && clientDraft && (
-              <div style={{ background: "#fff", borderRadius: 8, padding: "14px 13px", marginTop: 8, border: "1px solid #e8ecf4" }}>
-                <ClientEditFields value={clientDraft} onChange={setClientDraft} compact isAdmin={isAdmin} />
-                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                  <button
-                    type="button"
-                    onClick={() => { setEditingClient(false); setClientDraft(null); clearClientDraft(); try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {} }}
-                    style={{ ...S.btn("ghost"), fontSize: 13, flex: 1, padding: "9px 0" }}
-                    disabled={savingClient}
-                  >Cancel</button>
-                  <button
-                    type="button"
-                    disabled={savingClient}
-                    onClick={async () => {
-                      // Persist edits to the client profile (creating one
-                      // if this was an ad-hoc client). Then re-sync the
-                      // invoice's bill-to display + job-site dropdown so
-                      // the new property shows up immediately.
-                      const cleaned = normalizeClientDraft({ ...clientDraft, name: clientDraft.name || form.client || "" });
-                      setSavingClient(true);
-                      try {
-                        let saved = cleaned;
-                        if (selectedClient?.id) {
-                          await onUpdateClient?.({ ...cleaned, id: selectedClient.id });
-                          saved = { ...cleaned, id: selectedClient.id };
-                        } else if (cleaned.name && onCreateClient) {
-                          const created = await onCreateClient(cleaned);
-                          if (created?.id) saved = { ...cleaned, id: created.id };
-                        }
-                        // Pick a job-site address to keep the invoice
-                        // pointed at: prefer the currently-selected one if
-                        // it still exists, otherwise the first address.
-                        const addrs = saved.addresses || [];
-                        const stillThere = form.jobAddressId && addrs.find(a => a.id === form.jobAddressId);
-                        const pickedJob = stillThere || addrs[0] || null;
-                        setForm(f => ({
-                          ...f,
-                          client: saved.name || f.client,
-                          jobAddressId: pickedJob?.id || null,
-                          jobAddress: pickedJob || null,
-                          billingAddress: saved.billingAddress || null,
-                          clientInfo: {
-                            name: saved.name || f.clientInfo?.name || "",
-                            email: saved.email || "",
-                            phone: saved.phone || "",
-                            address1: pickedJob?.line1 || "",
-                            address2: pickedJob?.line2 || "",
-                            address3: pickedJob?.line3 || "",
-                          },
-                        }));
-                        setEditingClient(false);
-                        setClientDraft(null);
-                        clearClientDraft();
-                        try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
-                      } catch (e) {
-                        console.error('Failed to save client profile:', e);
-                        alert('Could not save client. Please try again.');
-                      } finally {
-                        setSavingClient(false);
-                      }
-                    }}
-                    style={{ ...S.btn("primary"), fontSize: 13, flex: 1, padding: "9px 0", opacity: savingClient ? 0.7 : 1 }}
-                  >{savingClient ? "Saving…" : "Done"}</button>
-                </div>
-              </div>
-            )}
+            {/* client-edit overlay rendered at bottom of InvoiceForm return */}
           </div>
 
           {form.client && (
@@ -3879,6 +3825,72 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       </div>
       </div>
     </div>
+
+    {/* Full-screen client-edit overlay — covers the invoice like a separate page */}
+    {editingClient && clientDraft && (
+      <div style={{ position: "fixed", inset: 0, zIndex: 600, background: LIGHT, overflowY: "auto", maxWidth: 480, left: "50%", transform: "translateX(-50%)" }}>
+        <div style={{ background: NAVY, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 1 }}>
+          <button
+            type="button"
+            onClick={() => { setEditingClient(false); setClientDraft(null); clearClientDraft(); try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {} }}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}
+          ><Icon name="back" size={22} color="#fff" /></button>
+          <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>
+            {selectedClient?.id ? "Edit Client" : "New Client"}
+          </span>
+        </div>
+        <div style={{ padding: 16, paddingBottom: 40 }}>
+          <ClientEditFields value={clientDraft} onChange={setClientDraft} isAdmin={isAdmin} />
+          <button
+            type="button"
+            disabled={savingClient}
+            onClick={async () => {
+              const cleaned = normalizeClientDraft({ ...clientDraft, name: clientDraft.name || form.client || "" });
+              setSavingClient(true);
+              try {
+                let saved = cleaned;
+                if (selectedClient?.id) {
+                  await onUpdateClient?.({ ...cleaned, id: selectedClient.id });
+                  saved = { ...cleaned, id: selectedClient.id };
+                } else if (cleaned.name && onCreateClient) {
+                  const created = await onCreateClient(cleaned);
+                  if (created?.id) saved = { ...cleaned, id: created.id };
+                }
+                const addrs = saved.addresses || [];
+                const stillThere = form.jobAddressId && addrs.find(a => a.id === form.jobAddressId);
+                const pickedJob = stillThere || addrs[0] || null;
+                setForm(f => ({
+                  ...f,
+                  client: saved.name || f.client,
+                  jobAddressId: pickedJob?.id || null,
+                  jobAddress: pickedJob || null,
+                  billingAddress: saved.billingAddress || null,
+                  clientInfo: {
+                    name: saved.name || f.clientInfo?.name || "",
+                    email: saved.email || "",
+                    phone: saved.phone || "",
+                    address1: pickedJob?.line1 || "",
+                    address2: pickedJob?.line2 || "",
+                    address3: pickedJob?.line3 || "",
+                  },
+                }));
+                setEditingClient(false);
+                setClientDraft(null);
+                clearClientDraft();
+                try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+              } catch (e) {
+                console.error('Failed to save client profile:', e);
+                alert('Could not save client. Please try again.');
+              } finally {
+                setSavingClient(false);
+              }
+            }}
+            style={{ ...S.btn("primary"), width: "100%", marginTop: 12, fontSize: 16, padding: 14, opacity: savingClient ? 0.7 : 1 }}
+          >{savingClient ? "Saving…" : "Save Client"}</button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
