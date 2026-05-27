@@ -7682,7 +7682,12 @@ export default function App() {
     if (!vv) return;
     const onResize = () => {
       const overlap = window.innerHeight - vv.height - vv.offsetTop;
-      setKeyboardOpen(overlap > 100);
+      const open = overlap > 100;
+      setKeyboardOpen(open);
+      // iOS Safari scrolls the page up to keep a focused input above the
+      // keyboard. With a bottom-anchored input that shoves the header and
+      // list off-screen — pin scroll to 0 while the keyboard is up.
+      if (open) window.scrollTo(0, 0);
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
