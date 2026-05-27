@@ -227,7 +227,16 @@ function SearchBar({ value, onChange, placeholder, autoFocus, transparent, float
           type="search"
           value={value}
           onChange={e => onChange(e.target.value)}
-          onTouchStart={() => window.scrollTo(0, 0)}
+          onTouchStart={() => {
+            window.scrollTo(0, 0);
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+            document.body.style.position = 'fixed';
+            document.body.style.top = '0';
+            document.body.style.left = '0';
+            document.body.style.right = '0';
+            document.body.style.width = '100%';
+          }}
           placeholder={placeholder || "Search"}
           style={{
             width: "100%",
