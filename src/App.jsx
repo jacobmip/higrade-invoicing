@@ -2515,17 +2515,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     (draft) => { setClientDraft(draft); setEditingClient(true); },
     null
   );
-  // Keep a context entry so iOS-reload can navigate back to this invoice if the
-  // client editor was open when the app was evicted.
-  useEffect(() => {
-    const id = invoice?.id || autoSavedId;
-    if (clientDraft != null && id) {
-      try { localStorage.setItem('higrade_client_draft_ctx', JSON.stringify({ invoiceId: id, key: clientDraftKey })); } catch {}
-    } else {
-      try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientDraft, invoice?.id, autoSavedId]);
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sendMethodFor, setSendMethodFor] = useState(null); // null | "invoice" | "estimate"
@@ -2542,6 +2531,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   }, [autoSendKind]);
   const [sending, setSending] = useState(false);
   const [autoSavedId, setAutoSavedId] = useState(invoice?.id || null);
+  // Keep a context entry so iOS-reload can navigate back to this invoice if the
+  // client editor was open when the app was evicted.
+  useEffect(() => {
+    const id = invoice?.id || autoSavedId;
+    if (clientDraft != null && id) {
+      try { localStorage.setItem('higrade_client_draft_ctx', JSON.stringify({ invoiceId: id, key: clientDraftKey })); } catch {}
+    } else {
+      try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientDraft, invoice?.id, autoSavedId]);
   const [invoicePhotos, setInvoicePhotos] = useState([]);
   // Per-invoice AI chat history. Lives on the form so toggling the panel
   // closed/open preserves the conversation. Each invoice gets its own bucket
