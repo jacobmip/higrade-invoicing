@@ -227,6 +227,7 @@ function SearchBar({ value, onChange, placeholder, autoFocus, transparent, float
           type="search"
           value={value}
           onChange={e => onChange(e.target.value)}
+          onTouchStart={() => window.scrollTo(0, 0)}
           placeholder={placeholder || "Search"}
           style={{
             width: "100%",
@@ -7727,7 +7728,6 @@ export default function App() {
       const open = kbH > 100;
       setKeyboardH(kbH);
       setKeyboardOpen(open);
-      // Pin scroll to 0 while keyboard is up so the page doesn't drift.
       if (open) window.scrollTo(0, 0);
     };
     vv.addEventListener('resize', onResize);
@@ -7738,6 +7738,16 @@ export default function App() {
       vv.removeEventListener('scroll', onResize);
     };
   }, []);
+  // While the keyboard is open pin window scroll to 0 so iOS can't drift the
+  // page up. The search bar repositions itself via keyboardH; everything else
+  // should stay put.
+  useEffect(() => {
+    if (!keyboardOpen) return;
+    const pin = () => { if (window.scrollY !== 0) window.scrollTo(0, 0); };
+    window.addEventListener('scroll', pin, { passive: true });
+    window.scrollTo(0, 0);
+    return () => window.removeEventListener('scroll', pin);
+  }, [keyboardOpen]);
   const globalHeaderRef = useRef(null);
   const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
