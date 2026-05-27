@@ -3828,7 +3828,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
     {/* Full-screen client-edit overlay — covers the invoice like a separate page */}
     {editingClient && clientDraft && (
-      <div style={{ position: "fixed", inset: 0, zIndex: 600, background: LIGHT, overflowY: "auto", maxWidth: 480, left: "50%", transform: "translateX(-50%)" }}>
+      <div style={{ position: "fixed", top: 0, bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 600, background: LIGHT, overflowY: "auto" }}>
         <div style={{ background: NAVY, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 1 }}>
           <button
             type="button"
