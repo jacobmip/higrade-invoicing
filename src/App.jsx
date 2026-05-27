@@ -7728,7 +7728,24 @@ export default function App() {
       const open = kbH > 100;
       setKeyboardH(kbH);
       setKeyboardOpen(open);
-      if (open) window.scrollTo(0, 0);
+      if (open) {
+        window.scrollTo(0, 0);
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.overflow = 'hidden';
+        document.body.style.position = 'fixed';
+        document.body.style.top = '0';
+        document.body.style.left = '0';
+        document.body.style.right = '0';
+        document.body.style.width = '100%';
+      } else {
+        document.documentElement.style.overflow = '';
+        document.body.style.overflow = '';
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.width = '';
+      }
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
@@ -7738,16 +7755,6 @@ export default function App() {
       vv.removeEventListener('scroll', onResize);
     };
   }, []);
-  // While the keyboard is open pin window scroll to 0 so iOS can't drift the
-  // page up. The search bar repositions itself via keyboardH; everything else
-  // should stay put.
-  useEffect(() => {
-    if (!keyboardOpen) return;
-    const pin = () => { if (window.scrollY !== 0) window.scrollTo(0, 0); };
-    window.addEventListener('scroll', pin, { passive: true });
-    window.scrollTo(0, 0);
-    return () => window.removeEventListener('scroll', pin);
-  }, [keyboardOpen]);
   const globalHeaderRef = useRef(null);
   const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
