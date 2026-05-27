@@ -227,16 +227,7 @@ function SearchBar({ value, onChange, placeholder, autoFocus, transparent, float
           type="search"
           value={value}
           onChange={e => onChange(e.target.value)}
-          onTouchStart={() => {
-            window.scrollTo(0, 0);
-            document.documentElement.style.overflow = 'hidden';
-            document.body.style.overflow = 'hidden';
-            document.body.style.position = 'fixed';
-            document.body.style.top = '0';
-            document.body.style.left = '0';
-            document.body.style.right = '0';
-            document.body.style.width = '100%';
-          }}
+          onTouchStart={() => window.scrollTo(0, 0)}
           placeholder={placeholder || "Search"}
           style={{
             width: "100%",
@@ -7737,24 +7728,6 @@ export default function App() {
       const open = kbH > 100;
       setKeyboardH(kbH);
       setKeyboardOpen(open);
-      if (open) {
-        window.scrollTo(0, 0);
-        document.documentElement.style.overflow = 'hidden';
-        document.body.style.overflow = 'hidden';
-        document.body.style.position = 'fixed';
-        document.body.style.top = '0';
-        document.body.style.left = '0';
-        document.body.style.right = '0';
-        document.body.style.width = '100%';
-      } else {
-        document.documentElement.style.overflow = '';
-        document.body.style.overflow = '';
-        document.body.style.position = '';
-        document.body.style.top = '';
-        document.body.style.left = '';
-        document.body.style.right = '';
-        document.body.style.width = '';
-      }
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
@@ -7764,6 +7737,28 @@ export default function App() {
       vv.removeEventListener('scroll', onResize);
     };
   }, []);
+  // Lock the body while on the Clients tab so iOS has nothing to scroll
+  // when the floating search bar is focused. Body is locked the moment the
+  // tab renders — not on touchstart — so there is no timing gap on first tap.
+  // The root div takes over scrolling via overflow-y:auto while locked.
+  useEffect(() => {
+    const lock = view === 'list' && tab === 'clients';
+    if (lock) {
+      document.body.style.position = 'fixed';
+      document.body.style.overflow = 'hidden';
+      document.body.style.top = '0';
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.width = '100%';
+    } else {
+      document.body.style.position = '';
+      document.body.style.overflow = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.width = '';
+    }
+  }, [view, tab]);
   const globalHeaderRef = useRef(null);
   const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
@@ -8868,7 +8863,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", ...(view === "list" && tab === "clients" ? { height: "100vh", overflowY: "auto", WebkitOverflowScrolling: "touch" } : {}), maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
