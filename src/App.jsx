@@ -2616,15 +2616,6 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
   // so paddingTop is correct on first render — no content hidden on load.
   const formHeaderRef = useRef(null);
-  const [formHeaderH, setFormHeaderH] = useState(0);
-  useLayoutEffect(() => {
-    const el = formHeaderRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setFormHeaderH(el.offsetHeight));
-    ro.observe(el);
-    setFormHeaderH(el.offsetHeight);
-    return () => ro.disconnect();
-  }, []);
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
@@ -3198,7 +3189,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   return (
     <>
-    <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ paddingBottom: 100, paddingTop: formHeaderH, background: LIGHT, minHeight: "100vh" }}>
+    <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ paddingBottom: 100, background: LIGHT, minHeight: "100%" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
       {sendMethodFor && <SendMethodSheet
         kind={sendMethodFor}
@@ -3232,7 +3223,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         />
       )}
 
-      <div ref={formHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 100 }}>
+      <div ref={formHeaderRef} style={{ position: "sticky", top: 0, zIndex: 100 }}>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <button onClick={handleBack} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
         <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
@@ -7674,6 +7665,16 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [view]);
+  const globalHeaderRef = useRef(null);
+  const [globalHeaderH, setGlobalHeaderH] = useState(0);
+  useLayoutEffect(() => {
+    const el = globalHeaderRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setGlobalHeaderH(el.offsetHeight));
+    ro.observe(el);
+    setGlobalHeaderH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   const [newDocType, setNewDocType] = useState("invoice");
   // When the user picks Send from the long-press quick-actions menu on the
   // list, we route them into the invoice form AND tell the form to pop its
@@ -8801,52 +8802,52 @@ export default function App() {
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
-      {view === "list" && (
-        <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
-          <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 8 }}>
-                HI GRADE PLUMBING
-                {isAdmin && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.2, padding: "2px 6px", borderRadius: 4 }}>ADMIN</span>}
-              </div>
-              <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>
-                {effectiveOwnerId
-                  ? `Viewing as · ${(allUsers.find(u => u.id === effectiveOwnerId)?.displayName) || "user"}`
-                  : (profile?.display_name ? `${profile.display_name.toUpperCase()}` : "LLC · HONOLULU")}
-              </span>
+      <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 400, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+        <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 8 }}>
+              HI GRADE PLUMBING
+              {isAdmin && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.2, padding: "2px 6px", borderRadius: 4 }}>ADMIN</span>}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {(tab === "invoices" || tab === "estimates" || tab === "expenses") && (
-                <button
-                  onClick={() => {
-                    if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setView("form"); }
-                    else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setView("form"); }
-                    else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
-                  }}
-                  aria-label="New"
-                  style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
-                >
-                  <Icon name="plus" size={20} color="#fff" />
-                </button>
-              )}
-              <NotificationsBell
-                onOpenInvoice={(invoiceId) => {
-                  const inv = data.invoices.find(i => i.id === invoiceId);
-                  if (inv) { setSelected(inv); setView("form"); }
-                }}
-              />
-              <button
-                onClick={() => setShowGlobalAI(true)}
-                aria-label="AI assistant"
-                style={{ width: 36, height: 36, background: "transparent", borderRadius: 8, border: `2px solid ${ORANGE}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
-              >
-                <Icon name="ai" size={18} color={ORANGE} />
-              </button>
-            </div>
+            <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>
+              {effectiveOwnerId
+                ? `Viewing as · ${(allUsers.find(u => u.id === effectiveOwnerId)?.displayName) || "user"}`
+                : (profile?.display_name ? `${profile.display_name.toUpperCase()}` : "LLC · HONOLULU")}
+            </span>
           </div>
-          {subHeader.key === tab ? subHeader.content : null}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {view === "list" && (tab === "invoices" || tab === "estimates" || tab === "expenses") && (
+              <button
+                onClick={() => {
+                  if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setView("form"); }
+                  else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setView("form"); }
+                  else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
+                }}
+                aria-label="New"
+                style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+              >
+                <Icon name="plus" size={20} color="#fff" />
+              </button>
+            )}
+            <NotificationsBell
+              onOpenInvoice={(invoiceId) => {
+                const inv = data.invoices.find(i => i.id === invoiceId);
+                if (inv) { setSelected(inv); setView("form"); }
+              }}
+            />
+            <button
+              onClick={() => setShowGlobalAI(true)}
+              aria-label="AI assistant"
+              style={{ width: 36, height: 36, background: "transparent", borderRadius: 8, border: `2px solid ${ORANGE}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+            >
+              <Icon name="ai" size={18} color={ORANGE} />
+            </button>
+          </div>
         </div>
-      )}
+        {view === "list" && (subHeader.key === tab ? subHeader.content : null)}
+      </div>
+
+      <div style={{ height: globalHeaderH }} />
 
       <>
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
@@ -8861,7 +8862,7 @@ export default function App() {
       </>
 
       {formMounted && (
-        <div style={{ position: "fixed", top: 0, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 300, overflowY: "auto", background: NAVY, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+        <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 300, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
