@@ -2507,12 +2507,25 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [clientDraft, setClientDraft] = useState(null);
   const [savingClient, setSavingClient] = useState(false);
   // Draft persistence for the inline client editor. null state auto-clears the draft.
+  // Key is scoped to this invoice so a draft from Invoice A can never bleed into Invoice B.
+  const clientDraftKey = 'higrade_client_draft_' + (invoice?.id || 'new');
   const clearClientDraft = useDraftPersistence(
-    'higrade_client_draft',
+    clientDraftKey,
     clientDraft,
     (draft) => { setClientDraft(draft); setEditingClient(true); },
     null
   );
+  // Keep a context entry so iOS-reload can navigate back to this invoice if the
+  // client editor was open when the app was evicted.
+  useEffect(() => {
+    const id = invoice?.id || autoSavedId;
+    if (clientDraft != null && id) {
+      try { localStorage.setItem('higrade_client_draft_ctx', JSON.stringify({ invoiceId: id, key: clientDraftKey })); } catch {}
+    } else {
+      try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientDraft, invoice?.id, autoSavedId]);
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sendMethodFor, setSendMethodFor] = useState(null); // null | "invoice" | "estimate"
@@ -2647,6 +2660,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       setAutoSavedId(invoice.id);
       updatedAtRef.current = invoice.updatedAt || null;
       skipFirstRef.current = true; // suppress the auto-save triggered by this reset
+      setEditingClient(false);
+      setClientDraft(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoice?.id]);
@@ -2714,9 +2729,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
-  // On unmount (back button, navigation away), flush any pending changes.
+  // On unmount (back button, navigation away), flush any pending changes and
+  // clear the client draft so it can't bleed into a different invoice.
   useEffect(() => {
-    return () => { flushAutoSaveRef.current(); };
+    return () => { flushAutoSaveRef.current(); clearClientDraft(); try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {} };
   }, []);
   // Also flush to Supabase immediately when iOS sends the page to background.
   useEffect(() => {
@@ -3439,7 +3455,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                   <button
                     type="button"
-                    onClick={() => { setEditingClient(false); setClientDraft(null); clearClientDraft(); }}
+                    onClick={() => { setEditingClient(false); setClientDraft(null); clearClientDraft(); try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {} }}
                     style={{ ...S.btn("ghost"), fontSize: 13, flex: 1, padding: "9px 0" }}
                     disabled={savingClient}
                   >Cancel</button>
@@ -3486,6 +3502,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                         setEditingClient(false);
                         setClientDraft(null);
                         clearClientDraft();
+                        try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
                       } catch (e) {
                         console.error('Failed to save client profile:', e);
                         alert('Could not save client. Please try again.');
@@ -7985,6 +8002,29 @@ export default function App() {
       setGlobalAIMsgs([{ role: "assistant", text: "Aloha Jake. What can I help you with today?" }]);
     }
   }, [globalAIMsgs, dbLoading]);
+
+  // After iOS evicts the PWA and the user returns, the app reloads to the list.
+  // If there was a client editor open on a specific invoice, navigate back to it
+  // so the draft persistence hook can restore the editor.
+  const clientDraftNavRestoredRef = useRef(false);
+  useEffect(() => {
+    if (dbLoading) return;
+    if (clientDraftNavRestoredRef.current) return;
+    clientDraftNavRestoredRef.current = true;
+    if (view !== 'list') return;
+    try {
+      const ctxRaw = localStorage.getItem('higrade_client_draft_ctx');
+      if (!ctxRaw) return;
+      const { invoiceId, key } = JSON.parse(ctxRaw);
+      if (!invoiceId || !key) return;
+      if (!localStorage.getItem(key)) return; // draft itself gone — skip
+      const inv = data.invoices.find(i => i.id === invoiceId);
+      if (!inv) return;
+      setSelected(inv);
+      setView('form');
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbLoading, data.invoices]);
 
   // Persist the global AI chat history to localStorage on every change so it
   // survives page reloads. Cap at 200 messages to keep the payload small.
