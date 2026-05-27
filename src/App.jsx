@@ -7660,6 +7660,20 @@ export default function App() {
   useEffect(() => { try { localStorage.removeItem('higrade_clients_nav'); } catch {} }, []);
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
+  const FORM_SLIDE_MS = 300;
+  const [formMounted, setFormMounted] = useState(false);
+  const [formVisible, setFormVisible] = useState(false);
+  useEffect(() => {
+    if (view === 'form') {
+      setFormMounted(true);
+      const id = requestAnimationFrame(() => setFormVisible(true));
+      return () => cancelAnimationFrame(id);
+    } else {
+      setFormVisible(false);
+      const timer = setTimeout(() => setFormMounted(false), FORM_SLIDE_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [view]);
   const [newDocType, setNewDocType] = useState("invoice");
   // When the user picks Send from the long-press quick-actions menu on the
   // list, we route them into the invoice form AND tell the form to pop its
@@ -8750,7 +8764,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingBottom: !formMounted ? 80 : 0 }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
@@ -8787,7 +8801,7 @@ export default function App() {
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
-      {view === "list" && (
+      {!formMounted && (
         <div style={{ position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
           <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
@@ -8834,55 +8848,56 @@ export default function App() {
         </div>
       )}
 
-      {view === "form" ? (
-        <InvoiceForm
-          invoice={selected}
-          defaultType={newDocType}
-          clients={data.clients}
-          savedItems={data.savedItems}
-          gcalAuthed={gcalAuthed}
-          data={data}
-          onAIAction={handleGlobalAIAction}
-          autoSendKind={autoSendKind}
-          onAutoSendConsumed={() => setAutoSendKind(null)}
-          onSave={updateInvoice}
-          onPartialSave={partialSaveInvoice}
-          onAutoSave={autoSaveInvoice}
-          onCancel={() => { setView("list"); setSelected(null); }}
-          onDelete={deleteInvoice}
-          onSaveItem={saveItemToLibrary}
-          onUpdateClient={async (updated) => {
-            await db.updateClient(updated);
-            db.recordClientVersion(updated, "Saved").catch(() => {});
-            setData(d => ({ ...d, clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c) }));
-          }}
-          onCreateClient={async (form) => {
-            const id = await db.insertClient(form);
-            const newClient = { ...form, id };
-            db.recordClientVersion(newClient, "Created").catch(() => {});
-            setData(d => ({ ...d, clients: [...d.clients, newClient] }));
-            return newClient;
-          }}
-          onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
-          onConvert={convertInvoice}
-          isAdmin={isAdmin}
-        />
-      ) : (
-        <>
-          {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
-          {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-          {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
-          {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
-          {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
-          {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
-          {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
-          {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
-          {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
-        </>
+      <>
+        {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
+        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
+        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
+        {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
+        {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
+        {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
+        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
+        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
+        {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
+      </>
+
+      {formMounted && (
+        <div style={{ position: "fixed", top: 0, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 50, overflowY: "auto", transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+          <InvoiceForm
+            invoice={selected}
+            defaultType={newDocType}
+            clients={data.clients}
+            savedItems={data.savedItems}
+            gcalAuthed={gcalAuthed}
+            data={data}
+            onAIAction={handleGlobalAIAction}
+            autoSendKind={autoSendKind}
+            onAutoSendConsumed={() => setAutoSendKind(null)}
+            onSave={updateInvoice}
+            onPartialSave={partialSaveInvoice}
+            onAutoSave={autoSaveInvoice}
+            onCancel={() => { setView("list"); setSelected(null); }}
+            onDelete={deleteInvoice}
+            onSaveItem={saveItemToLibrary}
+            onUpdateClient={async (updated) => {
+              await db.updateClient(updated);
+              db.recordClientVersion(updated, "Saved").catch(() => {});
+              setData(d => ({ ...d, clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c) }));
+            }}
+            onCreateClient={async (form) => {
+              const id = await db.insertClient(form);
+              const newClient = { ...form, id };
+              db.recordClientVersion(newClient, "Created").catch(() => {});
+              setData(d => ({ ...d, clients: [...d.clients, newClient] }));
+              return newClient;
+            }}
+            onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
+            onConvert={convertInvoice}
+            isAdmin={isAdmin}
+          />
+        </div>
       )}
 
-      {view === "list" && (
-
+      {!formMounted && (
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
