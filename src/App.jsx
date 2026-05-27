@@ -5158,8 +5158,10 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: keyboardH > 100 ? keyboardH + 8 : `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px 8px" }}>
-        <SearchBar value={search} onChange={setSearch} placeholder="Search clients" floating />
+      <div style={{ position: "fixed", bottom: keyboardH > 100 ? keyboardH + 8 : `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px" }}>
+        <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 4px 20px rgba(10,22,40,0.14)", overflow: "hidden" }}>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
+        </div>
       </div>
     </div>
   );
