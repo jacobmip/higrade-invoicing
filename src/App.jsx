@@ -2147,21 +2147,23 @@ function PDFPreview({ form, clients, photos = [] }) {
   const t = calcTotals(form);
   const clientRecord = clients.find(c => c.name === form.client) || {};
   const clientData = form.clientInfo || clientRecord;
-  // Billing/mailing address: prefer the explicit billing snapshot on the
-  // invoice, then the client record's billing, then legacy flat fields.
-  const billingSrc = form.billingAddress || clientRecord.billingAddress || null;
-  const billingLines = billingSrc
-    ? [billingSrc.line1, billingSrc.line2, billingSrc.line3].filter(Boolean)
-    : [clientRecord.address1, clientRecord.address2, clientRecord.address3].filter(Boolean);
-  const addr = billingLines.length
-    ? billingLines.join(", ")
-    : [clientData.address1, clientData.address2, clientData.address3].filter(Boolean).join(", ");
-  // Job site: an optional secondary location for the work. Show only when it
-  // has content AND differs from the billing address (legacy single-address
-  // clients have billing == job site, so suppress to avoid duplication).
-  const ja = form.jobAddress && typeof form.jobAddress === "object" ? form.jobAddress : null;
-  const jobLines = ja ? [ja.line1, ja.line2, ja.line3].filter(Boolean) : [];
-  const showJobSite = ja && (ja.label || jobLines.length) && jobLines.join(", ") !== addr;
+  // Single address on the invoice — the customer wants to see WHERE the job
+  // was, so the job site (if set) takes priority; otherwise fall back to
+  // the client's billing/mailing address. The billing address is the
+  // default entry method when creating a new client, so most clients only
+  // have billing.
+  const linesOf = (src) => src ? [src.line1, src.line2, src.line3].filter(Boolean) : [];
+  const jobLines = linesOf(form.jobAddress);
+  const billingLines =
+    (linesOf(form.billingAddress).length && linesOf(form.billingAddress))
+    || (linesOf(clientRecord.billingAddress).length && linesOf(clientRecord.billingAddress))
+    || [clientRecord.address1, clientRecord.address2, clientRecord.address3].filter(Boolean);
+  const addrLines = jobLines.length
+    ? jobLines
+    : (billingLines.length
+        ? billingLines
+        : [clientData.address1, clientData.address2, clientData.address3].filter(Boolean));
+  const addr = addrLines.join(", ");
   const isEstimate = form.type === "estimate";
   const lateFeeInfo = calcLateFee(form, t);
   const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
@@ -2217,17 +2219,6 @@ function PDFPreview({ form, clients, photos = [] }) {
                 {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
                 {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
               </div>
-              {showJobSite && (
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #e6e9f1" }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 5 }}>Job Site</div>
-                  {ja.label && <div style={{ fontWeight: 700, fontSize: 13, color: "#222", marginBottom: 2 }}>{ja.label}</div>}
-                  {jobLines.length > 0 && (
-                    <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-                      {jobLines.map((l, i) => <div key={i}>{l}</div>)}
-                    </div>
-                  )}
-                </div>
-              )}
             </>
           ) : (
             <div style={{ fontSize: 13, color: "#bbb", fontStyle: "italic" }}>No client selected</div>
@@ -5909,13 +5900,13 @@ function PublicViewerPage({ token }) {
     const payStatus = isEstimate ? (invForm.status || 'pending').toUpperCase() : (balance > 0 ? 'OUTSTANDING' : 'PAID IN FULL');
     const statusColor = isEstimate ? ORANGE : (balance > 0 ? ORANGE : '#2ea66a');
     const ci = invForm.clientInfo || {};
-    // Bill-to address: prefer the explicit billing snapshot on the invoice,
-    // then fall back to clientInfo's flat lines (which on legacy single-
-    // address clients carry the mailing address).
-    const billingSrc = invForm.billingAddress || null;
-    const billingLines = billingSrc
-      ? [billingSrc.line1, billingSrc.line2, billingSrc.line3].filter(Boolean)
-      : [ci.address1, ci.address2, ci.address3].filter(Boolean);
+    // Single address on the invoice — job site wins if it has lines, else
+    // fall back to the billing snapshot, then to clientInfo's flat lines.
+    const linesOf = (src) => src ? [src.line1, src.line2, src.line3].filter(Boolean) : [];
+    const addrLines =
+      (linesOf(invForm.jobAddress).length && linesOf(invForm.jobAddress))
+      || (linesOf(invForm.billingAddress).length && linesOf(invForm.billingAddress))
+      || [ci.address1, ci.address2, ci.address3].filter(Boolean);
     const fmtDate = (s) => {
       if (!s) return '';
       const d = new Date(s);
@@ -6034,9 +6025,9 @@ function PublicViewerPage({ token }) {
             <div style={{ flex: '1 1 240px' }}>
               <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
               <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
-              {billingLines.length > 0 && (
+              {addrLines.length > 0 && (
                 <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
-                  {billingLines.map((l, i) => <div key={i}>{l}</div>)}
+                  {addrLines.map((l, i) => <div key={i}>{l}</div>)}
                 </div>
               )}
               {(ci.phone || ci.email) && (
@@ -6045,28 +6036,6 @@ function PublicViewerPage({ token }) {
                 </div>
               )}
             </div>
-            {(() => {
-              const ja = invForm.jobAddress || null;
-              if (!ja) return null;
-              const jobLines = [ja.line1, ja.line2, ja.line3].filter(Boolean);
-              if (!jobLines.length && !ja.label) return null;
-              // Suppress the JOB SITE block when it duplicates the billing
-              // lines (legacy single-address clients).
-              if (jobLines.join(', ') === billingLines.join(', ')) return null;
-              return (
-                <div style={{ flex: '1 1 240px' }}>
-                  <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>JOB SITE</div>
-                  {ja.label && (
-                    <div style={{ color: NAVY, fontSize: 16, fontWeight: 700, marginTop: 4 }}>{ja.label}</div>
-                  )}
-                  {jobLines.length > 0 && (
-                    <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
-                      {jobLines.map((l, i) => <div key={i}>{l}</div>)}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
           </div>
 
           {/* Items table */}
