@@ -301,6 +301,7 @@ Save or update a price in Jake's memory (use when Jake says "save", "remember", 
 
 Create a new client:
 {"action":"create_client","client":{"name":"Full Name","email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
+NOTE: address1/2/3 on a client is the BILLING / mailing address (where the bill goes). It is NOT a job-site address. Job-site addresses are set per-invoice, never via create_client. If Jake gives you just one address for a new client, treat it as the billing address.
 
 Update an existing invoice (set client, dates, status, notes — only include the fields you want to change):
 {"action":"update_invoice","invoiceId":"INV0000","changes":{"client":"exact name","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","status":"outstanding|paid|partial|net30","notes":"text","discount":0,"tax":4.712},"summary":"one sentence"}
@@ -322,6 +323,7 @@ Example — Jake says "adjust the invoice so the description includes that I'm r
 
 Update a client's contact info (only include fields to change):
 {"action":"update_client","clientName":"exact name","changes":{"email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
+NOTE: address1/2/3 here is the BILLING / mailing address, same as in create_client. Job-site addresses are not edited via update_client.
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
@@ -2104,7 +2106,21 @@ function PDFPreview({ form, clients, photos = [] }) {
   const t = calcTotals(form);
   const clientRecord = clients.find(c => c.name === form.client) || {};
   const clientData = form.clientInfo || clientRecord;
-  const addr = [clientData.address1, clientData.address2, clientData.address3].filter(Boolean).join(", ");
+  // Billing/mailing address: prefer the explicit billing snapshot on the
+  // invoice, then the client record's billing, then legacy flat fields.
+  const billingSrc = form.billingAddress || clientRecord.billingAddress || null;
+  const billingLines = billingSrc
+    ? [billingSrc.line1, billingSrc.line2, billingSrc.line3].filter(Boolean)
+    : [clientRecord.address1, clientRecord.address2, clientRecord.address3].filter(Boolean);
+  const addr = billingLines.length
+    ? billingLines.join(", ")
+    : [clientData.address1, clientData.address2, clientData.address3].filter(Boolean).join(", ");
+  // Job site: an optional secondary location for the work. Show only when it
+  // has content AND differs from the billing address (legacy single-address
+  // clients have billing == job site, so suppress to avoid duplication).
+  const ja = form.jobAddress && typeof form.jobAddress === "object" ? form.jobAddress : null;
+  const jobLines = ja ? [ja.line1, ja.line2, ja.line3].filter(Boolean) : [];
+  const showJobSite = ja && (ja.label || jobLines.length) && jobLines.join(", ") !== addr;
   const isEstimate = form.type === "estimate";
   const lateFeeInfo = calcLateFee(form, t);
   const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
@@ -2160,6 +2176,17 @@ function PDFPreview({ form, clients, photos = [] }) {
                 {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
                 {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
               </div>
+              {showJobSite && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #e6e9f1" }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 5 }}>Job Site</div>
+                  {ja.label && <div style={{ fontWeight: 700, fontSize: 13, color: "#222", marginBottom: 2 }}>{ja.label}</div>}
+                  {jobLines.length > 0 && (
+                    <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>
+                      {jobLines.map((l, i) => <div key={i}>{l}</div>)}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div style={{ fontSize: 13, color: "#bbb", fontStyle: "italic" }}>No client selected</div>
@@ -5739,6 +5766,8 @@ function PublicViewerPage({ token }) {
     discountType: state.invoice.discount_type || '$',
     notes: state.invoice.notes || '',
     clientInfo: state.invoice.client_info || null,
+    billingAddress: state.invoice.billing_address || null,
+    jobAddress: state.invoice.job_address || null,
     items: (state.items || []).sort((a, b) => a.sort_order - b.sort_order).map(it => ({
       name: it.name || '',
       desc: it.description ?? it.desc ?? '',
@@ -5837,6 +5866,13 @@ function PublicViewerPage({ token }) {
     const payStatus = isEstimate ? (invForm.status || 'pending').toUpperCase() : (balance > 0 ? 'OUTSTANDING' : 'PAID IN FULL');
     const statusColor = isEstimate ? ORANGE : (balance > 0 ? ORANGE : '#2ea66a');
     const ci = invForm.clientInfo || {};
+    // Bill-to address: prefer the explicit billing snapshot on the invoice,
+    // then fall back to clientInfo's flat lines (which on legacy single-
+    // address clients carry the mailing address).
+    const billingSrc = invForm.billingAddress || null;
+    const billingLines = billingSrc
+      ? [billingSrc.line1, billingSrc.line2, billingSrc.line3].filter(Boolean)
+      : [ci.address1, ci.address2, ci.address3].filter(Boolean);
     const fmtDate = (s) => {
       if (!s) return '';
       const d = new Date(s);
@@ -5955,9 +5991,9 @@ function PublicViewerPage({ token }) {
             <div style={{ flex: '1 1 240px' }}>
               <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
               <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
-              {(ci.address || ci.city || ci.state || ci.zip) && (
-                <div style={{ color: '#555', fontSize: 14, marginTop: 4 }}>
-                  {[ci.address, [ci.city, ci.state].filter(Boolean).join(', '), ci.zip].filter(Boolean).join(' · ')}
+              {billingLines.length > 0 && (
+                <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
+                  {billingLines.map((l, i) => <div key={i}>{l}</div>)}
                 </div>
               )}
               {(ci.phone || ci.email) && (
@@ -5971,6 +6007,9 @@ function PublicViewerPage({ token }) {
               if (!ja) return null;
               const jobLines = [ja.line1, ja.line2, ja.line3].filter(Boolean);
               if (!jobLines.length && !ja.label) return null;
+              // Suppress the JOB SITE block when it duplicates the billing
+              // lines (legacy single-address clients).
+              if (jobLines.join(', ') === billingLines.join(', ')) return null;
               return (
                 <div style={{ flex: '1 1 240px' }}>
                   <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>JOB SITE</div>

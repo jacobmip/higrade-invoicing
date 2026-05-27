@@ -167,7 +167,14 @@ function drawBillTo(doc, form, y) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   let cy = y + 34;
-  const addr = [data.address1, data.address2, data.address3].filter(Boolean).join(", ");
+  // Bill-to address: prefer the explicit billing snapshot on the invoice;
+  // fall back to clientInfo's flat lines (which on legacy clients carry the
+  // single mailing/job address).
+  const ba = form.billingAddress || {};
+  const billingLines = [ba.line1, ba.line2, ba.line3].filter(Boolean);
+  const addr = billingLines.length
+    ? billingLines.join(", ")
+    : [data.address1, data.address2, data.address3].filter(Boolean).join(", ");
   if (addr) { doc.text(addr, MARGIN, cy); cy += 14; }
   const contact = [data.phone, data.email].filter(Boolean).join(" · ");
   if (contact) { setText(doc, TEXT_LIGHT); doc.text(contact, MARGIN, cy); cy += 14; }
