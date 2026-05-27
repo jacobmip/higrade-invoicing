@@ -4918,6 +4918,40 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   const [search, setSearch] = useState("");
   const [showImport, setShowImport] = useState(false);
 
+  // Direct DOM positioning for the floating search bar so we can move it
+  // synchronously on touchstart — before iOS decides to pan the viewport.
+  const searchWrapRef = useRef(null);
+  const lastKbHRef = useRef(291); // sensible default for iPhone
+
+  const setSearchBottom = (kbH) => {
+    const el = searchWrapRef.current;
+    if (!el) return;
+    if (kbH > 0) {
+      el.style.bottom = `${kbH + 8}px`;
+    } else {
+      el.style.bottom = 'calc(64px + env(safe-area-inset-bottom))';
+    }
+  };
+
+  // Keep in sync when actual keyboard height is known
+  useEffect(() => {
+    if (keyboardH > 0) lastKbHRef.current = keyboardH;
+    setSearchBottom(keyboardH);
+  }, [keyboardH]);
+
+  // On touchstart, proactively lift the bar BEFORE iOS opens the keyboard
+  // and decides to pan. Direct DOM update = synchronous, no React frame delay.
+  const handleSearchTouchStart = () => {
+    const el = searchWrapRef.current;
+    if (!el) return;
+    el.style.transition = 'none';
+    setSearchBottom(lastKbHRef.current);
+    // Re-enable transition after the jump so keyboard-close animates smoothly
+    requestAnimationFrame(() => {
+      if (el) el.style.transition = 'bottom 0.25s ease';
+    });
+  };
+
   const clientTabDraftKey = `higrade_client_edit_${editId || "none"}`;
   const clearClientTabDraft = useDraftPersistence(
     clientTabDraftKey,
@@ -5158,7 +5192,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: keyboardH > 0 ? keyboardH + 8 : "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none", transition: "bottom 0.15s ease" }}>
+      <div ref={searchWrapRef} onTouchStart={handleSearchTouchStart} style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none", transition: "bottom 0.25s ease" }}>
         <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
         </div>
