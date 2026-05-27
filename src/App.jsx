@@ -3198,7 +3198,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   return (
     <>
-    <div style={{ paddingBottom: 100, paddingTop: formHeaderH, background: LIGHT, minHeight: "100vh" }}>
+    <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ paddingBottom: 100, paddingTop: formHeaderH, background: LIGHT, minHeight: "100vh" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
       {sendMethodFor && <SendMethodSheet
         kind={sendMethodFor}
@@ -3260,7 +3260,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       </div>
       </div>
 
-      <div ref={trackRef} onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ overflow: "hidden", touchAction: "pan-y" }}>
+      <div ref={trackRef} style={{ overflow: "hidden", touchAction: "pan-y" }}>
       <div style={{ display: "flex", width: viewportW ? viewportW * TABS.length : "300%", transform: trackTransform, transition: trackTransition, willChange: "transform", alignItems: "flex-start" }}>
       {/* Non-active tabs collapse to maxHeight 0 at rest so the track only
           grows to fit the active panel's natural height (eliminates the dead
