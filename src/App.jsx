@@ -4907,7 +4907,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   );
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin }) {
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin, keyboardH = 0 }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -5157,7 +5157,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px 8px" }}>
+      <div style={{ position: "fixed", bottom: keyboardH > 100 ? keyboardH + 8 : `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px 8px" }}>
         <SearchBar value={search} onChange={setSearch} placeholder="Search clients" floating />
       </div>
     </div>
@@ -7718,16 +7718,16 @@ export default function App() {
     }
   }, [view]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardH, setKeyboardH] = useState(0);
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const onResize = () => {
-      const overlap = window.innerHeight - vv.height - vv.offsetTop;
-      const open = overlap > 100;
+      const kbH = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      const open = kbH > 100;
+      setKeyboardH(kbH);
       setKeyboardOpen(open);
-      // iOS Safari scrolls the page up to keep a focused input above the
-      // keyboard. With a bottom-anchored input that shoves the header and
-      // list off-screen — pin scroll to 0 while the keyboard is up.
+      // Pin scroll to 0 while keyboard is up so the page doesn't drift.
       if (open) window.scrollTo(0, 0);
     };
     vv.addEventListener('resize', onResize);
@@ -8931,7 +8931,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
+        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} keyboardH={keyboardH} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
