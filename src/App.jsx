@@ -2493,6 +2493,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
+  const [clientEditVisible, setClientEditVisible] = useState(false);
+  const SLIDE_MS = 300;
+  useEffect(() => {
+    if (!editingClient) return;
+    const id = requestAnimationFrame(() => setClientEditVisible(true));
+    return () => cancelAnimationFrame(id);
+  }, [editingClient]);
   // Inline "+ Add new property" flow on the invoice/estimate form. When set,
   // we render a tiny address form below the Job Site dropdown so the user can
   // add a property without leaving the invoice. On save, we persist to the
@@ -3045,14 +3052,21 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   };
   // Edge-swipe-from-left back gesture. App dispatches 'app-back-form'
   // when the form is the active back-able view.
+  const closeClientEdit = () => {
+    setClientEditVisible(false);
+    setTimeout(() => {
+      setEditingClient(false);
+      setClientDraft(null);
+      clearClientDraft();
+      try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+    }, SLIDE_MS);
+  };
   const editingClientRef = useRef(editingClient);
   useEffect(() => { editingClientRef.current = editingClient; }, [editingClient]);
   useEffect(() => {
     const onSwipeBack = () => {
       if (editingClientRef.current) {
-        // Close the client-edit overlay without saving.
-        setEditingClient(false); setClientDraft(null); clearClientDraft();
-        try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+        closeClientEdit();
       } else {
         handleBack();
       }
@@ -3826,13 +3840,13 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       </div>
     </div>
 
-    {/* Full-screen client-edit overlay — covers the invoice like a separate page */}
+    {/* Full-screen client-edit overlay — slides in from the right like a native page */}
     {editingClient && clientDraft && (
-      <div style={{ position: "fixed", top: 0, bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 600, background: LIGHT, overflowY: "auto" }}>
+      <div style={{ position: "fixed", top: 0, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 600, background: LIGHT, overflowY: "auto", transform: clientEditVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
         <div style={{ background: NAVY, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 1 }}>
           <button
             type="button"
-            onClick={() => { setEditingClient(false); setClientDraft(null); clearClientDraft(); try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {} }}
+            onClick={closeClientEdit}
             style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}
           ><Icon name="back" size={22} color="#fff" /></button>
           <span style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>
@@ -3874,10 +3888,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                     address3: pickedJob?.line3 || "",
                   },
                 }));
-                setEditingClient(false);
-                setClientDraft(null);
-                clearClientDraft();
-                try { localStorage.removeItem('higrade_client_draft_ctx'); } catch {}
+                closeClientEdit();
               } catch (e) {
                 console.error('Failed to save client profile:', e);
                 alert('Could not save client. Please try again.');
