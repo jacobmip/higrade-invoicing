@@ -211,7 +211,7 @@ function matchesSearch(inv, query) {
 }
 
 // Compact search-bar component reused on the Invoices and Estimates tabs.
-function SearchBar({ value, onChange, placeholder, autoFocus, transparent }) {
+function SearchBar({ value, onChange, placeholder, autoFocus, transparent, floating }) {
   const inputRef = useRef(null);
   useEffect(() => {
     if (!autoFocus) return;
@@ -219,6 +219,39 @@ function SearchBar({ value, onChange, placeholder, autoFocus, transparent }) {
     if (!el) return;
     try { el.focus({ preventScroll: true }); } catch { el.focus(); }
   }, [autoFocus]);
+  if (floating) {
+    return (
+      <div style={{ position: "relative" }}>
+        <input
+          ref={inputRef}
+          type="search"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder || "Search"}
+          style={{
+            width: "100%",
+            background: "#fff",
+            border: "none",
+            borderRadius: 14,
+            padding: "13px 36px 13px 44px",
+            fontSize: 16,
+            outline: "none",
+            boxSizing: "border-box",
+            WebkitAppearance: "none",
+            boxShadow: "0 4px 18px rgba(10,22,40,0.16)",
+          }}
+        />
+        <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 17, pointerEvents: "none" }}>⌕</span>
+        {value && (
+          <button
+            onClick={() => onChange("")}
+            aria-label="Clear search"
+            style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 13, lineHeight: 1, padding: 0 }}
+          >×</button>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ background: transparent ? "transparent" : "#fff", padding: "8px 12px", borderBottom: transparent ? "none" : "1px solid #eee", position: "relative" }}>
       <input
@@ -5133,10 +5166,8 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
-        <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
-          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
-        </div>
+      <div style={{ position: "fixed", bottom: `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px 8px" }}>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search clients" floating />
       </div>
     </div>
   );
