@@ -4908,7 +4908,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   );
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin }) {
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin, keyboardH = 0 }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -5158,7 +5158,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
+      <div style={{ position: "fixed", bottom: keyboardH > 0 ? keyboardH + 8 : "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none", transition: "bottom 0.15s ease" }}>
         <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
         </div>
@@ -7721,6 +7721,7 @@ export default function App() {
     }
   }, [view]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardH, setKeyboardH] = useState(0);
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -7728,6 +7729,7 @@ export default function App() {
       const overlap = window.innerHeight - vv.height - vv.offsetTop;
       const open = overlap > 100;
       setKeyboardOpen(open);
+      setKeyboardH(open ? overlap : 0);
       if (open) window.scrollTo(0, 0);
     };
     vv.addEventListener('resize', onResize);
@@ -8931,7 +8933,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
+        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} keyboardH={keyboardH} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
