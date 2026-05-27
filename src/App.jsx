@@ -5131,10 +5131,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           onImport={(c) => onImportClient ? onImportClient(c) : onSave(c, "new")}
         />
       )}
-      <div style={{ padding: "8px 12px 4px" }}>
-        <SearchBar value={search} onChange={setSearch} placeholder="Search clients" />
-      </div>
-      <div style={{ padding: "8px 12px 80px" }}>
+      <div style={{ padding: "12px 12px 80px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
           <div style={{ display: "flex", gap: 6 }}>
@@ -5160,6 +5157,11 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
         {filtered.length === 0 && search && (
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
+      </div>
+      <div style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
+        <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
+        </div>
       </div>
     </div>
   );
@@ -7718,6 +7720,24 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [view]);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      const overlap = window.innerHeight - vv.height - vv.offsetTop;
+      const open = overlap > 100;
+      setKeyboardOpen(open);
+      if (open) window.scrollTo(0, 0);
+    };
+    vv.addEventListener('resize', onResize);
+    vv.addEventListener('scroll', onResize);
+    onResize();
+    return () => {
+      vv.removeEventListener('resize', onResize);
+      vv.removeEventListener('scroll', onResize);
+    };
+  }, []);
   const globalHeaderRef = useRef(null);
   const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
@@ -8957,7 +8977,7 @@ export default function App() {
         </div>
       )}
 
-      {view === "list" && (
+      {view === "list" && !keyboardOpen && (
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
