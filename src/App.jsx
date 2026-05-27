@@ -5065,7 +5065,6 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   });
   return (
     <div>
-      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
       {showImport && (
         <ImportClientsModal
           existingClients={clients}
@@ -5073,7 +5072,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           onImport={(c) => onImportClient ? onImportClient(c) : onSave(c, "new")}
         />
       )}
-      <div style={{ padding: 12 }}>
+      <div style={{ padding: "12px 12px 80px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
           <div style={{ display: "flex", gap: 6 }}>
@@ -5099,6 +5098,9 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
         {filtered.length === 0 && search && (
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
         )}
+      </div>
+      <div style={{ position: "fixed", bottom: `calc(58px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, boxShadow: "0 -2px 12px rgba(0,0,0,0.08)" }}>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
       </div>
     </div>
   );
