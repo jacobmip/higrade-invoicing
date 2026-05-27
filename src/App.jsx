@@ -7666,13 +7666,17 @@ export default function App() {
     }
   }, [view]);
   const globalHeaderRef = useRef(null);
-  const [globalHeaderH, setGlobalHeaderH] = useState(0);
+  const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
     const el = globalHeaderRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setGlobalHeaderH(el.offsetHeight));
+    const measure = () => {
+      const h = el.getBoundingClientRect().height || el.offsetHeight;
+      if (h > 0) setGlobalHeaderH(h);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setGlobalHeaderH(el.offsetHeight);
+    measure();
     return () => ro.disconnect();
   }, []);
   const [newDocType, setNewDocType] = useState("invoice");
