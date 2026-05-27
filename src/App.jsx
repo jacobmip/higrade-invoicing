@@ -211,7 +211,7 @@ function matchesSearch(inv, query) {
 }
 
 // Compact search-bar component reused on the Invoices and Estimates tabs.
-function SearchBar({ value, onChange, placeholder, autoFocus }) {
+function SearchBar({ value, onChange, placeholder, autoFocus, transparent }) {
   const inputRef = useRef(null);
   useEffect(() => {
     if (!autoFocus) return;
@@ -220,7 +220,7 @@ function SearchBar({ value, onChange, placeholder, autoFocus }) {
     try { el.focus({ preventScroll: true }); } catch { el.focus(); }
   }, [autoFocus]);
   return (
-    <div style={{ background: "#fff", padding: "8px 12px", borderBottom: "1px solid #eee", position: "relative" }}>
+    <div style={{ background: transparent ? "transparent" : "#fff", padding: "8px 12px", borderBottom: transparent ? "none" : "1px solid #eee", position: "relative" }}>
       <input
         ref={inputRef}
         type="search"
@@ -5106,8 +5106,10 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: `calc(58px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, boxShadow: "0 -2px 12px rgba(0,0,0,0.08)" }}>
-        <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
+      <div style={{ position: "fixed", bottom: `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
+        <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
+        </div>
       </div>
     </div>
   );
