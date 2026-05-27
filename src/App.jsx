@@ -4516,7 +4516,7 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       </div>
       {addresses.length === 0 && (
         <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 12, color: "#888", marginBottom: 12 }}>
-          No job sites yet. Tap + Add to enter the first property address. For a property manager, add one entry per property and give each a nickname (e.g. “Kaimuki Duplex”).
+          No job sites yet. Tap + Add to enter the first property address. For a property manager, add one entry per property and give each a nickname (e.g. "Kaimuki Duplex").
         </div>
       )}
       {addresses.map((a, idx) => (
@@ -4908,7 +4908,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   );
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin, keyboardH = 0 }) {
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin, keyboardH = 0, globalHeaderH = 60 }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -5122,6 +5122,8 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     const hay = [c.name, c.email, c.email2, c.phone, ...(c.addresses || []).map(a => `${a.label} ${a.line1} ${a.line2} ${a.line3}`)].join(" ").toLowerCase();
     return hay.includes(q);
   });
+  const listBottomGap = keyboardH > 100 ? keyboardH + 58 : 140;
+  const listMaxHeight = "calc(100vh - " + globalHeaderH + "px - " + listBottomGap + "px)";
   return (
     <div>
       {showImport && (
@@ -5131,7 +5133,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           onImport={(c) => onImportClient ? onImportClient(c) : onSave(c, "new")}
         />
       )}
-      <div style={{ padding: "12px 12px 80px" }}>
+      <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", maxHeight: listMaxHeight, padding: "12px 12px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
           <div style={{ display: "flex", gap: 6 }}>
@@ -5155,12 +5157,12 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           );
         })}
         {filtered.length === 0 && search && (
-          <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match “{search}”.</div>
+          <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
       </div>
-      <div style={{ position: "fixed", bottom: keyboardH > 100 ? keyboardH + 8 : `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px" }}>
-        <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 4px 20px rgba(10,22,40,0.14)", overflow: "hidden" }}>
-          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
+      <div style={{ position: "fixed", bottom: keyboardH > 100 ? keyboardH + 8 : `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
+        <div style={{ pointerEvents: "auto" }}>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" floating />
         </div>
       </div>
     </div>
@@ -7739,11 +7741,10 @@ export default function App() {
       vv.removeEventListener('scroll', onResize);
     };
   }, []);
-  // Lock the body while on the Clients tab so iOS has nothing to scroll
-  // when the floating search bar is focused. Body is locked the moment the
-  // tab renders — not on touchstart — so there is no timing gap on first tap.
-  // The root div takes over scrolling via overflow-y:auto while locked.
-  useEffect(() => {
+  // Lock the body while on the Clients tab. useLayoutEffect fires synchronously
+  // before the browser paints, so the body is locked before the user can
+  // interact — no first-tap timing gap. Root div handles list scrolling instead.
+  useLayoutEffect(() => {
     const lock = view === 'list' && tab === 'clients';
     if (lock) {
       document.body.style.position = 'fixed';
@@ -8847,7 +8848,7 @@ export default function App() {
   const invoices = (filteredData.invoices || []).filter(i => i.type !== "estimate");
   const estimates = (filteredData.invoices || []).filter(i => i.type === "estimate");
 
-  // 4 main tabs visible in the bottom bar; the rest live inside a “More” sheet.
+  // 4 main tabs visible in the bottom bar; the rest live inside a "More" sheet.
   const mainNavItems = [
     { id: "invoices",  label: "Invoices",  icon: "invoice"   },
     { id: "estimates", label: "Estimates", icon: "estimates" },
@@ -8861,11 +8862,11 @@ export default function App() {
     { id: "calendar", label: "Calendar", icon: "calendar" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
-  // Highlight “More” when the active tab lives inside the sheet.
+  // Highlight "More" when the active tab lives inside the sheet.
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", ...(view === "list" && tab === "clients" ? { height: "100vh", overflowY: "auto", WebkitOverflowScrolling: "touch" } : {}), maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100vh", ...(view === "list" && tab === "clients" ? { height: "100vh", overflow: "hidden" } : {}), maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
@@ -8954,7 +8955,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} keyboardH={keyboardH} />}
+        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} keyboardH={keyboardH} globalHeaderH={globalHeaderH} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
