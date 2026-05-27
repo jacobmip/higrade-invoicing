@@ -212,11 +212,18 @@ function matchesSearch(inv, query) {
 
 // Compact search-bar component reused on the Invoices and Estimates tabs.
 function SearchBar({ value, onChange, placeholder, autoFocus }) {
+  const inputRef = useRef(null);
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = inputRef.current;
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+  }, [autoFocus]);
   return (
     <div style={{ background: "#fff", padding: "8px 12px", borderBottom: "1px solid #eee", position: "relative" }}>
       <input
+        ref={inputRef}
         type="search"
-        autoFocus={autoFocus}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder || "Search"}
