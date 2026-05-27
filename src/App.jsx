@@ -211,7 +211,7 @@ function matchesSearch(inv, query) {
 }
 
 // Compact search-bar component reused on the Invoices and Estimates tabs.
-function SearchBar({ value, onChange, placeholder, autoFocus, floating }) {
+function SearchBar({ value, onChange, placeholder, autoFocus, transparent }) {
   const inputRef = useRef(null);
   useEffect(() => {
     if (!autoFocus) return;
@@ -220,25 +220,14 @@ function SearchBar({ value, onChange, placeholder, autoFocus, floating }) {
     try { el.focus({ preventScroll: true }); } catch { el.focus(); }
   }, [autoFocus]);
   return (
-    <div style={{ background: floating ? "transparent" : "#fff", padding: floating ? 0 : "8px 12px", borderBottom: floating ? "none" : "1px solid #eee", position: "relative" }}>
+    <div style={{ background: transparent ? "transparent" : "#fff", padding: "8px 12px", borderBottom: transparent ? "none" : "1px solid #eee", position: "relative" }}>
       <input
         ref={inputRef}
         type="search"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder || "Search"}
-        style={floating ? {
-          width: "100%",
-          background: "#fff",
-          border: "none",
-          borderRadius: 14,
-          padding: "12px 36px 12px 38px",
-          fontSize: 15,
-          outline: "none",
-          boxSizing: "border-box",
-          WebkitAppearance: "none",
-          boxShadow: "0 6px 20px rgba(10,22,40,0.18)",
-        } : {
+        style={{
           width: "100%",
           background: "#f4f6fa",
           border: "1px solid #dde2ee",
@@ -250,12 +239,12 @@ function SearchBar({ value, onChange, placeholder, autoFocus, floating }) {
           WebkitAppearance: "none",
         }}
       />
-      <span style={{ position: "absolute", left: floating ? 26 : 22, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: floating ? 16 : 14, pointerEvents: "none" }}>⌕</span>
+      <span style={{ position: "absolute", left: 22, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 14, pointerEvents: "none" }}>⌕</span>
       {value && (
         <button
           onClick={() => onChange("")}
           aria-label="Clear search"
-          style={{ position: "absolute", right: floating ? 12 : 18, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 12, lineHeight: 1, padding: 0 }}
+          style={{ position: "absolute", right: 18, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 12, lineHeight: 1, padding: 0 }}
         >×</button>
       )}
     </div>
@@ -5145,8 +5134,8 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
         )}
       </div>
       <div style={{ position: "fixed", bottom: `calc(64px + env(safe-area-inset-bottom))`, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
-        <div style={{ pointerEvents: "auto" }}>
-          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" floating />
+        <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
+          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
         </div>
       </div>
     </div>
