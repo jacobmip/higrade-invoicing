@@ -211,7 +211,7 @@ function matchesSearch(inv, query) {
 }
 
 // Compact search-bar component reused on the Invoices and Estimates tabs.
-function SearchBar({ value, onChange, placeholder, autoFocus, transparent, floating }) {
+function SearchBar({ value, onChange, placeholder, autoFocus, transparent, floating, onFocus, onBlur }) {
   const inputRef = useRef(null);
   useEffect(() => {
     if (!autoFocus) return;
@@ -260,6 +260,8 @@ function SearchBar({ value, onChange, placeholder, autoFocus, transparent, float
         type="search"
         value={value}
         onChange={e => onChange(e.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
         placeholder={placeholder || "Search"}
         style={{
           width: "100%",
@@ -4918,10 +4920,13 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   const [search, setSearch] = useState("");
   const [showImport, setShowImport] = useState(false);
 
-  // Direct DOM positioning for the floating search bar so we can move it
-  // synchronously on touchstart — before iOS decides to pan the viewport.
+  // Direct DOM positioning for the floating search bar. Lifting on touchstart
+  // moves the touch target out from under the finger — iOS then dispatches the
+  // click on whatever's behind the pill (a client card). Instead, lift on
+  // focus, which fires after the click target is already locked to the input.
   const searchWrapRef = useRef(null);
   const lastKbHRef = useRef(291); // sensible default for iPhone
+  const focusedRef = useRef(false);
 
   const setSearchBottom = (kbH) => {
     const el = searchWrapRef.current;
@@ -4933,19 +4938,26 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     }
   };
 
-  // Keep in sync when actual keyboard height is known
+  // Track real keyboard height; only re-position the pill while focused.
   useEffect(() => {
     if (keyboardH > 0) lastKbHRef.current = keyboardH;
-    setSearchBottom(keyboardH);
+    if (focusedRef.current) setSearchBottom(keyboardH);
   }, [keyboardH]);
 
-  // On touchstart, proactively lift the bar BEFORE iOS opens the keyboard
-  // and decides to pan. Direct DOM update = synchronous, no React frame delay.
-  // The dispatched event tells App.jsx to slide the bottom nav out the same
-  // frame, so iOS doesn't get a chance to re-anchor the still-mounted nav to
-  // the visual viewport and flash it above the keyboard.
+  // touchstart only hides the nav (synchronous, before iOS opens the keyboard).
+  // touchend arms the watchdog in App.jsx that reverts the nav if the touch
+  // turned out to be a scroll and no keyboard ever appeared.
   const handleSearchTouchStart = () => {
     try { window.dispatchEvent(new Event('hi-search-pill-touch')); } catch {}
+  };
+  const handleSearchTouchEnd = () => {
+    try { window.dispatchEvent(new Event('hi-search-pill-touchend')); } catch {}
+  };
+  // Focus fires after the synthetic click has already chosen its target, so
+  // moving the pill here can't redirect the tap. Same frame as iOS's keyboard
+  // scheduling, so the input is already lifted when iOS decides whether to pan.
+  const handleSearchFocus = () => {
+    focusedRef.current = true;
     const el = searchWrapRef.current;
     if (!el) return;
     el.style.transition = 'none';
@@ -4954,8 +4966,9 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
       if (el) el.style.transition = 'bottom 0.25s ease';
     });
   };
-  const handleSearchTouchEnd = () => {
-    try { window.dispatchEvent(new Event('hi-search-pill-touchend')); } catch {}
+  const handleSearchBlur = () => {
+    focusedRef.current = false;
+    setSearchBottom(0);
   };
 
   const clientTabDraftKey = `higrade_client_edit_${editId || "none"}`;
@@ -5200,7 +5213,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
       </div>
       <div ref={searchWrapRef} onTouchStart={handleSearchTouchStart} onTouchEnd={handleSearchTouchEnd} style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none", transition: "bottom 0.25s ease" }}>
         <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
-          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
+          <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent onFocus={handleSearchFocus} onBlur={handleSearchBlur} />
         </div>
       </div>
     </div>
