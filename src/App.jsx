@@ -4876,7 +4876,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   );
 }
 
-function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin }) {
+function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSelectInvoice, openClientId, onOpenedClient, isAdmin, setSubHeader }) {
   // Three modes: "list" (default), "detail" (viewing one client),
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
@@ -4917,6 +4917,19 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     onOpenedClient?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openClientId]);
+
+  // Push the search input into the App-level sticky sub-header (same pattern
+  // as the Invoices and Estimates tabs). Clears when not in list mode so the
+  // bar disappears while viewing/editing a client.
+  useEffect(() => {
+    if (mode !== "list") {
+      setSubHeader?.("clients", null);
+      return;
+    }
+    setSubHeader?.("clients",
+      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
+    );
+  }, [mode, search, setSubHeader]);
 
   // Edge-swipe-from-left back gesture. Steps back through modes the same
   // way the in-screen back arrows do: edit → detail (or list for new),
@@ -5092,7 +5105,6 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   });
   return (
     <div>
-      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
       {showImport && (
         <ImportClientsModal
           existingClients={clients}
@@ -8899,7 +8911,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
-        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
+        {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
