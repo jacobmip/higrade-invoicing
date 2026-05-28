@@ -4941,15 +4941,21 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
 
   // On touchstart, proactively lift the bar BEFORE iOS opens the keyboard
   // and decides to pan. Direct DOM update = synchronous, no React frame delay.
+  // The dispatched event tells App.jsx to slide the bottom nav out the same
+  // frame, so iOS doesn't get a chance to re-anchor the still-mounted nav to
+  // the visual viewport and flash it above the keyboard.
   const handleSearchTouchStart = () => {
+    try { window.dispatchEvent(new Event('hi-search-pill-touch')); } catch {}
     const el = searchWrapRef.current;
     if (!el) return;
     el.style.transition = 'none';
     setSearchBottom(lastKbHRef.current);
-    // Re-enable transition after the jump so keyboard-close animates smoothly
     requestAnimationFrame(() => {
       if (el) el.style.transition = 'bottom 0.25s ease';
     });
+  };
+  const handleSearchTouchEnd = () => {
+    try { window.dispatchEvent(new Event('hi-search-pill-touchend')); } catch {}
   };
 
   const clientTabDraftKey = `higrade_client_edit_${editId || "none"}`;
@@ -5192,7 +5198,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
       </div>
-      <div ref={searchWrapRef} onTouchStart={handleSearchTouchStart} style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none", transition: "bottom 0.25s ease" }}>
+      <div ref={searchWrapRef} onTouchStart={handleSearchTouchStart} onTouchEnd={handleSearchTouchEnd} style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none", transition: "bottom 0.25s ease" }}>
         <div style={{ pointerEvents: "auto", borderRadius: 12, boxShadow: "0 6px 20px rgba(10,22,40,0.18)", background: "#fff", overflow: "hidden" }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search clients" transparent />
         </div>
@@ -7759,19 +7765,46 @@ export default function App() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    let lastKbH = 291;
+    let watchdog = null;
+    // vv.height alone is the reliable keyboard signal. Earlier we also
+    // subtracted vv.offsetTop, but iOS scrolls the visual viewport when
+    // bringing a focused input into view, which made overlap drop under
+    // the 100px threshold mid-animation and flipped keyboardOpen back to
+    // false — the bottom nav then re-mounted on top of the keyboard.
     const onResize = () => {
-      const overlap = window.innerHeight - vv.height - vv.offsetTop;
+      const overlap = window.innerHeight - vv.height;
       const open = overlap > 100;
       setKeyboardOpen(open);
       setKeyboardH(open ? overlap : 0);
-      if (open) window.scrollTo(0, 0);
+      if (open) { lastKbH = overlap; window.scrollTo(0, 0); }
+    };
+    // Synchronous hide from the clients search pill: fires on touchstart
+    // before iOS opens the keyboard, so the nav slides out the same frame
+    // the pill lifts rather than waiting for the visualViewport.resize.
+    const onPillTouch = () => {
+      setKeyboardOpen(true);
+      setKeyboardH(lastKbH);
+    };
+    // If the pill was touched but the keyboard never actually opened
+    // (e.g. iOS interpreted the touch as a scroll, no focus), the nav
+    // would otherwise stay hidden forever. The watchdog re-checks shortly
+    // after touchend and reverts when there's no real keyboard up.
+    const onPillTouchEnd = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(onResize, 600);
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
+    window.addEventListener('hi-search-pill-touch', onPillTouch);
+    window.addEventListener('hi-search-pill-touchend', onPillTouchEnd);
     onResize();
     return () => {
+      clearTimeout(watchdog);
       vv.removeEventListener('resize', onResize);
       vv.removeEventListener('scroll', onResize);
+      window.removeEventListener('hi-search-pill-touch', onPillTouch);
+      window.removeEventListener('hi-search-pill-touchend', onPillTouchEnd);
     };
   }, []);
   const globalHeaderRef = useRef(null);
@@ -9013,8 +9046,8 @@ export default function App() {
         </div>
       )}
 
-      {view === "list" && !keyboardOpen && (
-        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {view === "list" && (
+        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: `translateX(-50%) translateY(${keyboardOpen ? "120%" : "0"})`, width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)", transition: "transform 0.2s ease", willChange: "transform" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
