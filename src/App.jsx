@@ -211,13 +211,14 @@ function matchesSearch(inv, query) {
 }
 
 // Compact search-bar component reused on the Invoices and Estimates tabs.
-function SearchBar({ value, onChange, placeholder }) {
+function SearchBar({ value, onChange, placeholder, autoFocus }) {
   return (
     <div style={{ background: "#fff", padding: "8px 12px", borderBottom: "1px solid #eee", position: "relative" }}>
       <input
         type="search"
         value={value}
         onChange={e => onChange(e.target.value)}
+        autoFocus={autoFocus}
         placeholder={placeholder || "Search"}
         style={{
           width: "100%",
@@ -5091,7 +5092,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   });
   return (
     <div>
-      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" />
+      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
       {showImport && (
         <ImportClientsModal
           existingClients={clients}
