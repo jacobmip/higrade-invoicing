@@ -294,7 +294,7 @@ ACTIONS — respond with ONLY JSON, no markdown fences, no extra text.
 For a SINGLE action use a JSON object. For MULTIPLE actions use a JSON array:
 
 Create a new invoice:
-{"action":"create_invoice","invoice":{"client":"exact name from CLIENTS","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
+{"action":"create_invoice","invoice":{"client":"exact name from CLIENTS","date":"today (auto-set, do not specify)","dueDate":"today (auto-set, do not specify)","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
 
 Create a new estimate (use this when user says estimate, quote, or bid):
 {"action":"create_estimate","invoice":{"client":"exact name from CLIENTS","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","items":[{"name":"Short Title","desc":"step1\\nstep2\\nstep3","qty":1,"price":000}],"notes":"","tax":4.712,"discount":0},"summary":"one sentence"}
@@ -339,6 +339,7 @@ Delete a client:
 
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
+- Never set date or dueDate on create_invoice — they are always set to today automatically. Do not include them in the JSON.
 - When generating an estimate or invoice, check JAKE'S SAVED PRICES first — if a match exists, use that exact price.
 - One flat-rate line item per job. Never add a separate service call.
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
@@ -1927,6 +1928,16 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
     try {
       const inv = data.invoices.find(i => i.id === invoiceId);
       const client = data.clients.find(c => c.name === inv?.client);
+      // Same first-send rule as autoUpdateDueDate in the invoice form: if this
+      // outstanding invoice still has its default due date (dueDate === date),
+      // bump it to today since the send date is most likely the job completion
+      // date. The helper itself needs setForm/onPartialSave (not in scope here),
+      // so we persist the equivalent change directly to the DB.
+      if (inv && ['outstanding', 'partial', 'net30'].includes(inv.status) && inv.dueDate === inv.date) {
+        inv.dueDate = today();
+        try { await db.upsertInvoice(inv, true); }
+        catch (e) { console.warn('auto due-date update failed:', e); }
+      }
       let viewToken = inv?.viewToken;
       if (inv && !viewToken) {
         try { viewToken = await db.ensureViewToken(inv); inv.viewToken = viewToken; }
@@ -2676,6 +2687,21 @@ function DeletedCard({ inv, daysLeft, onRestore, onPermanentDelete, onPreview })
   );
 }
 
+// When an outstanding invoice is sent for the FIRST time, bump its due date to
+// today — the send date is most likely the job completion date. We treat
+// "dueDate === date" as the still-default, never-manually-changed state; if the
+// two differ, the user already set a custom due date so we leave it alone. Paid
+// or approved docs are never touched (only outstanding/partial/net30 qualify).
+function autoUpdateDueDate(form, setForm, onPartialSave) {
+  const outstanding = ['outstanding', 'partial', 'net30']
+    .includes(form.status);
+  const isFirstSend = form.dueDate === form.date;
+  if (!outstanding || !isFirstSend) return;
+  const updated = { ...form, dueDate: today() };
+  setForm(updated);
+  onPartialSave?.(updated);
+}
+
 function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
@@ -3098,6 +3124,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // We mint/reuse the view token first so the link in the SMS works, and
   // record a "sent" event with channel=sms.
   const sendViaText = async (kind) => {
+    autoUpdateDueDate(form, setForm, onPartialSave);
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
     const phone = (client?.phone || "").replace(/[^0-9+]/g, "");
     if (!phone) {
@@ -3152,6 +3179,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // customer signs (0 = none). We persist it on the estimate row before
   // sending so submit-signature.js can read it back when the customer signs.
   const handleConfirmedSend = async ({ name, email, message, downPaymentPct }) => {
+    autoUpdateDueDate(form, setForm, onPartialSave);
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
     setSending(true);
     // Persist the chosen down-payment percent on the estimate. Best-effort:
@@ -8611,7 +8639,7 @@ export default function App() {
     console.log('[handleGlobalAIAction]', parsed.action, parsed);
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
-      const year = new Date(inv.date || today()).getFullYear();
+      const year = new Date(today()).getFullYear();
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
       const isEst = docType === "estimate";
       // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
@@ -8621,7 +8649,10 @@ export default function App() {
       const idPrefix = isEst ? "EST" : "INV";
       const num = counterRef.current++;
       const id = `${idPrefix}${String(num).padStart(4, "0")}`;
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: inv.date || today(), dueDate: inv.dueDate || today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
+      // Date is always the actual creation date — the AI's date suggestion is
+      // discarded (it was often guessing wrong dates). Both date and dueDate
+      // start as today; dueDate later auto-bumps to the send date on first send.
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
       // Persist FIRST so we don't show success in the UI for records that fail
       // to land in Supabase. If the write throws we surface the error.
       let saveResult;
