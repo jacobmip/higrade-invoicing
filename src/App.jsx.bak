@@ -5132,37 +5132,78 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
       </div>
-      {/* Floating search pill, sits above the bottom nav. pointer-events:none
-          on the outer wrapper so taps outside the pill don't get swallowed. */}
-      <div style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
-        <div style={{ pointerEvents: "auto", position: "relative" }}>
-          <input
-            type="search"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search clients"
-            style={{
-              width: "100%",
-              background: "#fff",
-              border: "none",
-              borderRadius: 999,
-              padding: "13px 40px 13px 44px",
-              fontSize: 16,
-              outline: "none",
-              boxSizing: "border-box",
-              WebkitAppearance: "none",
-              boxShadow: "0 6px 20px rgba(10,22,40,0.18)",
-            }}
-          />
-          <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 17, pointerEvents: "none" }}>⌕</span>
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              aria-label="Clear search"
-              style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 13, lineHeight: 1, padding: 0 }}
-            >×</button>
-          )}
-        </div>
+      <FloatingSearchPill value={search} onChange={setSearch} placeholder="Search clients" />
+    </div>
+  );
+}
+
+// Floating search pill that lives just above the bottom nav. When the input
+// is focused, the pill jumps to the top of the screen — this prevents iOS
+// Safari from panning the entire layout viewport up to surface the input
+// (which was visibly dragging the fixed bottom nav with it).
+function FloatingSearchPill({ value, onChange, placeholder }) {
+  const wrapRef = useRef(null);
+  const [focused, setFocused] = useState(false);
+  // Synchronously lift the pill BEFORE iOS computes its scroll-into-view
+  // target on focus. Doing it in touchstart beats the focus → pan timing.
+  const liftToTop = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    el.style.bottom = "auto";
+    el.style.top = "calc(env(safe-area-inset-top) + 8px)";
+  };
+  const dropToBottom = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    el.style.top = "";
+    el.style.bottom = "calc(64px + env(safe-area-inset-bottom))";
+  };
+  return (
+    <div
+      ref={wrapRef}
+      style={{
+        position: "fixed",
+        bottom: focused ? "auto" : "calc(64px + env(safe-area-inset-bottom))",
+        top: focused ? "calc(env(safe-area-inset-top) + 8px)" : undefined,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "100%",
+        maxWidth: 480,
+        zIndex: 150,
+        padding: "0 12px",
+        pointerEvents: "none",
+      }}
+    >
+      <div style={{ pointerEvents: "auto", position: "relative" }}>
+        <input
+          type="search"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          onTouchStart={liftToTop}
+          onFocus={() => { liftToTop(); setFocused(true); }}
+          onBlur={() => { dropToBottom(); setFocused(false); }}
+          placeholder={placeholder || "Search"}
+          style={{
+            width: "100%",
+            background: "#fff",
+            border: "none",
+            borderRadius: 999,
+            padding: "13px 40px 13px 44px",
+            fontSize: 16,
+            outline: "none",
+            boxSizing: "border-box",
+            WebkitAppearance: "none",
+            boxShadow: "0 6px 20px rgba(10,22,40,0.18)",
+          }}
+        />
+        <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 17, pointerEvents: "none" }}>⌕</span>
+        {value && (
+          <button
+            onClick={() => onChange("")}
+            aria-label="Clear search"
+            style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 13, lineHeight: 1, padding: 0 }}
+          >×</button>
+        )}
       </div>
     </div>
   );
@@ -7722,54 +7763,6 @@ export default function App() {
     }
   }, [view]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const navRef = useRef(null);
-  // visualViewport.resize fires AFTER iOS has already started panning the
-  // layout viewport, and React's batched setState lands a frame later — by
-  // then iOS has already dragged the nav up. Update nav display directly via
-  // ref on focusin so the nav vanishes synchronously, before the pan starts.
-  useEffect(() => {
-    const isTextInput = (el) => {
-      if (!el || el.nodeType !== 1) return false;
-      const tag = el.tagName;
-      if (tag === "TEXTAREA") return true;
-      if (tag === "INPUT") {
-        const t = (el.getAttribute("type") || "text").toLowerCase();
-        return t !== "checkbox" && t !== "radio" && t !== "button" && t !== "submit" && t !== "file";
-      }
-      return el.isContentEditable;
-    };
-    const hideNav = () => { if (navRef.current) navRef.current.style.display = "none"; };
-    const showNav = () => { if (navRef.current) navRef.current.style.display = "flex"; };
-    const onTouchStart = (e) => {
-      // Hide the nav as soon as the user touches a text input, BEFORE iOS
-      // starts panning the layout to show the focused element. focusin is a
-      // backup for non-touch focus paths (keyboard tab, programmatic focus).
-      if (isTextInput(e.target)) hideNav();
-    };
-    const onFocusIn = (e) => {
-      if (isTextInput(e.target)) {
-        hideNav();
-        setKeyboardOpen(true);
-      }
-    };
-    const onFocusOut = () => {
-      setTimeout(() => {
-        const a = document.activeElement;
-        if (!isTextInput(a)) {
-          showNav();
-          setKeyboardOpen(false);
-        }
-      }, 0);
-    };
-    document.addEventListener("touchstart", onTouchStart, { passive: true, capture: true });
-    document.addEventListener("focusin", onFocusIn);
-    document.addEventListener("focusout", onFocusOut);
-    return () => {
-      document.removeEventListener("touchstart", onTouchStart, { capture: true });
-      document.removeEventListener("focusin", onFocusIn);
-      document.removeEventListener("focusout", onFocusOut);
-    };
-  }, []);
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -9026,8 +9019,8 @@ export default function App() {
         </div>
       )}
 
-      {view === "list" && (
-        <nav ref={navRef} style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: keyboardOpen ? "none" : "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {view === "list" && !keyboardOpen && (
+        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
