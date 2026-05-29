@@ -7722,10 +7722,11 @@ export default function App() {
     }
   }, [view]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const navRef = useRef(null);
   // visualViewport.resize fires AFTER iOS has already started panning the
-  // layout to show the focused input — too late to hide the nav cleanly.
-  // Track focusin/focusout directly so the nav disappears the instant a
-  // text input is tapped, before iOS pans.
+  // layout viewport, and React's batched setState lands a frame later — by
+  // then iOS has already dragged the nav up. Update nav display directly via
+  // ref on focusin so the nav vanishes synchronously, before the pan starts.
   useEffect(() => {
     const isTextInput = (el) => {
       if (!el || el.nodeType !== 1) return false;
@@ -7737,16 +7738,34 @@ export default function App() {
       }
       return el.isContentEditable;
     };
-    const onFocusIn = (e) => { if (isTextInput(e.target)) setKeyboardOpen(true); };
+    const hideNav = () => { if (navRef.current) navRef.current.style.display = "none"; };
+    const showNav = () => { if (navRef.current) navRef.current.style.display = "flex"; };
+    const onTouchStart = (e) => {
+      // Hide the nav as soon as the user touches a text input, BEFORE iOS
+      // starts panning the layout to show the focused element. focusin is a
+      // backup for non-touch focus paths (keyboard tab, programmatic focus).
+      if (isTextInput(e.target)) hideNav();
+    };
+    const onFocusIn = (e) => {
+      if (isTextInput(e.target)) {
+        hideNav();
+        setKeyboardOpen(true);
+      }
+    };
     const onFocusOut = () => {
       setTimeout(() => {
         const a = document.activeElement;
-        if (!isTextInput(a)) setKeyboardOpen(false);
+        if (!isTextInput(a)) {
+          showNav();
+          setKeyboardOpen(false);
+        }
       }, 0);
     };
+    document.addEventListener("touchstart", onTouchStart, { passive: true, capture: true });
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
+      document.removeEventListener("touchstart", onTouchStart, { capture: true });
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
     };
@@ -9007,8 +9026,8 @@ export default function App() {
         </div>
       )}
 
-      {view === "list" && !keyboardOpen && (
-        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {view === "list" && (
+        <nav ref={navRef} style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: keyboardOpen ? "none" : "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
