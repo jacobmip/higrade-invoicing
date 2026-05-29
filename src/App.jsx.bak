@@ -5137,75 +5137,137 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   );
 }
 
-// Floating search pill that lives just above the bottom nav. When the input
-// is focused, the pill jumps to the top of the screen — this prevents iOS
-// Safari from panning the entire layout viewport up to surface the input
-// (which was visibly dragging the fixed bottom nav with it).
+// Floating search "pill" with two visual states sharing one always-mounted
+// input. The input lives at the top of the screen from first render, hidden
+// behind a button styled like a pill at the bottom. Tapping the bottom
+// button focuses the input synchronously (required to open iOS keyboard
+// from a user gesture) and reveals it. Because the input never moves and
+// is born at the top, iOS sees no need to pan the layout — so the fixed
+// bottom nav stays put.
 function FloatingSearchPill({ value, onChange, placeholder }) {
-  const wrapRef = useRef(null);
-  const [focused, setFocused] = useState(false);
-  // Synchronously lift the pill BEFORE iOS computes its scroll-into-view
-  // target on focus. Doing it in touchstart beats the focus → pan timing.
-  const liftToTop = () => {
-    const el = wrapRef.current;
-    if (!el) return;
-    el.style.bottom = "auto";
-    el.style.top = "calc(env(safe-area-inset-top) + 8px)";
+  const [active, setActive] = useState(false);
+  const inputRef = useRef(null);
+  const activate = () => {
+    // Focus synchronously inside the click handler so iOS treats this as a
+    // user-initiated focus and opens the keyboard.
+    const el = inputRef.current;
+    if (el) el.focus();
+    setActive(true);
   };
-  const dropToBottom = () => {
-    const el = wrapRef.current;
-    if (!el) return;
-    el.style.top = "";
-    el.style.bottom = "calc(64px + env(safe-area-inset-bottom))";
+  const deactivate = () => {
+    const el = inputRef.current;
+    if (el) el.blur();
+    setActive(false);
   };
+
   return (
-    <div
-      ref={wrapRef}
-      style={{
-        position: "fixed",
-        bottom: focused ? "auto" : "calc(64px + env(safe-area-inset-bottom))",
-        top: focused ? "calc(env(safe-area-inset-top) + 8px)" : undefined,
-        left: "50%",
-        transform: "translateX(-50%)",
-        width: "100%",
-        maxWidth: 480,
-        zIndex: 150,
-        padding: "0 12px",
-        pointerEvents: "none",
-      }}
-    >
-      <div style={{ pointerEvents: "auto", position: "relative" }}>
-        <input
-          type="search"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          onTouchStart={liftToTop}
-          onFocus={() => { liftToTop(); setFocused(true); }}
-          onBlur={() => { dropToBottom(); setFocused(false); }}
-          placeholder={placeholder || "Search"}
+    <>
+      {/* The real input, always mounted at the top. Hidden via opacity +
+          pointer-events when inactive so it doesn't intercept anything. */}
+      <div
+        style={{
+          position: "fixed",
+          top: "calc(env(safe-area-inset-top) + 8px)",
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "100%",
+          maxWidth: 480,
+          zIndex: 160,
+          padding: "0 12px",
+          opacity: active ? 1 : 0,
+          pointerEvents: active ? "auto" : "none",
+          transition: "opacity 0.15s ease",
+        }}
+      >
+        <div style={{ position: "relative" }}>
+          <input
+            ref={inputRef}
+            type="search"
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            onBlur={() => setActive(false)}
+            placeholder={placeholder || "Search"}
+            style={{
+              width: "100%",
+              background: "#fff",
+              border: "none",
+              borderRadius: 999,
+              padding: "13px 40px 13px 44px",
+              fontSize: 16,
+              outline: "none",
+              boxSizing: "border-box",
+              WebkitAppearance: "none",
+              boxShadow: "0 6px 20px rgba(10,22,40,0.18)",
+            }}
+          />
+          <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 17, pointerEvents: "none" }}>⌕</span>
+          {value && (
+            <button
+              onMouseDown={e => { e.preventDefault(); onChange(""); }}
+              aria-label="Clear search"
+              style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 13, lineHeight: 1, padding: 0 }}
+            >×</button>
+          )}
+        </div>
+      </div>
+
+      {/* Tap-anywhere backdrop to dismiss while active. */}
+      {active && (
+        <div
+          onClick={deactivate}
+          style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 155, background: "rgba(10,22,40,0.08)" }}
+        />
+      )}
+
+      {/* Bottom pill button. Hidden when active so the input at top owns the
+          screen. */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: "calc(64px + env(safe-area-inset-bottom))",
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "100%",
+          maxWidth: 480,
+          zIndex: 150,
+          padding: "0 12px",
+          pointerEvents: active ? "none" : "auto",
+          opacity: active ? 0 : 1,
+          transition: "opacity 0.15s ease",
+        }}
+      >
+        <button
+          type="button"
+          onClick={activate}
           style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
             width: "100%",
             background: "#fff",
             border: "none",
             borderRadius: 999,
-            padding: "13px 40px 13px 44px",
+            padding: "13px 18px",
             fontSize: 16,
-            outline: "none",
-            boxSizing: "border-box",
-            WebkitAppearance: "none",
+            cursor: "pointer",
             boxShadow: "0 6px 20px rgba(10,22,40,0.18)",
+            color: value ? "#222" : "#8899bb",
+            textAlign: "left",
           }}
-        />
-        <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 17, pointerEvents: "none" }}>⌕</span>
-        {value && (
-          <button
-            onClick={() => onChange("")}
-            aria-label="Clear search"
-            style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 13, lineHeight: 1, padding: 0 }}
-          >×</button>
-        )}
+        >
+          <span style={{ fontSize: 17 }}>⌕</span>
+          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value || (placeholder || "Search")}</span>
+          {value && (
+            <span
+              role="button"
+              aria-label="Clear search"
+              onClick={e => { e.stopPropagation(); onChange(""); }}
+              style={{ background: "#dde2ee", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", color: "#666", fontSize: 13, lineHeight: 1 }}
+            >×</span>
+          )}
+        </button>
       </div>
-    </div>
+    </>
   );
 }
 
