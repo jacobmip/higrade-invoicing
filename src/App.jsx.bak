@@ -7847,19 +7847,37 @@ export default function App() {
     }
   }, [view]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const kbTimer = useRef(null);
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const onResize = () => {
       const overlap = window.innerHeight - vv.height - vv.offsetTop;
       const open = overlap > 100;
-      setKeyboardOpen(open);
-      if (open) window.scrollTo(0, 0);
+      // visualViewport fires on every frame of the keyboard animation,
+      // which used to cause the nav to jitter and the scroll-to-top below
+      // to fight whatever the user was typing into. Debounce so we only
+      // act once the keyboard has settled.
+      clearTimeout(kbTimer.current);
+      kbTimer.current = setTimeout(() => {
+        setKeyboardOpen(open);
+        // Only force the page back to top when the keyboard is closing
+        // OR when no text input is currently focused. Otherwise we yank
+        // the Client Detail / Edit panel out from under the user mid-edit.
+        if (!open) {
+          window.scrollTo(0, 0);
+        } else {
+          const a = document.activeElement;
+          const typing = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA");
+          if (!typing) window.scrollTo(0, 0);
+        }
+      }, 120);
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
     onResize();
     return () => {
+      clearTimeout(kbTimer.current);
       vv.removeEventListener('resize', onResize);
       vv.removeEventListener('scroll', onResize);
     };
