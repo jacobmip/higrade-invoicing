@@ -4917,18 +4917,12 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openClientId]);
 
-  // Push the search input into the App-level sticky sub-header (same pattern
-  // as the Invoices and Estimates tabs). Clears when not in list mode so the
-  // bar disappears while viewing/editing a client.
+  // Clients tab uses a floating pill at the bottom of the screen instead of
+  // the App-level sub-header. Make sure the sub-header slot is empty so we
+  // don't double up.
   useEffect(() => {
-    if (mode !== "list") {
-      setSubHeader?.("clients", null);
-      return;
-    }
-    setSubHeader?.("clients",
-      <SearchBar value={search} onChange={setSearch} placeholder="Search clients" autoFocus />
-    );
-  }, [mode, search, setSubHeader]);
+    setSubHeader?.("clients", null);
+  }, [setSubHeader]);
 
   // Edge-swipe-from-left back gesture. Steps back through modes the same
   // way the in-screen back arrows do: edit → detail (or list for new),
@@ -5111,7 +5105,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           onImport={(c) => onImportClient ? onImportClient(c) : onSave(c, "new")}
         />
       )}
-      <div style={{ padding: "12px 12px 80px" }}>
+      <div style={{ padding: "12px 12px 140px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Clients ({filtered.length}{filtered.length !== clients.length ? ` of ${clients.length}` : ""})</span>
           <div style={{ display: "flex", gap: 6 }}>
@@ -5137,6 +5131,38 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
         {filtered.length === 0 && search && (
           <div style={{ padding: "32px 16px", textAlign: "center", color: "#888", fontSize: 13 }}>No clients match "{search}".</div>
         )}
+      </div>
+      {/* Floating search pill, sits above the bottom nav. pointer-events:none
+          on the outer wrapper so taps outside the pill don't get swallowed. */}
+      <div style={{ position: "fixed", bottom: "calc(64px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 150, padding: "0 12px", pointerEvents: "none" }}>
+        <div style={{ pointerEvents: "auto", position: "relative" }}>
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search clients"
+            style={{
+              width: "100%",
+              background: "#fff",
+              border: "none",
+              borderRadius: 999,
+              padding: "13px 40px 13px 44px",
+              fontSize: 16,
+              outline: "none",
+              boxSizing: "border-box",
+              WebkitAppearance: "none",
+              boxShadow: "0 6px 20px rgba(10,22,40,0.18)",
+            }}
+          />
+          <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", color: "#8899bb", fontSize: 17, pointerEvents: "none" }}>⌕</span>
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "#dde2ee", border: "none", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#666", fontSize: 13, lineHeight: 1, padding: 0 }}
+            >×</button>
+          )}
+        </div>
       </div>
     </div>
   );
