@@ -1256,6 +1256,7 @@ function resolvePaymentInstructions() {
 // the instructions). Estimates never accrue a fee.
 function calcLateFee(form, t) {
   if (!form || form.type === 'estimate') return { months: 0, fee: 0 };
+  if (form.lateFeeWaived) return { months: 0, fee: 0 };
   if (!form.dueDate) return { months: 0, fee: 0 };
   const baseBalance = Math.max(0, (t?.total || 0) - (t?.paid || 0));
   if (baseBalance <= 0) return { months: 0, fee: 0 };
@@ -2507,7 +2508,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [] });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false });
   const [activeTab, setActiveTab] = useState("edit");
   const [showSaved, setShowSaved] = useState(false);
   const [showPriceBook, setShowPriceBook] = useState(false);
@@ -2769,6 +2770,16 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
+  // Late fee for the running totals on the Edit tab. calcLateFee already
+  // returns {fee:0} when the invoice is an estimate, has no overdue balance,
+  // or the waiver flag is set. balanceWithFee is what the customer actually
+  // owes; effectiveBalance < 0 means a true overpayment even after the fee.
+  const lateFeeInfo = calcLateFee(form, t);
+  const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
+  const effectiveBalance = t.balance - (lateFeeInfo.fee || 0);
+  // A late fee would apply but Jake waived it — used to surface the muted
+  // "Late fee: waived" line so the waiver is visible while editing.
+  const lateFeeWouldApply = !isEstimate && !!form.lateFeeWaived && calcLateFee({ ...form, lateFeeWaived: false }, t).fee > 0;
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
   const addItem = (name = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name, price }] }));
@@ -2827,7 +2838,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
         setForm(f => {
           const payments = [...(f.payments || []), { amount: p.amount, method: p.method || "Cash", date: p.date || today() }];
           const totals = calcTotals({ ...f, payments });
-          const newStatus = totals.balance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : f.status);
+          // Mark paid only when the payment covers the total PLUS any late fee,
+          // so this stays consistent with the overpaid/balance-due display.
+          const balWithFee = totals.balance - (calcLateFee({ ...f, payments }, totals).fee || 0);
+          const newStatus = balWithFee <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : f.status);
           return { ...f, payments, status: newStatus };
         });
         return true;
@@ -3663,30 +3677,66 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>Total</span>
               <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: ORANGE }}>{fmt(t.total)}</span>
             </div>
-            {(form.payments || []).length > 0 && (
+            {((form.payments || []).length > 0 || lateFeeInfo.fee > 0 || lateFeeWouldApply) && (
               <div>
-                <div style={{ marginTop: 10, borderTop: "1px solid #eee", paddingTop: 8 }}>
-                  {form.payments.map((p, i) => {
-                    const methodColors = { Cash: "#27ae60", Check: "#2980b9", Venmo: "#3D95CE", Zelle: "#6B39A8", PayPal: "#0070ba", "Credit Card": ORANGE, "Bank Transfer": "#16a085" };
-                    const mc = methodColors[p.method] || "#888";
-                    return (
-                      <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: mc, flexShrink: 0 }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: mc }}>{p.method}</span>
-                          <span style={{ fontSize: 12, color: "#aaa", marginLeft: 6 }}>{fmtDate(p.date)}</span>
-                          {p.note && <div style={{ fontSize: 11, color: "#999", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.note}</div>}
+                {(form.payments || []).length > 0 && (
+                  <div style={{ marginTop: 10, borderTop: "1px solid #eee", paddingTop: 8 }}>
+                    {form.payments.map((p, i) => {
+                      const methodColors = { Cash: "#27ae60", Check: "#2980b9", Venmo: "#3D95CE", Zelle: "#6B39A8", PayPal: "#0070ba", "Credit Card": ORANGE, "Bank Transfer": "#16a085" };
+                      const mc = methodColors[p.method] || "#888";
+                      return (
+                        <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: mc, flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: mc }}>{p.method}</span>
+                            <span style={{ fontSize: 12, color: "#aaa", marginLeft: 6 }}>{fmtDate(p.date)}</span>
+                            {p.note && <div style={{ fontSize: 11, color: "#999", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.note}</div>}
+                          </div>
+                          <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: mc, flexShrink: 0 }}>−{fmt(p.amount)}</span>
                         </div>
-                        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: mc, flexShrink: 0 }}>−{fmt(p.amount)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* Late fee row — visible on the Edit tab so Jake sees the running */}
+                {/* total he actually charges. The "Waive" link drops the fee; he */}
+                {/* must hit Done to persist (lateFeeWaived saves with the invoice). */}
+                {lateFeeInfo.fee > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", marginTop: 8 }}>
+                    <div style={{ fontSize: 13, color: ORANGE, fontWeight: 600 }}>
+                      Late fee ({lateFeeInfo.months}× {lateFeeInfo.rate}%)
+                      <span
+                        onClick={() => setForm(f => ({ ...f, lateFeeWaived: true }))}
+                        style={{ marginLeft: 10, fontSize: 11, color: "#888", textDecoration: "underline", cursor: "pointer" }}>
+                        Waive
+                      </span>
+                      <span style={{ marginLeft: 6, fontSize: 11, color: "#bbb" }}>(tap Done to save)</span>
+                    </div>
+                    <div style={{ fontSize: 13, color: ORANGE, fontWeight: 600 }}>
+                      +${lateFeeInfo.fee.toFixed(2)}
+                    </div>
+                  </div>
+                )}
+                {/* Waiver is active and a fee would otherwise apply — show it muted */}
+                {/* so the waiver is visible, with an Undo to restore the fee. */}
+                {lateFeeWouldApply && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", marginTop: 8 }}>
+                    <div style={{ fontSize: 13, color: "#999", fontStyle: "italic" }}>
+                      Late fee: waived
+                      <span
+                        onClick={() => setForm(f => ({ ...f, lateFeeWaived: false }))}
+                        style={{ marginLeft: 10, fontSize: 11, color: "#888", textDecoration: "underline", cursor: "pointer", fontStyle: "normal" }}>
+                        Undo
+                      </span>
+                      <span style={{ marginLeft: 6, fontSize: 11, color: "#bbb" }}>(tap Done to save)</span>
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, borderTop: "2px solid #eee", paddingTop: 8 }}>
                   <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16 }}>Balance Due</span>
-                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: t.balance < -0.01 ? "#cc4444" : t.balance <= 0 ? "#27ae60" : ORANGE }}>{fmt(Math.max(0, t.balance))}</span>
+                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: effectiveBalance < -0.01 ? "#cc4444" : balanceWithFee <= 0 ? "#27ae60" : ORANGE }}>{fmt(lateFeeInfo.fee > 0 ? balanceWithFee : Math.max(0, t.balance))}</span>
                 </div>
-                {t.balance < -0.01 && <div style={{ fontSize: 11, color: "#cc4444", textAlign: "right", marginTop: 2 }}>⚠ Overpaid by {fmt(Math.abs(t.balance))}</div>}
+                {effectiveBalance < -0.01 && <div style={{ fontSize: 11, color: "#cc4444", textAlign: "right", marginTop: 2 }}>⚠ Overpaid by {fmt(Math.abs(effectiveBalance))}</div>}
               </div>
             )}
           </div>
@@ -4157,7 +4207,11 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
           const { label: statusLabel, color: pillColor } = statusDisplay(inv);
           const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
           const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
-          const displayAmt = inv.status !== "paid" && t.paid > 0 ? fmt(Math.max(0, t.balance)) : fmt(t.total);
+          // Amount owed shown on the card must include any accrued late fee,
+          // otherwise the card under-reports what the customer actually owes.
+          const lateFeeInfo = calcLateFee(inv, t);
+          const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
+          const displayAmt = inv.status !== "paid" && (t.paid > 0 || lateFeeInfo.fee > 0) ? fmt(balanceWithFee) : fmt(t.total);
           return (
             <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelect} onLongPress={setMenuInv} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
           );
@@ -5062,7 +5116,10 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
               const { label: statusLabel, color: pillColor } = statusDisplay(inv);
               const lastMethod = inv.status === "paid" && (inv.payments || []).length > 0 ? inv.payments[inv.payments.length - 1].method : null;
               const amountColor = inv.status === "paid" ? "#4ecb71" : inv.status === "partial" ? "#f39c12" : ORANGE;
-              const displayAmt = inv.status !== "paid" && t.paid > 0 ? fmt(Math.max(0, t.balance)) : fmt(t.total);
+              // Include any accrued late fee in the amount owed shown on the card.
+              const lateFeeInfo = calcLateFee(inv, t);
+              const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
+              const displayAmt = inv.status !== "paid" && (t.paid > 0 || lateFeeInfo.fee > 0) ? fmt(balanceWithFee) : fmt(t.total);
               return (
                 <InvoiceListCard key={inv.id} inv={inv} onSelect={onSelectInvoice} statusLabel={statusLabel} pillColor={pillColor} lastMethod={lastMethod} amountColor={amountColor} displayAmt={displayAmt} />
               );
@@ -8405,7 +8462,10 @@ export default function App() {
       if (!inv || !p || typeof p.amount !== "number") return;
       const payments = [...(inv.payments || []), { amount: p.amount, method: p.method || "Cash", date: p.date || today() }];
       const totals = calcTotals({ ...inv, payments });
-      const updated = { ...inv, payments, status: totals.balance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : inv.status) };
+      // Mark paid only when payment covers total plus any late fee (mirrors the
+      // per-invoice chat handler so both AI paths stay consistent).
+      const balWithFee = totals.balance - (calcLateFee({ ...inv, payments }, totals).fee || 0);
+      const updated = { ...inv, payments, status: balWithFee <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : inv.status) };
       setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
     }
