@@ -2552,12 +2552,138 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
   );
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin }) {
+// ─── Recently Deleted ─────────────────────────────────────────────────────
+// Soft-deleted invoices/estimates live here for 30 days. Users can preview
+// (read-only InvoiceForm), restore, or permanently delete them.
+function RecentlyDeletedTab({ invoices, onRestore, onPermanentDelete, onPreview }) {
+  const isEmpty = invoices.length === 0;
+
+  // Days remaining until permanent deletion (30-day window from deletedAt).
+  const daysLeft = (inv) => {
+    if (!inv.deletedAt) return 30;
+    const ms = 30 * 24 * 60 * 60 * 1000 -
+                (Date.now() - new Date(inv.deletedAt).getTime());
+    return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+  };
+
+  return (
+    <div style={{ padding: 16, paddingBottom: 80 }}>
+      {/* Header note */}
+      <div style={{ fontSize: 13, color: '#888', marginBottom: 16,
+                    textAlign: 'center', lineHeight: 1.5 }}>
+        Items are permanently deleted after 30 days.
+      </div>
+
+      {isEmpty && (
+        <div style={{ textAlign: 'center', color: '#aaa',
+                      marginTop: 60, fontSize: 15 }}>
+          No recently deleted items.
+        </div>
+      )}
+
+      {/* Invoices section */}
+      {invoices.filter(i => i.type !== 'estimate').length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#888',
+                        letterSpacing: 1, marginBottom: 8 }}>
+            INVOICES
+          </div>
+          {invoices
+            .filter(i => i.type !== 'estimate')
+            .map(inv => (
+              <DeletedCard key={inv.id} inv={inv} daysLeft={daysLeft}
+                onRestore={onRestore} onPermanentDelete={onPermanentDelete}
+                onPreview={onPreview} />
+            ))}
+        </div>
+      )}
+
+      {/* Estimates section */}
+      {invoices.filter(i => i.type === 'estimate').length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#888',
+                        letterSpacing: 1, marginBottom: 8 }}>
+            ESTIMATES
+          </div>
+          {invoices
+            .filter(i => i.type === 'estimate')
+            .map(inv => (
+              <DeletedCard key={inv.id} inv={inv} daysLeft={daysLeft}
+                onRestore={onRestore} onPermanentDelete={onPermanentDelete}
+                onPreview={onPreview} />
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeletedCard({ inv, daysLeft, onRestore, onPermanentDelete, onPreview }) {
+  const days = daysLeft(inv);
+  const urgent = days <= 3;
+  const t = calcTotals(inv);
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, padding: '14px 16px',
+                  marginBottom: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+      {/* Top row: ID + amount */}
+      <div style={{ display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'flex-start', marginBottom: 6 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>{inv.id}</div>
+          <div style={{ fontSize: 13, color: '#888', marginTop: 2 }}>
+            {inv.client || 'No client'}
+          </div>
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>
+          ${t.total.toFixed(2)}
+        </div>
+      </div>
+
+      {/* Days remaining */}
+      <div style={{ fontSize: 12, color: urgent ? '#cc4444' : '#aaa',
+                    marginBottom: 10 }}>
+        {days === 0
+          ? 'Deletes today'
+          : `${days} day${days === 1 ? '' : 's'} until permanently deleted`}
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={() => onPreview(inv)}
+          style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none',
+                   background: '#f0f0f0', fontSize: 13, fontWeight: 600,
+                   cursor: 'pointer' }}>
+          Preview
+        </button>
+        <button
+          onClick={() => onRestore(inv.id)}
+          style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none',
+                   background: ORANGE, color: '#fff', fontSize: 13,
+                   fontWeight: 600, cursor: 'pointer' }}>
+          Restore
+        </button>
+        <button
+          onClick={() => onPermanentDelete(inv.id)}
+          style={{ padding: '8px 12px', borderRadius: 8, border: 'none',
+                   background: '#fff0f0', color: '#cc4444', fontSize: 13,
+                   fontWeight: 600, cursor: 'pointer' }}>
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
   const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false });
-  const [activeTab, setActiveTab] = useState("edit");
+  // When previewing a deleted doc (read-only) we open straight to Preview;
+  // the Edit tab is disabled below.
+  const [activeTab, setActiveTab] = useState(isReadOnly ? "preview" : "edit");
   const [showSaved, setShowSaved] = useState(false);
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -3218,6 +3344,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   }, []);
 
   const goToTab = (nextId) => {
+    // Edit is disabled in read-only preview mode — ignore taps/swipes to it.
+    if (isReadOnly && nextId === "edit") { setDragX(0); return; }
     if (nextId === activeTab) { setDragX(0); return; }
     setShowPriceBook(false);
     setAnimating(true);
@@ -3340,7 +3468,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
           {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
         </span>
-        {(invoice || autoSavedId) && onDelete && <button onClick={() => {
+        {!isReadOnly && (invoice || autoSavedId) && onDelete && <button onClick={() => {
           if (!confirm("Delete this?")) return;
           // Cancel any pending debounced autosave AND block the unmount-flush.
           // Without this, the unmount handler would re-insert the row we're
@@ -3349,15 +3477,21 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
           onDelete((invoice && invoice.id) || autoSavedId);
         }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        <button onClick={handleSave} style={S.btn("primary")}>Done</button>
+        {isReadOnly
+          ? <button onClick={() => { skipFlushRef.current = true; if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; } onRestore?.(form.id); }} style={S.btn("primary")}>Restore</button>
+          : <button onClick={handleSave} style={S.btn("primary")}>Done</button>}
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0" }}>
-        {TABS.map(tab => (
-          <button key={tab.id} onClick={() => goToTab(tab.id)} style={{ flex: 1, padding: "10px 4px 9px", background: "none", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent", color: activeTab === tab.id ? ORANGE : "#999", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-            <Icon name={tab.icon} size={15} color={activeTab === tab.id ? ORANGE : "#bbb"} />{tab.label}
+        {TABS.map(tab => {
+          // In read-only preview, the Edit tab is shown grayed and inert.
+          const editDisabled = isReadOnly && tab.id === "edit";
+          return (
+          <button key={tab.id} disabled={editDisabled} onClick={() => { if (!editDisabled) goToTab(tab.id); }} style={{ flex: 1, padding: "10px 4px 9px", background: "none", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent", color: editDisabled ? "#d4d7e0" : (activeTab === tab.id ? ORANGE : "#999"), fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", cursor: editDisabled ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <Icon name={tab.icon} size={15} color={editDisabled ? "#d4d7e0" : (activeTab === tab.id ? ORANGE : "#bbb")} />{tab.label}
           </button>
-        ))}
+          );
+        })}
       </div>
       </div>
 
@@ -4332,7 +4466,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
         <InvoiceQuickActionsMenu
           inv={menuInv}
           onClose={() => setMenuInv(null)}
-          onDelete={() => { if (confirm(`Delete invoice ${menuInv.id}?\n\nThis cannot be undone.`)) onDelete?.(menuInv.id); }}
+          onDelete={() => { if (confirm(`Move invoice ${menuInv.id} to Recently Deleted?\n\nYou have 30 days to restore it.`)) onDelete?.(menuInv.id); }}
           onShare={() => onShare?.(menuInv)}
           onSend={() => onSend?.(menuInv)}
           onPrint={() => onPrint?.(menuInv)}
@@ -4539,7 +4673,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
         <InvoiceQuickActionsMenu
           inv={menuInv}
           onClose={() => setMenuInv(null)}
-          onDelete={() => { if (confirm(`Delete estimate ${menuInv.id}?\n\nThis cannot be undone.`)) onDelete?.(menuInv.id); }}
+          onDelete={() => { if (confirm(`Move estimate ${menuInv.id} to Recently Deleted?\n\nYou have 30 days to restore it.`)) onDelete?.(menuInv.id); }}
           onShare={() => onShare?.(menuInv)}
           onSend={() => onSend?.(menuInv)}
           onPrint={() => onPrint?.(menuInv)}
@@ -7886,6 +8020,12 @@ export default function App() {
 
   const [data, setData] = useState({ invoices: [], clients: [], savedItems: [], expenses: [], nextNum: 753, nextEstimateNum: 712 });
   const [dbLoading, setDbLoading] = useState(true);
+  // Soft-deleted invoices/estimates, loaded on demand when the Recently
+  // Deleted tab is opened (see the setTab wrapper below).
+  const [deletedInvoices, setDeletedInvoices] = useState([]);
+  // When true, the invoice form is opened read-only (preview of a deleted
+  // doc). Reset whenever we return to the list so normal opens are editable.
+  const [previewReadOnly, setPreviewReadOnly] = useState(false);
 
   // Multi-user state. profile is the row from the `profiles` table for the
   // signed-in user — { id, display_name, role }. role is 'admin' or 'plumber'.
@@ -7959,7 +8099,28 @@ export default function App() {
     };
   }, [data, effectiveOwnerId]);
   const [tab, setTabRaw] = useState(() => { try { return localStorage.getItem('higrade_nav_tab') || "invoices"; } catch { return "invoices"; } });
-  const setTab = (t) => { try { localStorage.setItem('higrade_nav_tab', t); } catch {} setTabRaw(t); };
+  const setTab = (newTab) => {
+    try { localStorage.setItem('higrade_nav_tab', newTab); } catch {}
+    if (newTab === 'recently-deleted') {
+      const ownerId = effectiveOwnerId || session?.user?.id;
+      if (ownerId) {
+        db.loadDeletedInvoices(ownerId).then(items => {
+          // Auto-purge anything past the 30-day window, then show the rest.
+          const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+          const toDelete = items.filter(i =>
+            i.deletedAt && new Date(i.deletedAt).getTime() < cutoff
+          );
+          toDelete.forEach(i => db.permanentlyDeleteInvoice(i.id).catch(() => {}));
+          setDeletedInvoices(
+            items.filter(i =>
+              !i.deletedAt || new Date(i.deletedAt).getTime() >= cutoff
+            )
+          );
+        }).catch(e => console.error('loadDeletedInvoices failed:', e));
+      }
+    }
+    setTabRaw(newTab);
+  };
   // Clean up the stale nav-restore key written by a bad deploy — if left in
   // localStorage it could re-open client edit forms unexpectedly.
   useEffect(() => { try { localStorage.removeItem('higrade_clients_nav'); } catch {} }, []);
@@ -7975,6 +8136,7 @@ export default function App() {
       return () => cancelAnimationFrame(id);
     } else {
       setFormVisible(false);
+      setPreviewReadOnly(false); // back to list — next form open is editable
       const timer = setTimeout(() => setFormMounted(false), FORM_SLIDE_MS);
       return () => clearTimeout(timer);
     }
@@ -8639,6 +8801,35 @@ export default function App() {
     setView("list"); setSelected(null);
   };
 
+  // Restore a soft-deleted invoice/estimate: clear deleted_at, drop it from
+  // the Recently Deleted list, and reload the main data so it reappears in
+  // its normal tab. Also return to the list if we were previewing it.
+  const restoreInvoice = async (id) => {
+    try {
+      await db.restoreInvoice(id);
+    } catch (e) {
+      console.error('Restore invoice failed:', e);
+      alert('Could not restore this: ' + (e.message || e));
+      return;
+    }
+    setDeletedInvoices(d => d.filter(inv => inv.id !== id));
+    db.loadAll().then(fresh => setData(fresh)).catch(e => console.error(e));
+    setView("list"); setSelected(null);
+  };
+
+  // Permanently (unrecoverably) delete a soft-deleted invoice/estimate.
+  const permanentlyDeleteInvoice = async (id) => {
+    if (!confirm('Permanently delete this? It cannot be recovered.')) return;
+    try {
+      await db.permanentlyDeleteInvoice(id);
+    } catch (e) {
+      console.error('Permanent delete failed:', e);
+      alert('Could not delete this: ' + (e.message || e));
+      return;
+    }
+    setDeletedInvoices(d => d.filter(inv => inv.id !== id));
+  };
+
   // ─── Quick-action handlers (used by the long-press action sheet on the
   // invoice list). All accept the full invoice object so they don't need
   // to look it up themselves.
@@ -9106,6 +9297,7 @@ export default function App() {
     { id: "reports",   label: "Reports",    icon: "chart"    },
     { id: "calendar", label: "Calendar", icon: "calendar" },
     { id: "settings", label: "Settings", icon: "settings" },
+    { id: "recently-deleted", label: "Recently Deleted", icon: "trash" },
   ];
   // Highlight "More" when the active tab lives inside the sheet.
   const isMoreTab = moreNavItems.some(n => n.id === tab);
@@ -9207,6 +9399,14 @@ export default function App() {
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
         {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
+        {tab === "recently-deleted" && (
+          <RecentlyDeletedTab
+            invoices={deletedInvoices}
+            onRestore={restoreInvoice}
+            onPermanentDelete={permanentlyDeleteInvoice}
+            onPreview={(inv) => { setSelected(inv); setPreviewReadOnly(true); setView("form"); }}
+          />
+        )}
       </>
 
       {formMounted && (
@@ -9242,6 +9442,8 @@ export default function App() {
             onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
             onConvert={convertInvoice}
             isAdmin={isAdmin}
+            isReadOnly={previewReadOnly}
+            onRestore={restoreInvoice}
           />
         </div>
       )}
@@ -9282,7 +9484,7 @@ export default function App() {
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "10px 0 max(20px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" }}>
             <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "4px auto 12px" }} />
             <div style={{ padding: "0 18px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#8899bb", letterSpacing: 1.5, textTransform: "uppercase" }}>More</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, padding: "4px 8px 8px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, padding: "4px 8px 8px" }}>
               {moreNavItems.map(n => (
                 <button key={n.id} onClick={() => { if (n.id === "pricebook") { setShowPriceBook(true); setShowMore(false); } else { setTab(n.id); setShowMore(false); } }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>
                   <Icon name={n.icon} size={26} color={tab === n.id ? ORANGE : NAVY} />
