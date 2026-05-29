@@ -979,9 +979,10 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
 }
 
 // ─── Payment Modal ────────────────────────────────────────────────────────────
-function PaymentModal({ invoice, onClose, onSave }) {
+function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
   const t = calcTotals(invoice);
   const isEstimate = invoice.type === "estimate";
+  const isEdit = !!existingPayment;
   // Late fee owed on this invoice (zero for estimates / not-overdue / waived).
   // The emailed invoice and public view both show balance + fee, so that's the
   // amount the customer actually pays — default and overpay checks must match.
@@ -990,33 +991,52 @@ function PaymentModal({ invoice, onClose, onSave }) {
   const owedWithFee = Math.max(0, t.balance + lateFee);
   // Estimates default the amount field to empty (deposits are usually a
   // partial sum) — invoices default to the full remaining balance + late fee.
-  const [amount, setAmount] = useState(isEstimate ? "" : owedWithFee.toFixed(2));
-  const [method, setMethod] = useState("Cash");
-  const [date, setDate] = useState(today());
-  const [note, setNote] = useState(isEstimate ? "Down payment" : "");
+  // In edit mode, pre-populate from the existing payment instead.
+  const [amount, setAmount] = useState(isEdit ? String(existingPayment.amount ?? "") : (isEstimate ? "" : owedWithFee.toFixed(2)));
+  const [method, setMethod] = useState(isEdit ? (existingPayment.method || "Cash") : "Cash");
+  const [date, setDate] = useState(isEdit ? (existingPayment.date || today()) : today());
+  const [note, setNote] = useState(isEdit ? (existingPayment.note || "") : (isEstimate ? "Down payment" : ""));
   const parsedAmt = parseFloat(amount) || 0;
-  const newPaid = (invoice.payments || []).reduce((s, p) => s + p.amount, 0) + parsedAmt;
+  // In edit mode the existing payment is already in the array, so exclude its
+  // prior amount before adding the (possibly changed) new amount.
+  const otherPaid = (invoice.payments || []).reduce((s, p) => s + (isEdit && p.id === existingPayment.id ? 0 : p.amount), 0);
+  const newPaid = otherPaid + parsedAmt;
   const willOverpay = newPaid > t.total + lateFee + 0.01;
-  const save = () => {
-    const payment = { id: Date.now(), amount: parsedAmt, method, date, note: note.trim() };
-    const payments = [...(invoice.payments || []), payment];
+  // Compute updated status for a given payments array (shared by save/delete).
+  const computeStatus = (payments) => {
+    if (isEstimate) return invoice.status;
     const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-    // For estimates, status stays as-is (deposit doesn't "pay" an estimate —
-    // it just gets carried over when converted). For invoices, flip to
-    // paid/partial — "paid" requires covering the principal AND the late fee.
-    // Recompute the fee against the new payment set so a payment dated on/before
-    // the due date correctly lowers the base.
-    const feeAfter = isEstimate ? 0 : (calcLateFee({ ...invoice, payments }, calcTotals({ ...invoice, payments })).fee || 0);
-    const newStatus = isEstimate
-      ? invoice.status
-      : (totalPaid >= t.total + feeAfter - 0.01 ? "paid" : totalPaid > 0 ? "partial" : (invoice.status === "net30" ? "net30" : "outstanding"));
-    onSave({ ...invoice, payments, status: newStatus });
+    // "paid" requires covering the principal AND the late fee. Recompute the
+    // fee against the payment set so a payment dated on/before the due date
+    // correctly lowers the base.
+    const feeAfter = calcLateFee({ ...invoice, payments }, calcTotals({ ...invoice, payments })).fee || 0;
+    return totalPaid >= t.total + feeAfter - 0.01 ? "paid" : totalPaid > 0 ? "partial" : (invoice.status === "net30" ? "net30" : "outstanding");
+  };
+  const save = () => {
+    let payments;
+    if (isEdit) {
+      // Replace the matching payment in place; preserve any other fields (e.g.
+      // surcharge) by spreading the original before overriding edited fields.
+      payments = (invoice.payments || []).map(p =>
+        p.id === existingPayment.id ? { ...p, amount: parsedAmt, method, date, note: note.trim() } : p
+      );
+    } else {
+      const payment = { id: Date.now(), amount: parsedAmt, method, date, note: note.trim() };
+      payments = [...(invoice.payments || []), payment];
+    }
+    onSave({ ...invoice, payments, status: computeStatus(payments) });
+    onClose();
+  };
+  const handleDelete = () => {
+    if (!window.confirm("Delete this payment?")) return;
+    const payments = (invoice.payments || []).filter(p => p.id !== existingPayment.id);
+    onSave({ ...invoice, payments, status: computeStatus(payments) });
     onClose();
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
-        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>{isEstimate ? "Record Down Payment" : "Record Payment"}</div>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>{isEdit ? "Edit Payment" : (isEstimate ? "Record Down Payment" : "Record Payment")}</div>
         <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.id} · {isEstimate ? `Estimate Total: ${fmt(t.total)} · Remaining: ${fmt(Math.max(0, t.balance))}` : (lateFee > 0 ? `Balance: ${fmt(Math.max(0, t.balance))} + late fee ${fmt(lateFee)} = ${fmt(owedWithFee)}` : `Balance: ${fmt(Math.max(0, t.balance))}`)}</div>
         <div style={{ marginBottom: 12 }}>
           <label style={S.label}>Amount</label>
@@ -1028,8 +1048,11 @@ function PaymentModal({ invoice, onClose, onSave }) {
         <div style={{ marginBottom: 20 }}><label style={S.label}>Note <span style={{ fontWeight: 400, color: "#aaa", textTransform: "none", letterSpacing: 0 }}>(optional)</span></label><input style={S.input} value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. Check #1042" /></div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
-          <button onClick={save} style={{ ...S.btn("green"), flex: 2 }}>Save Payment</button>
+          <button onClick={save} style={{ ...S.btn("green"), flex: 2 }}>{isEdit ? "Update Payment" : "Save Payment"}</button>
         </div>
+        {isEdit && (
+          <button onClick={handleDelete} style={{ background: "none", border: "1px solid #e74c3c", color: "#e74c3c", borderRadius: 8, padding: "10px 14px", fontSize: 14, cursor: "pointer", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, width: "100%", marginTop: 10 }}>Delete Payment</button>
+        )}
       </div>
     </div>
   );
@@ -2535,6 +2558,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [reordering, setReordering] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
@@ -3255,6 +3279,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     <>
     <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ paddingBottom: 100, background: LIGHT, minHeight: "100%" }}>
       {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
+      {editingPayment && (
+        <PaymentModal
+          invoice={form}
+          existingPayment={editingPayment}
+          onClose={() => setEditingPayment(null)}
+          onSave={(updated) => {
+            setForm(updated);
+            onPartialSave?.(updated);
+            setEditingPayment(null);
+          }}
+        />
+      )}
       {sendMethodFor && <SendMethodSheet
         kind={sendMethodFor}
         invoice={form}
@@ -3706,15 +3742,23 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                     {form.payments.map((p, i) => {
                       const methodColors = { Cash: "#27ae60", Check: "#2980b9", Venmo: "#3D95CE", Zelle: "#6B39A8", PayPal: "#0070ba", "Credit Card": ORANGE, "Bank Transfer": "#16a085" };
                       const mc = methodColors[p.method] || "#888";
+                      // PayPal payments are real captured transactions — lock them
+                      // from edit/delete. Everything else is tappable to edit.
+                      const isPayPal = !!p.paypal_capture_id;
                       return (
-                        <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <div
+                          key={p.id || i}
+                          onClick={() => { if (!isPayPal) setEditingPayment(p); }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, cursor: isPayPal ? "default" : "pointer" }}>
                           <div style={{ width: 6, height: 6, borderRadius: "50%", background: mc, flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: mc }}>{p.method}</span>
                             <span style={{ fontSize: 12, color: "#aaa", marginLeft: 6 }}>{fmtDate(p.date)}</span>
+                            {isPayPal && <span style={{ fontSize: 10, fontWeight: 700, color: "#0070ba", background: "#e6f0fa", borderRadius: 4, padding: "1px 5px", marginLeft: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>PayPal</span>}
                             {p.note && <div style={{ fontSize: 11, color: "#999", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.note}</div>}
                           </div>
                           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: mc, flexShrink: 0 }}>−{fmt(p.amount)}</span>
+                          {!isPayPal && <Icon name="pen" size={12} color="#bbb" />}
                         </div>
                       );
                     })}
