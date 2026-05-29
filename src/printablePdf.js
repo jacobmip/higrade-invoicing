@@ -167,42 +167,21 @@ function drawBillTo(doc, form, y) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   let cy = y + 34;
-  // Bill-to address: prefer the explicit billing snapshot on the invoice;
-  // fall back to clientInfo's flat lines (which on legacy clients carry the
-  // single mailing/job address).
-  const ba = form.billingAddress || {};
-  const billingLines = [ba.line1, ba.line2, ba.line3].filter(Boolean);
-  const addr = billingLines.length
-    ? billingLines.join(", ")
-    : [data.address1, data.address2, data.address3].filter(Boolean).join(", ");
+  // Single address on the invoice — job site wins if it has lines (we want
+  // the printout to reflect WHERE the work was), else fall back to the
+  // billing snapshot, then to clientInfo's flat lines for legacy data.
+  const linesOf = (src) => src ? [src.line1, src.line2, src.line3].filter(Boolean) : [];
+  const jaLines = linesOf(form.jobAddress);
+  const baLines = linesOf(form.billingAddress);
+  const addrLines = jaLines.length
+    ? jaLines
+    : (baLines.length
+        ? baLines
+        : [data.address1, data.address2, data.address3].filter(Boolean));
+  const addr = addrLines.join(", ");
   if (addr) { doc.text(addr, MARGIN, cy); cy += 14; }
   const contact = [data.phone, data.email].filter(Boolean).join(" · ");
   if (contact) { setText(doc, TEXT_LIGHT); doc.text(contact, MARGIN, cy); cy += 14; }
-
-  // Job address if it differs (some invoices use a separate work site).
-  // form.jobAddress is an object {id, label, line1, line2, line3}.
-  const ja = form.jobAddress && typeof form.jobAddress === "object" ? form.jobAddress : null;
-  const jaLines = ja ? [ja.line1, ja.line2, ja.line3].filter(Boolean) : [];
-  const jaAddr = jaLines.join(", ");
-  if (ja && (ja.label || jaAddr) && jaAddr !== addr) {
-    const jx = PAGE_W / 2 + 12;
-    const jw = PAGE_W / 2 - MARGIN - 12;
-    setText(doc, "#6677aa");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.text("JOB SITE", jx, y);
-    let jy = y + 18;
-    if (ja.label) {
-      setText(doc, TEXT_DARK);
-      doc.setFontSize(11);
-      doc.text(ja.label, jx, jy);
-      jy += 14;
-    }
-    setText(doc, TEXT_MID);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
-    jaLines.forEach(ln => { doc.text(ln, jx, jy); jy += 14; });
-  }
 
   return Math.max(cy, y + 60); // bottom of section
 }

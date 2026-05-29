@@ -43,8 +43,8 @@
       /* NOTE: do NOT set overflow-x:hidden on html/body/#root — it breaks
          position:sticky on descendants in iOS Safari. The app shell already
          clamps width with max-width: 480px, so horizontal scroll cannot occur. */
-      html { height: -webkit-fill-available; }
-      body { min-height: 100vh; min-height: -webkit-fill-available; }
+      html { height: -webkit-fill-available; height: 100dvh; }
+      body { min-height: 100vh; min-height: 100dvh; }
       #root { width: 100%; max-width: 100vw; }
       /* Disable iOS pull-to-refresh & rubber-banding side scroll */
       body { position: relative; }
