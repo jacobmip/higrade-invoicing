@@ -7722,6 +7722,35 @@ export default function App() {
     }
   }, [view]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  // visualViewport.resize fires AFTER iOS has already started panning the
+  // layout to show the focused input — too late to hide the nav cleanly.
+  // Track focusin/focusout directly so the nav disappears the instant a
+  // text input is tapped, before iOS pans.
+  useEffect(() => {
+    const isTextInput = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      const tag = el.tagName;
+      if (tag === "TEXTAREA") return true;
+      if (tag === "INPUT") {
+        const t = (el.getAttribute("type") || "text").toLowerCase();
+        return t !== "checkbox" && t !== "radio" && t !== "button" && t !== "submit" && t !== "file";
+      }
+      return el.isContentEditable;
+    };
+    const onFocusIn = (e) => { if (isTextInput(e.target)) setKeyboardOpen(true); };
+    const onFocusOut = () => {
+      setTimeout(() => {
+        const a = document.activeElement;
+        if (!isTextInput(a)) setKeyboardOpen(false);
+      }, 0);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
