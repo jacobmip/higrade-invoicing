@@ -1,11 +1,15 @@
 // Service worker for HI Grade Invoicing.
 // Strategy:
-//   - App shell (HTML, JS, CSS, fonts): cache-first with background revalidation
-//     so the app loads instantly from the device even when iOS reloads the page.
+//   - HTML (navigation): network-first, fall back to cache only when offline.
+//     This guarantees a fresh deploy shows up on the very next open instead of
+//     being "one launch behind" (the old stale-while-revalidate served the
+//     previous version's HTML, so the new bundle never loaded until a 2nd open).
+//   - Static assets (JS/CSS/fonts/images): cache-first — safe because Vite
+//     fingerprints filenames, so a new deploy fetches new hashes automatically.
 //   - API and Supabase requests: network-only (never cache live data).
-//   - On activation: take control immediately so the first load is also covered.
+//   - On activation: delete old caches and take control immediately.
 
-const CACHE = 'higrade-v1';
+const CACHE = 'higrade-v2';
 
 const NEVER_CACHE = [
   'supabase.co',
@@ -25,8 +29,13 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('activate', (e) => {
-  // Take control of all open tabs immediately.
-  e.waitUntil(self.clients.claim());
+  // Drop any caches from previous versions so a stale bundle can't linger,
+  // then take control of all open tabs immediately.
+  e.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (e) => {
@@ -39,9 +48,10 @@ self.addEventListener('fetch', (e) => {
   // Never cache live data or API calls.
   if (isNeverCache(url)) return;
 
-  // Navigation requests (HTML) — serve from cache, revalidate in background.
+  // Navigation requests (HTML) — network-first so a new deploy loads right
+  // away; fall back to cache only when the network is unavailable (offline).
   if (request.mode === 'navigate') {
-    e.respondWith(staleWhileRevalidate(request));
+    e.respondWith(networkFirst(request));
     return;
   }
 
@@ -64,12 +74,14 @@ async function cacheFirst(request) {
   }
 }
 
-async function staleWhileRevalidate(request) {
+async function networkFirst(request) {
   const cache = await caches.open(CACHE);
-  const cached = await cache.match(request);
-  const fetchPromise = fetch(request).then((response) => {
+  try {
+    const response = await fetch(request);
     if (response.ok) cache.put(request, response.clone());
     return response;
-  }).catch(() => null);
-  return cached || await fetchPromise || new Response('Offline', { status: 503 });
+  } catch {
+    const cached = await cache.match(request);
+    return cached || new Response('Offline', { status: 503 });
+  }
 }
