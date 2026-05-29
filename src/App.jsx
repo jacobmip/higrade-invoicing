@@ -3758,7 +3758,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                             {p.note && <div style={{ fontSize: 11, color: "#999", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.note}</div>}
                           </div>
                           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: mc, flexShrink: 0 }}>−{fmt(p.amount)}</span>
-                          {!isPayPal && <Icon name="pen" size={12} color="#bbb" />}
+                          {!isPayPal && <Icon name="pen" size={16} color="#666" />}
                         </div>
                       );
                     })}
