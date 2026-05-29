@@ -1033,7 +1033,10 @@ function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
     onSave({ ...invoice, payments, status: computeStatus(payments) });
     onClose();
   };
-  return (
+  // Portal to body so the fixed overlay docks to the viewport, not the
+  // transformed/scrollable form container it's rendered inside. Without this,
+  // the sheet floats wherever the form is scrolled instead of the screen bottom.
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>{isEdit ? "Edit Payment" : (isEstimate ? "Record Down Payment" : "Record Payment")}</div>
@@ -1054,7 +1057,8 @@ function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
           <button onClick={handleDelete} style={{ background: "none", border: "1px solid #e74c3c", color: "#e74c3c", borderRadius: 8, padding: "10px 14px", fontSize: 14, cursor: "pointer", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, width: "100%", marginTop: 10 }}>Delete Payment</button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
