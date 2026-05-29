@@ -5138,15 +5138,36 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
 }
 
 // Floating search "pill" with two visual states sharing one always-mounted
-// input. The input lives at the top of the screen from first render, hidden
-// behind a button styled like a pill at the bottom. Tapping the bottom
-// button focuses the input synchronously (required to open iOS keyboard
-// from a user gesture) and reveals it. Because the input never moves and
-// is born at the top, iOS sees no need to pan the layout — so the fixed
-// bottom nav stays put.
+// input. The input lives just above where the iOS keyboard will sit (using
+// a cached keyboard height, refined live via visualViewport), hidden behind
+// a button styled like a pill at the bottom. Tapping the bottom button
+// focuses the input synchronously (required to open iOS keyboard from a
+// user gesture) and reveals it. Because the input is already positioned
+// above the keyboard zone at focus time, iOS doesn't need to pan the
+// layout — so the fixed bottom nav stays put.
+const DEFAULT_KB_HEIGHT = 320;
 function FloatingSearchPill({ value, onChange, placeholder }) {
   const [active, setActive] = useState(false);
+  const [kbHeight, setKbHeight] = useState(DEFAULT_KB_HEIGHT);
   const inputRef = useRef(null);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      const h = window.innerHeight - vv.height - vv.offsetTop;
+      // Only update when the keyboard is actually open so we keep the cached
+      // height while it's closed (so the next focus already sees the input
+      // above where the keyboard will land).
+      if (h > 100) setKbHeight(h);
+    };
+    vv.addEventListener('resize', onResize);
+    vv.addEventListener('scroll', onResize);
+    onResize();
+    return () => {
+      vv.removeEventListener('resize', onResize);
+      vv.removeEventListener('scroll', onResize);
+    };
+  }, []);
   const activate = () => {
     // Focus synchronously inside the click handler so iOS treats this as a
     // user-initiated focus and opens the keyboard.
@@ -5162,12 +5183,13 @@ function FloatingSearchPill({ value, onChange, placeholder }) {
 
   return (
     <>
-      {/* The real input, always mounted at the top. Hidden via opacity +
-          pointer-events when inactive so it doesn't intercept anything. */}
+      {/* The real input, always mounted just above the keyboard zone. Hidden
+          via opacity + pointer-events when inactive so it doesn't intercept
+          anything. */}
       <div
         style={{
           position: "fixed",
-          top: "calc(env(safe-area-inset-top) + 8px)",
+          bottom: `${kbHeight + 8}px`,
           left: "50%",
           transform: "translateX(-50%)",
           width: "100%",
@@ -5176,7 +5198,7 @@ function FloatingSearchPill({ value, onChange, placeholder }) {
           padding: "0 12px",
           opacity: active ? 1 : 0,
           pointerEvents: active ? "auto" : "none",
-          transition: "opacity 0.15s ease",
+          transition: "opacity 0.15s ease, bottom 0.2s ease",
         }}
       >
         <div style={{ position: "relative" }}>
