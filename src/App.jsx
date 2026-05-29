@@ -979,7 +979,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
 }
 
 // ─── Payment Modal ────────────────────────────────────────────────────────────
-function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
+function PaymentModal({ invoice, onClose, onSave, existingPayment, topOffset = 0 }) {
   const t = calcTotals(invoice);
   const isEstimate = invoice.type === "estimate";
   const isEdit = !!existingPayment;
@@ -1037,8 +1037,8 @@ function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
   // transformed/scrollable form container it's rendered inside. Without this,
   // the sheet floats wherever the form is scrolled instead of the screen bottom.
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 700, display: "flex", alignItems: "flex-start" }}>
-      <div style={{ background: "#fff", width: "100%", borderRadius: "0 0 16px 16px", padding: 24, paddingTop: "max(24px, env(safe-area-inset-top))", maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
+    <div style={{ position: "fixed", top: topOffset, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-start" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "0 0 16px 16px", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>{isEdit ? "Edit Payment" : (isEstimate ? "Record Down Payment" : "Record Payment")}</div>
         <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.id} · {isEstimate ? `Estimate Total: ${fmt(t.total)} · Remaining: ${fmt(Math.max(0, t.balance))}` : (lateFee > 0 ? `Balance: ${fmt(Math.max(0, t.balance))} + late fee ${fmt(lateFee)} = ${fmt(owedWithFee)}` : `Balance: ${fmt(Math.max(0, t.balance))}`)}</div>
         <div style={{ marginBottom: 12 }}>
@@ -2694,6 +2694,11 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
   // so paddingTop is correct on first render — no content hidden on load.
   const formHeaderRef = useRef(null);
+  // Where the PaymentModal should dock its top: flush under the sticky editor
+  // header (which sits below the global brand bar). Measuring the header's
+  // viewport bottom handles both bars at once; fall back to GLOBAL_HEADER_H if
+  // the ref isn't mounted yet.
+  const paymentModalTop = () => formHeaderRef.current?.getBoundingClientRect().bottom ?? GLOBAL_HEADER_H;
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
@@ -3282,11 +3287,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   return (
     <>
     <div onTouchStart={onTabsTouchStart} onTouchMove={onTabsTouchMove} onTouchEnd={onTabsTouchEnd} onTouchCancel={onTabsTouchEnd} style={{ paddingBottom: 100, background: LIGHT, minHeight: "100%" }}>
-      {showPayment && <PaymentModal invoice={form} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
+      {showPayment && <PaymentModal invoice={form} topOffset={paymentModalTop()} onClose={() => setShowPayment(false)} onSave={(updated) => { setForm(updated); onPartialSave?.(updated); }} />}
       {editingPayment && (
         <PaymentModal
           invoice={form}
           existingPayment={editingPayment}
+          topOffset={paymentModalTop()}
           onClose={() => setEditingPayment(null)}
           onSave={(updated) => {
             setForm(updated);
