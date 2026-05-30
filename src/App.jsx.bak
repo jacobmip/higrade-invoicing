@@ -957,6 +957,23 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           data-placeholder={listening ? "Listening…" : "Describe a job…"}
           style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
           onInput={e => setInput(e.currentTarget.innerText)}
+          onFocus={() => {
+            // Lift the input above the on-screen keyboard. iOS Safari does
+            // not reliably auto-scroll a contentEditable into view when the
+            // keyboard opens, so after the keyboard has animated in we
+            // measure the visible (visualViewport) area and scroll the page
+            // just enough to place the input above the keyboard. Only scrolls
+            // when the input is actually hidden, and fires once per focus, so
+            // it positions cleanly without continuous jumping.
+            setTimeout(() => {
+              const el = inputElRef.current;
+              if (!el) return;
+              const vv = window.visualViewport;
+              const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+              const delta = el.getBoundingClientRect().bottom - (visibleBottom - 12);
+              if (delta > 0) window.scrollBy({ top: delta, behavior: "smooth" });
+            }, 350);
+          }}
           // No Enter-to-send. Enter inserts a newline; the Send button is the
           // only way to submit. Mobile-friendly since Shift+Enter doesn't
           // exist on iOS keyboards.
