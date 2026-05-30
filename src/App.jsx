@@ -962,20 +962,20 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
           onInput={e => setInput(e.currentTarget.innerText)}
           onFocus={() => {
-            // Lift the input above the on-screen keyboard. iOS Safari does
-            // not reliably auto-scroll a contentEditable into view when the
-            // keyboard opens, so after the keyboard has animated in we
-            // measure the visible (visualViewport) area and scroll the page
-            // just enough to place the input above the keyboard. Only scrolls
-            // when the input is actually hidden, and fires once per focus, so
-            // it positions cleanly without continuous jumping.
+            // Position the input bar just above the on-screen keyboard. iOS
+            // Safari does not reliably place a contentEditable when the
+            // keyboard opens, so after it has animated in we measure the
+            // visible (visualViewport) area and scroll the page so the input's
+            // bottom sits just above the keyboard. Scrolls in either direction
+            // (the input can start too low OR too high), and fires once per
+            // focus, so it lands precisely without continuous jumping.
             setTimeout(() => {
               const el = inputElRef.current;
               if (!el) return;
               const vv = window.visualViewport;
               const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-              const delta = el.getBoundingClientRect().bottom - (visibleBottom - 12);
-              if (delta > 0) window.scrollBy({ top: delta, behavior: "smooth" });
+              const delta = el.getBoundingClientRect().bottom - (visibleBottom - 8);
+              if (Math.abs(delta) > 2) window.scrollBy({ top: delta, behavior: "smooth" });
             }, 350);
           }}
           // No Enter-to-send. Enter inserts a newline; the Send button is the
@@ -2875,30 +2875,14 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // the ref isn't mounted yet.
   const paymentModalTop = () => formHeaderRef.current?.getBoundingClientRect().bottom ?? GLOBAL_HEADER_H;
   // Marks the top of the Line Items / quick-action section so we can scroll
-  // it flush under the sticky form header when the AI panel opens.
+  // Marks the top of the Line Items / quick-action section.
   const aiSectionRef = useRef(null);
   // Lets the AI button focus the chat input the moment the panel mounts.
   const aiInputRef = useRef(null);
-  // When the AI panel opens, scroll the page once so the quick-action row
-  // sits directly under the sticky form header. Fires on open only -- not on
-  // input focus or new messages -- so the chat doesn't jump while in use.
-  // Uses scrollIntoView (not window.scrollBy) so it routes to whatever the
-  // real scroll container is, which window.scrollBy did not reliably hit on
-  // iOS Safari -- that left the screen position unchanged on open. The
-  // section's scroll-margin-top is set to the sticky header's viewport bottom
-  // so the row lands just below the header instead of behind it.
-  useEffect(() => {
-    if (!showAI) return;
-    // Small delay so the panel has rendered and layout has settled.
-    const t = setTimeout(() => {
-      const el = aiSectionRef.current;
-      if (!el) return;
-      const headerBottom = formHeaderRef.current?.getBoundingClientRect().bottom ?? GLOBAL_HEADER_H;
-      el.style.scrollMarginTop = `${Math.max(0, Math.round(headerBottom))}px`;
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 120);
-    return () => clearTimeout(t);
-  }, [showAI]);
+  // Note: positioning the panel on open is handled by the input's onFocus
+  // keyboard-lift (see AIChatPanel). Since one tap now opens the keyboard and
+  // focuses the input, the lift places the input bar just above the keyboard
+  // -- a separate open-scroll here only fought with it and over-scrolled.
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
