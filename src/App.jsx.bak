@@ -2876,15 +2876,21 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // When the AI panel opens, scroll the page once so the quick-action row
   // sits directly under the sticky form header. Fires on open only -- not on
   // input focus or new messages -- so the chat doesn't jump while in use.
+  // Uses scrollIntoView (not window.scrollBy) so it routes to whatever the
+  // real scroll container is, which window.scrollBy did not reliably hit on
+  // iOS Safari -- that left the screen position unchanged on open. The
+  // section's scroll-margin-top is set to the sticky header's viewport bottom
+  // so the row lands just below the header instead of behind it.
   useEffect(() => {
-    if (!showAI || !aiSectionRef.current) return;
-    // Small delay so the panel has rendered and has height.
+    if (!showAI) return;
+    // Small delay so the panel has rendered and layout has settled.
     const t = setTimeout(() => {
-      if (!aiSectionRef.current) return;
+      const el = aiSectionRef.current;
+      if (!el) return;
       const headerBottom = formHeaderRef.current?.getBoundingClientRect().bottom ?? GLOBAL_HEADER_H;
-      const rect = aiSectionRef.current.getBoundingClientRect();
-      window.scrollBy({ top: rect.top - headerBottom, behavior: "smooth" });
-    }, 80);
+      el.style.scrollMarginTop = `${Math.max(0, Math.round(headerBottom))}px`;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
     return () => clearTimeout(t);
   }, [showAI]);
   // Activity events from invoice_events (sent, opened, etc.)
