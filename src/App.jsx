@@ -651,13 +651,21 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const [pendingPhotos, setPendingPhotos] = useState([]);
   const endRef = useRef(null);
   const panelRef = useRef(null);
+  const messagesRef = useRef(null);
   const inputElRef = useRef(null);
   const fileInputRef = useRef(null);
   // Only auto-scroll when new messages arrive or the loading indicator
   // toggles. Earlier this also fired on every visualViewport change, which
   // meant every keystroke (iOS keyboard animation tweaks the viewport)
   // re-scrolled the panel and made the chat feel like it was jumping.
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading]);
+  // Scroll within the messages div only (direct scrollTop). scrollIntoView
+  // bubbles up past the overflow container on iOS Safari and scrolls the
+  // outer page, which made the whole page jump on every new message.
+  useEffect(() => {
+    if (messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
+  }, [msgs, loading]);
 
   // Hold the active recognition instance so we can stop a stuck one and
   // toggle the mic button off without crashing the whole app. iOS Safari
@@ -870,7 +878,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           style={{ position: "absolute", top: 8, right: 10, zIndex: 5, background: "rgba(255,255,255,0.92)", border: "1px solid #dde2ee", borderRadius: 16, padding: "4px 10px", fontSize: 11, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, color: "#888", letterSpacing: 1, cursor: "pointer", textTransform: "uppercase", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}
         >Clear</button>
       )}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 62, overflowY: "auto", padding: 14 }}>
+      <div ref={messagesRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 62, overflowY: "auto", padding: 14 }}>
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 10, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={{ maxWidth: "85%", background: m.role === "user" ? NAVY : "#fff", color: m.role === "user" ? "#fff" : "#1a1a1a", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px", padding: "10px 13px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.09)" }}>
@@ -948,12 +956,6 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           spellCheck={true}
           data-placeholder={listening ? "Listening…" : "Describe a job…"}
           style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
-          onFocus={() => {
-            // After Safari's auto-scroll settles, pull the whole chat
-            // panel into view so the LINE ITEMS header sits at the top and
-            // the chat history is visible above the input.
-            setTimeout(() => { panelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, 350);
-          }}
           onInput={e => setInput(e.currentTarget.innerText)}
           // No Enter-to-send. Enter inserts a newline; the Send button is the
           // only way to submit. Mobile-friendly since Shift+Enter doesn't
