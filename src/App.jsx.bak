@@ -974,7 +974,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
               if (!el) return;
               const vv = window.visualViewport;
               const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-              const delta = el.getBoundingClientRect().bottom - (visibleBottom - 8);
+              // 48px clears the iOS keyboard accessory bar (the prev/next/Done
+              // strip, ~44px) so it doesn't sit on top of the input.
+              const delta = el.getBoundingClientRect().bottom - (visibleBottom - 48);
               if (Math.abs(delta) > 2) window.scrollBy({ top: delta, behavior: "smooth" });
             }, 350);
           }}
