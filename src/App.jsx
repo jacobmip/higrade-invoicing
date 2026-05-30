@@ -2853,6 +2853,23 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // viewport bottom handles both bars at once; fall back to GLOBAL_HEADER_H if
   // the ref isn't mounted yet.
   const paymentModalTop = () => formHeaderRef.current?.getBoundingClientRect().bottom ?? GLOBAL_HEADER_H;
+  // Marks the top of the Line Items / quick-action section so we can scroll
+  // it flush under the sticky form header when the AI panel opens.
+  const aiSectionRef = useRef(null);
+  // When the AI panel opens, scroll the page once so the quick-action row
+  // sits directly under the sticky form header. Fires on open only -- not on
+  // input focus or new messages -- so the chat doesn't jump while in use.
+  useEffect(() => {
+    if (!showAI || !aiSectionRef.current) return;
+    // Small delay so the panel has rendered and has height.
+    const t = setTimeout(() => {
+      if (!aiSectionRef.current) return;
+      const headerBottom = formHeaderRef.current?.getBoundingClientRect().bottom ?? GLOBAL_HEADER_H;
+      const rect = aiSectionRef.current.getBoundingClientRect();
+      window.scrollBy({ top: rect.top - headerBottom, behavior: "smooth" });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [showAI]);
   // Activity events from invoice_events (sent, opened, etc.)
   const [events, setEvents] = useState([]);
   const [refreshingEvents, setRefreshingEvents] = useState(false);
@@ -3763,7 +3780,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
           </div>
 
           {/* Line Items */}
-          <div style={{ padding: "16px 16px 0" }}>
+          <div ref={aiSectionRef} style={{ padding: "16px 16px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>Line Items</span>
               <div style={{ display: "flex", gap: 6, overflowX: "auto", flexShrink: 1, minWidth: 0 }}>
