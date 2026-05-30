@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
 import { supabase } from './supabase.js';
@@ -642,7 +642,7 @@ function resizeImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
   });
 }
 
-function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction }) {
+function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -652,7 +652,11 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const endRef = useRef(null);
   const panelRef = useRef(null);
   const messagesRef = useRef(null);
-  const inputElRef = useRef(null);
+  // The parent passes inputRef so it can focus this input synchronously from
+  // the AI button tap (needed so iOS opens the keyboard in one click). Fall
+  // back to a local ref when no external one is provided.
+  const localInputRef = useRef(null);
+  const inputElRef = inputRef || localInputRef;
   const fileInputRef = useRef(null);
   // Only auto-scroll when new messages arrive or the loading indicator
   // toggles. Earlier this also fired on every visualViewport change, which
@@ -2873,6 +2877,8 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // Marks the top of the Line Items / quick-action section so we can scroll
   // it flush under the sticky form header when the AI panel opens.
   const aiSectionRef = useRef(null);
+  // Lets the AI button focus the chat input the moment the panel mounts.
+  const aiInputRef = useRef(null);
   // When the AI panel opens, scroll the page once so the quick-action row
   // sits directly under the sticky form header. Fires on open only -- not on
   // input focus or new messages -- so the chat doesn't jump while in use.
@@ -3811,7 +3817,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   <Icon name="grip" size={12} color={reordering ? "#fff" : "#444"} />{reordering ? "Done" : "Reorder"}
                 </button>
                 {!reordering && <>
-                  <button onClick={() => { setShowAI(!showAI); setShowSaved(false); setShowPriceBook(false); }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
+                  <button onClick={() => {
+                    if (showAI) { setShowAI(false); return; }
+                    // Mount the panel synchronously (flushSync) so its input
+                    // exists in the DOM before this tap handler returns, then
+                    // focus it within the same user gesture. iOS Safari only
+                    // opens the keyboard for a programmatic focus that happens
+                    // inside the tap, so this is what makes one tap land the
+                    // cursor in the box with the keyboard already up.
+                    flushSync(() => { setShowAI(true); setShowSaved(false); setShowPriceBook(false); });
+                    aiInputRef.current?.focus();
+                  }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
                   <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Saved</button>
                   <button onClick={() => { setShowPriceBook(!showPriceBook); setShowAI(false); setShowSaved(false); }} style={{ ...S.btn(showPriceBook ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Price Book</button>
                   <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
@@ -3819,7 +3835,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
               </div>
             </div>
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} /></div>}
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} /></div>}
 
             {showSaved && (
               <div style={{ background: "#fff", borderRadius: 10, marginBottom: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxHeight: 280, overflowY: "auto" }}>
