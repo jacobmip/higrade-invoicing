@@ -658,6 +658,28 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   const localInputRef = useRef(null);
   const inputElRef = inputRef || localInputRef;
   const fileInputRef = useRef(null);
+  // iOS shows the keyboard "form assistant" bar (prev/next/Done) whenever the
+  // page has focusable form fields. While the chat input is focused we make
+  // every other input/textarea/select on the page non-navigable so iOS sees
+  // no fields to step through and drops the bar; we restore them on blur and
+  // on unmount. Each entry: [el, prop, previousValue].
+  const suppressedFieldsRef = useRef([]);
+  const suppressFormAssistant = () => {
+    const panel = panelRef.current;
+    const changed = [];
+    document.querySelectorAll("input, textarea, select").forEach(el => {
+      if (panel && panel.contains(el)) return; // keep this panel's own controls live
+      if (el.tagName === "SELECT") { changed.push([el, "disabled", el.disabled]); el.disabled = true; }
+      else { changed.push([el, "readOnly", el.readOnly]); el.readOnly = true; }
+    });
+    suppressedFieldsRef.current = changed;
+  };
+  const restoreFormAssistant = () => {
+    suppressedFieldsRef.current.forEach(([el, prop, prev]) => { el[prop] = prev; });
+    suppressedFieldsRef.current = [];
+  };
+  // Safety net: always restore if the panel unmounts while still focused.
+  useEffect(() => restoreFormAssistant, []);
   // Only auto-scroll when new messages arrive or the loading indicator
   // toggles. Earlier this also fired on every visualViewport change, which
   // meant every keystroke (iOS keyboard animation tweaks the viewport)
@@ -943,12 +965,12 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         ><Icon name="paperclip" size={18} /></button>
         <button onClick={startListening} style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 8, border: "none", background: listening ? ORANGE : "#f0f2f8", color: listening ? "#fff" : "#666", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="mic" size={18} /></button>
         {/*
-          Use a contenteditable div instead of <input>/<textarea> so iOS
-          Safari doesn't render its contact-autofill suggestion bar (with
-          the user's email and the up/down/checkmark form-navigation
-          arrows). Safari only shows that bar for true form fields; a
-          contenteditable element is treated as rich text and gets a clean
-          keyboard with just the standard predictions row.
+          A contenteditable div (not <input>/<textarea>) keeps this field
+          itself from being a "true" form control. But iOS still renders the
+          form-assistant bar (prev/next/Done) as long as the page has OTHER
+          focusable form fields to step through -- which the invoice form has
+          plenty of. So onFocus we also make those other fields non-navigable
+          (see suppressFormAssistant) to remove the bar entirely while typing.
         */}
         <div
           ref={inputElRef}
@@ -958,10 +980,17 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           aria-label="Job description"
           aria-multiline="true"
           spellCheck={true}
+          autoCorrect="off"
+          autoCapitalize="none"
           data-placeholder={listening ? "Listening…" : "Describe a job…"}
           style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
           onInput={e => setInput(e.currentTarget.innerText)}
+          onBlur={restoreFormAssistant}
           onFocus={() => {
+            // Drop the iOS form-assistant bar by making every other form field
+            // non-navigable while we're focused (synchronously, before the
+            // keyboard renders, so iOS evaluates with no fields to step to).
+            suppressFormAssistant();
             // Position the input bar just above the on-screen keyboard. iOS
             // Safari does not reliably place a contentEditable when the
             // keyboard opens, so after it has animated in we measure the
