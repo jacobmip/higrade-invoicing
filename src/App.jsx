@@ -116,6 +116,29 @@ function statusDisplay(inv) {
 }
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
 
+// Fuzzy client lookup for natural-language AI scheduling ("Karen" → "Karen
+// Sakamoto"). The regular client search uses exact substring matching; this
+// adds a tolerant scoring fallback. Returns the first reasonable match or null.
+function fuzzyFindClient(clients, query) {
+  if (!query) return null;
+  const q = query.toLowerCase().trim();
+  // Exact match first
+  const exact = clients.find(c => (c.name || "").toLowerCase() === q);
+  if (exact) return exact;
+  // Starts-with match
+  const starts = clients.find(c => (c.name || "").toLowerCase().startsWith(q));
+  if (starts) return starts;
+  // Contains match
+  const contains = clients.find(c => (c.name || "").toLowerCase().includes(q));
+  if (contains) return contains;
+  // Any word in name starts with any word in query
+  const qWords = q.split(/\s+/);
+  return clients.find(c => {
+    const nameWords = (c.name || "").toLowerCase().split(/\s+/);
+    return qWords.some(qw => nameWords.some(nw => nw.startsWith(qw)));
+  }) || null;
+}
+
 // Persists component state to localStorage as a safety net for iOS Safari
 // backgrounding. Restores the draft on mount if it is newer than the last
 // server-saved version. Saving is debounced 500 ms. Returns a clearDraft()
@@ -270,6 +293,8 @@ function buildGlobalSystemPrompt(data) {
 
   return `You are Jake's AI assistant for HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You have full control over the app.
 
+TODAY'S DATE: ${today()} (Pacific/Honolulu). Use this to resolve relative dates like "tomorrow", "Monday", or "next week" into absolute YYYY-MM-DD.
+
 COUNTS: ${realInvoices.length} invoices, ${realEstimates.length} estimates, ${data.clients.length} clients. Invoices and estimates are SEPARATE — never combine the totals.
 
 CURRENT INVOICES (ID | Client | Total | Status | Date) — these are billable invoices, NOT estimates:
@@ -336,6 +361,17 @@ NOTE: address1/2/3 here is the BILLING / mailing address, same as in create_clie
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
+
+Schedule a job on Google Calendar (use when Jake mentions scheduling, booking, or setting up a job for a client on a specific date/time):
+{"action":"schedule_job","clientName":"exact or partial name","date":"YYYY-MM-DD","time":"HH:MM","durationHours":2,"jobDescription":"short description","summary":"one sentence"}
+Rules for schedule_job:
+- Always resolve relative dates ("tomorrow", "next Tuesday") to an absolute YYYY-MM-DD using TODAY'S DATE above before emitting the action.
+- time is 24-hour HH:MM. Default to "09:00" if Jake doesn't specify a time.
+- durationHours defaults to 2 unless Jake specifies otherwise.
+- jobDescription is concise: "Snake bathtub drain", not a paragraph.
+- If the client name is ambiguous or not found in CLIENTS above, ask for clarification in plain text instead of emitting the action.
+Example — Jake says "Schedule Karen tomorrow at 9 AM to snake her bathtub drain" (today is ${today()}):
+{"action":"schedule_job","clientName":"Karen","date":"resolved YYYY-MM-DD","time":"09:00","durationHours":2,"jobDescription":"Snake bathtub drain","summary":"Scheduled Karen tomorrow at 9 AM to snake her bathtub drain."}
 
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
@@ -1913,6 +1949,36 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
           if (newClient) {
             setMsgs(p => [...p, { role: "assistant", text: action.summary || `Client "${newClient.name}" added.`, card: { type: "created_client", client: newClient } }]);
           }
+        } else if (action.action === "schedule_job") {
+          const client = fuzzyFindClient(data.clients, action.clientName);
+          if (!client) {
+            setMsgs(p => [...p, { role: "assistant", text: `I couldn't find a client matching "${action.clientName}". Please check the name and try again.` }]);
+          } else if (!GCal.isConfigured()) {
+            setMsgs(p => [...p, { role: "assistant", text: "Google Calendar isn't configured yet. Connect it in the Calendar tab first." }]);
+          } else {
+            try {
+              if (!GCal.getStoredToken()) await GCal.requestToken("consent");
+              const time = action.time || "09:00";
+              const durationHours = action.durationHours || 2;
+              const startDt = new Date(`${action.date}T${time}:00`);
+              const endDt = new Date(startDt.getTime() + durationHours * 3600000);
+              const event = {
+                summary: `${client.name} – ${action.jobDescription}`,
+                description: [
+                  action.jobDescription,
+                  client.address1 || client.addresses?.[0]?.line1 || "",
+                  client.phone || "",
+                ].filter(Boolean).join("\n"),
+                start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
+                end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
+              };
+              const resp = await GCal.createEvent(event);
+              setMsgs(p => [...p, { role: "assistant", text: action.summary || `Scheduled ${client.name}.`, card: { type: "schedule_confirm", clientName: client.name, date: action.date, time, durationHours, jobDescription: action.jobDescription, eventId: resp?.id } }]);
+            } catch (e) {
+              console.error("schedule_job failed", e);
+              setMsgs(p => [...p, { role: "assistant", text: "Couldn't schedule the job: " + e.message }]);
+            }
+          }
         } else {
           // Catch-all for the remaining action types that the App-level
           // handler knows about: delete_invoice, update_invoice, add_payment,
@@ -2033,6 +2099,12 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
               {m.card?.type === "email_cancelled" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px" }}><span style={{ fontSize: 12, color: "#aaa" }}>Email cancelled</span></div>}
               {m.card?.type === "email_failed" && <div style={{ marginTop: 10, background: "#fff0ee", borderRadius: 8, padding: "10px 12px" }}><span style={{ fontSize: 12, color: "#cc4444" }}>Failed: {m.card.error}</span></div>}
               {m.card?.type === "created_client" && <div onClick={() => onOpenClient?.(m.card.client)} style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff", cursor: "pointer" }}><Icon name="person" size={16} color="#2980b9" /><div style={{ flex: 1 }}><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#2980b9" }}>{m.card.client?.name}</div>{m.card.client?.email && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.email}</div>}{m.card.client?.phone && <div style={{ fontSize: 12, color: "#555" }}>{m.card.client.phone}</div>}</div><div style={{ fontSize: 11, color: "#2980b9", fontWeight: 600 }}>Open →</div></div>}
+              {m.card?.type === "schedule_confirm" && (() => {
+                const dt = new Date(`${m.card.date}T${m.card.time || "09:00"}`);
+                const dateLabel = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "Pacific/Honolulu" });
+                const timeLabel = dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Pacific/Honolulu" });
+                return <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #b8f0d0" }}><Icon name="calendar" size={16} color="#27ae60" /><div style={{ flex: 1 }}><div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: "#27ae60" }}>Job Scheduled</div><div style={{ fontSize: 12, color: "#555" }}>{m.card.clientName}</div><div style={{ fontSize: 12, color: "#555" }}>{dateLabel} at {timeLabel} ({m.card.durationHours}h)</div><div style={{ fontSize: 12, color: "#555" }}>{m.card.jobDescription}</div></div></div>;
+              })()}
             </div>
           </div>
         ))}
