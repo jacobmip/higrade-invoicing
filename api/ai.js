@@ -33,6 +33,7 @@ STRICT RULES FOR ESTIMATES:
 3. "desc" is a detailed scope of work written as line-by-line steps with NO bullet points, dashes, or symbols — each step on its own line separated by newline characters (\\n). Cover the full scope: shutting off water, disconnecting lines, removing old parts, inspecting, installing new parts, reconnecting, testing, verifying. Minimum 6 steps.
 4. Hawaii GET tax of 4.712% will be applied automatically — do not add it to the price.
 5. Price is the all-in flat rate including labor, materials, and overhead.
+6. Output the raw JSON object only. Never preface it with Here is..., I'll create..., or any narration — start your response directly with the opening brace {.
 
 Example output for "wax ring replacement":
 {
