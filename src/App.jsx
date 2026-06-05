@@ -9507,20 +9507,7 @@ export default function App() {
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {view === "list" && (tab === "invoices" || tab === "estimates" || tab === "expenses") && (
-              <button
-                onClick={() => {
-                  if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setView("form"); }
-                  else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setView("form"); }
-                  else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
-                }}
-                aria-label="New"
-                style={{ position: "fixed", bottom: 88, right: "calc(max(0px, (100vw - 480px) / 2) + 20px)", width: 56, height: 56, background: ORANGE, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, zIndex: 1100, boxShadow: "0 4px 16px rgba(232,98,42,0.45)" }}
-              >
-                <Icon name="plus" size={28} color="#fff" />
-              </button>
-            )}
-            <NotificationsBell
+                        <NotificationsBell
               onOpenInvoice={(invoiceId) => {
                 const inv = data.invoices.find(i => i.id === invoiceId);
                 if (inv) { setSelected(inv); setView("form"); }
@@ -9537,6 +9524,19 @@ export default function App() {
         </div>
       </div>
 
+      {view === "list" && (tab === "invoices" || tab === "estimates" || tab === "expenses") && (
+        <button
+          onClick={() => {
+            if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setView("form"); }
+            else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setView("form"); }
+            else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
+          }}
+          aria-label="New"
+          style={{ position: "fixed", bottom: 88, right: 20, width: 56, height: 56, background: ORANGE, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, zIndex: 1100, boxShadow: "0 4px 16px rgba(232,98,42,0.45)" }}
+        >
+          <Icon name="plus" size={28} color="#fff" />
+        </button>
+      )}
       <>
         {view === "list" && subHeader.key === tab && (
           <div style={{ position: "sticky", top: globalHeaderH, zIndex: 500, background: LIGHT }}>
