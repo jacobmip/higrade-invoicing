@@ -2060,7 +2060,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
 
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 300, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
+    <div style={{ position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 1200, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
@@ -9527,7 +9527,7 @@ export default function App() {
               }}
             />
             <button
-              onClick={() => setShowGlobalAI(true)}
+              onClick={() => setShowGlobalAI(v => !v)}
               aria-label="AI assistant"
               style={{ width: 36, height: 36, background: "transparent", borderRadius: 8, border: `2px solid ${ORANGE}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
             >
@@ -9563,7 +9563,7 @@ export default function App() {
       </>
 
       {formMounted && (
-        <div style={{ position: "fixed", top: GLOBAL_HEADER_H, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 300, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+        <div style={{ position: "fixed", top: GLOBAL_HEADER_H, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
@@ -9633,7 +9633,7 @@ export default function App() {
         />
       )}
       {showMore && (
-        <div onClick={() => setShowMore(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+        <div onClick={() => setShowMore(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 1200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "10px 0 max(20px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" }}>
             <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "4px auto 12px" }} />
             <div style={{ padding: "0 18px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#8899bb", letterSpacing: 1.5, textTransform: "uppercase" }}>More</div>
