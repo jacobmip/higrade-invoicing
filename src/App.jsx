@@ -421,7 +421,7 @@ async function callAI(messages, systemPrompt = null, opts = {}) {
 }
 
 function extractActionsJSON(text) {
-    const idx = text ? text.indexOf('"'{') : -1;
+      const idx = text ? text.search(/\{/) : -1;
                                           if (idx >= 0) { try { const p = JSON.parse(text.slice(idx)); if (p && p.action) return [p]; } catch {} }
   const stripped = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
   // Try direct parse (array or object)
