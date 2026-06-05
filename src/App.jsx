@@ -9515,7 +9515,7 @@ export default function App() {
                   else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
                 }}
                 aria-label="New"
-                style={{ position: "fixed", bottom: 88, right: 20, width: 56, height: 56, background: ORANGE, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, zIndex: 1100, boxShadow: "0 4px 16px rgba(232,98,42,0.45)" }}
+                style={{ position: "fixed", bottom: 88, right: "calc(max(0px, (100vw - 480px) / 2) + 20px)", width: 56, height: 56, background: ORANGE, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, zIndex: 1100, boxShadow: "0 4px 16px rgba(232,98,42,0.45)" }}
               >
                 <Icon name="plus" size={28} color="#fff" />
               </button>
