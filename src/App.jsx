@@ -1608,8 +1608,8 @@ function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
     onClose();
   };
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4, color: NAVY }}>Schedule Job</div>
         <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.client || "No client"} · {jobTitle}</div>
@@ -1629,7 +1629,8 @@ function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
           <button onClick={handleSave} disabled={saving} style={{ ...S.btn("primary"), flex: 2 }}>{saving ? "Saving…" : "Schedule"}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1664,8 +1665,8 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
     onClose();
   };
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 16, color: NAVY }}>Set Follow-Up Reminder</div>
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -1681,7 +1682,8 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
           <button onClick={handleSave} disabled={saving} style={{ ...S.btn("primary"), flex: 2 }}>{saving ? "Saving…" : "Set Reminder"}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2182,8 +2184,8 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
 
   const lineTotal = calcItemTotal(form);
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 500, display: "flex", alignItems: "flex-end" }}>
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
       <div style={{ background: "#fff", width: "100%", borderRadius: "18px 18px 0 0", padding: "22px 20px 32px", maxWidth: 480, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, color: NAVY }}>Edit Item</span>
@@ -2269,7 +2271,8 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
           <button onClick={handleDone} style={{ ...S.btn("primary"), flex: 2 }}>Done</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
