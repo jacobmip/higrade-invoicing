@@ -1139,7 +1139,7 @@ function SendMethodSheet({ kind, invoice, client, onClose, onPickEmail, onPickTe
   const phone = client?.phone || "";
   const hasPhone = !!phone.replace(/\D/g, "");
   return createPortal(
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
       <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "6px 0 max(20px, env(safe-area-inset-bottom))" }}>
         <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "6px auto 14px" }} />
         <div style={{ padding: "0 20px 4px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
@@ -1461,7 +1461,7 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   // Portal to document.body — InvoiceForm's carousel uses CSS transform,
   // which would otherwise capture our position:fixed and shift the modal.
   return createPortal(
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
       <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "6px 0 max(20px, env(safe-area-inset-bottom))", maxHeight: "92vh", overflowY: "auto" }}>
         <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "6px auto 14px" }} />
         <div style={{ padding: "0 20px 6px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
