@@ -1420,11 +1420,16 @@ function hydrateTemplatesFromSettings(settings) {
 
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
   // kind: "invoice" | "estimate"
+  const availEmails = [client?.email, client?.email2].filter(Boolean);
   const [email, setEmail] = useState(client?.email || "");
+  const [checkedEmails, setCheckedEmails] = useState(() => new Set(client?.email ? [client.email] : []));
   const [name, setName]   = useState(client?.name  || invoice?.client || "");
   const t = calcTotals(invoice);
   const isEstimate = kind === "estimate";
-  const valid = /\S+@\S+\.\S+/.test(email);
+  const orderedChecked = availEmails.filter(a => checkedEmails.has(a));
+  const toAddr = availEmails.length >= 2 ? (orderedChecked[0] || "") : email;
+  const ccAddr = availEmails.length >= 2 ? (orderedChecked[1] || "") : "";
+  const valid = /\S+@\S+\.\S+/.test(toAddr);
   const docNum = invoice?.id || (isEstimate ? "EST0000" : "INV0000");
   // Down-payment percentage (estimates only). 0 = no down payment requested.
   // When > 0, the customer's signature on the public viewer auto-creates a
@@ -1524,20 +1529,39 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
           <input value={name} onChange={e => setName(e.target.value)} style={S.input} placeholder="Client name" />
 
           <label style={{ ...S.label, marginTop: 10 }}>Send to email</label>
-          {client?.email2 && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-              {[client.email, client.email2].filter(Boolean).map(addr => (
-                <button
-                  key={addr}
-                  type="button"
-                  onClick={() => setEmail(addr)}
-                  style={{ flex: 1, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${email === addr ? ORANGE : "#dde2ee"}`, background: email === addr ? ORANGE : "#fff", color: email === addr ? "#fff" : "#444", fontFamily: "'Barlow', sans-serif", fontSize: 12, fontWeight: 600, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                >{addr}</button>
-              ))}
+          {availEmails.length >= 2 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+              {availEmails.map(addr => {
+                const checked = checkedEmails.has(addr);
+                const isCc = checked && orderedChecked[1] === addr;
+                return (
+                  <button
+                    key={addr}
+                    type="button"
+                    onClick={() => setCheckedEmails(prev => {
+                      const next = new Set(prev);
+                      if (next.has(addr) && next.size > 1) next.delete(addr);
+                      else if (!next.has(addr)) next.add(addr);
+                      return next;
+                    })}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${checked ? ORANGE : "#dde2ee"}`, background: checked ? "#fff9f5" : "#fafbfd", cursor: "pointer", textAlign: "left", fontFamily: "'Barlow', sans-serif" }}
+                  >
+                    <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${checked ? ORANGE : "#c8cedc"}`, background: checked ? ORANGE : "#fff", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {checked && <svg width="10" height="8" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, color: "#222", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{addr}</div>
+                    {checked && <div style={{ fontSize: 10, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, color: ORANGE, flexShrink: 0 }}>{isCc ? "CC" : "TO"}</div>}
+                  </button>
+                );
+              })}
+              {!valid && <div style={{ fontSize: 11, color: "#cc4444" }}>Select at least one valid email.</div>}
             </div>
+          ) : (
+            <>
+              <input value={email} onChange={e => setEmail(e.target.value)} style={S.input} placeholder="name@example.com" type="email" autoCapitalize="none" autoCorrect="off" />
+              {!valid && email.length > 0 && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 4 }}>That doesn't look like a valid email.</div>}
+            </>
           )}
-          <input value={email} onChange={e => setEmail(e.target.value)} style={S.input} placeholder="name@example.com" type="email" autoCapitalize="none" autoCorrect="off" />
-          {!valid && email.length > 0 && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 4 }}>That doesn't look like a valid email.</div>}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 4 }}>
             <label style={{ ...S.label, marginBottom: 0 }}>Message</label>
@@ -1560,7 +1584,7 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
 
         <div style={{ display: "flex", gap: 10, padding: "16px 20px 0" }}>
           <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
-          <button onClick={() => valid && onConfirm({ name, email, message, downPaymentPct: downPct })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
+          <button onClick={() => valid && onConfirm({ name, email: toAddr, ccEmail: ccAddr, message, downPaymentPct: downPct })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
             {sending ? "Sending…" : (isEstimate ? "Send Estimate" : "Send Invoice")}
           </button>
         </div>
@@ -3293,9 +3317,9 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // For estimates, downPaymentPct is the share of the total to bill when the
   // customer signs (0 = none). We persist it on the estimate row before
   // sending so submit-signature.js can read it back when the customer signs.
-  const handleConfirmedSend = async ({ name, email, message, downPaymentPct }) => {
+  const handleConfirmedSend = async ({ name, email, ccEmail = "", message, downPaymentPct }) => {
     autoUpdateDueDate(form, setForm, onPartialSave);
-    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, name };
+    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, email2: ccEmail, name };
     setSending(true);
     // Persist the chosen down-payment percent on the estimate. Best-effort:
     // if this fails we still send the email, but the customer's signature
@@ -3322,7 +3346,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       if (confirmSend === "estimate") {
         const t2 = calcTotals(form);
         const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
-        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" }) });
+        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, cc: ccEmail || "", clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" }) });
         // Log a "sent" activity event + snapshot version (both best-effort).
         if (form.id) {
           try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'estimate' }); }
