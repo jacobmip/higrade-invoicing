@@ -27,6 +27,7 @@ function toInvoice(row, items = [], payments = []) {
     viewToken: row.view_token || null,
     jobAddress: row.job_address || null,
     billingAddress: row.billing_address || null,
+    lateFeeWaived: row.late_fee_waived ?? false,
     // Down-payment workflow (estimates only — see migration 016).
     // downPaymentPct: 0–100, the % of the estimate total to bill on signing.
     // downPaymentInvoiceId: id of the invoice auto-created when the customer
@@ -38,6 +39,7 @@ function toInvoice(row, items = [], payments = []) {
     // can be detected before it overwrites changes.
     updatedAt: row.updated_at || null,
     ownerId: row.owner_id || null,
+    deletedAt: row.deleted_at || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -261,7 +263,9 @@ export async function loadAll() {
     // matches what users expect when scanning the list — and is the correct
     // order for back-dated entries (e.g. CSV imports) too.
     // Paginate so we don't lose anything once the table passes 1,000 rows.
-    fetchAllRows(() => supabase.from('invoices').select('*').order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })),
+    // Soft-deleted invoices/estimates (deleted_at IS NOT NULL) live in the
+    // Recently Deleted tab for 30 days, so exclude them from the main list.
+    fetchAllRows(() => supabase.from('invoices').select('*').is('deleted_at', null).order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })),
     fetchAllRows(() => supabase.from('invoice_items').select('*').order('invoice_id').order('sort_order')),
     fetchAllRows(() => supabase.from('payments').select('*').order('invoice_id')),
     supabase.from('saved_items').select('*').order('category').order('name'),
@@ -388,6 +392,7 @@ export async function upsertInvoice(inv, isNew) {
       down_payment_invoice_id: inv.downPaymentInvoiceId || null,
       job_address: inv.jobAddress || null,
       billing_address: inv.billingAddress || null,
+      late_fee_waived: inv.lateFeeWaived ?? false,
     },
     items: (inv.items || []).map((it, i) => ({
       name: it.name || '',
@@ -560,9 +565,49 @@ export async function loadInvoiceEvents(invoiceId) {
   return data || [];
 }
 
+// Soft-delete: stamp deleted_at so the invoice/estimate drops out of the
+// normal tabs (loadAll filters deleted_at IS NULL) but is recoverable from
+// the Recently Deleted tab for 30 days.
 export async function deleteInvoice(id) {
-  const { error } = await supabase.from('invoices').delete().eq('id', id)
+  const { error } = await supabase
+    .from('invoices')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
   if (error) throw error
+}
+
+// Restore a soft-deleted invoice/estimate by clearing deleted_at.
+export async function restoreInvoice(id) {
+  const { error } = await supabase
+    .from('invoices')
+    .update({ deleted_at: null })
+    .eq('id', id)
+  if (error) throw error
+}
+
+// Hard-delete — used by the Recently Deleted tab's "Delete" button and the
+// 30-day auto-purge. This is unrecoverable.
+export async function permanentlyDeleteInvoice(id) {
+  const { error } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', id)
+  if (error) throw error
+}
+
+// Load every soft-deleted invoice/estimate for an owner, newest deletion
+// first, hydrated with line items + payments so the preview/totals render.
+export async function loadDeletedInvoices(ownerId) {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*, invoice_items(*), payments(*)')
+    .not('deleted_at', 'is', null)
+    .eq('owner_id', ownerId)
+    .order('deleted_at', { ascending: false })
+  if (error) throw error
+  return (data || []).map(row =>
+    toInvoice(row, row.invoice_items || [], row.payments || [])
+  )
 }
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
