@@ -2062,7 +2062,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
 
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 1200, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
+    <div style={{ position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 2000, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
@@ -2539,7 +2539,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   // the iOS keyboard appeared.
   if (creating) {
     return createPortal(
-      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
         <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "0 0 16px 16px", padding: "20px 18px 28px", maxHeight: "90vh", overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 14, gap: 10 }}>
             <button onClick={() => { clearNewClientDraft(); setCreating(false); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={20} /></button>
@@ -2560,7 +2560,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   }
 
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 600, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "flex-start", justifyContent: "center" }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, borderRadius: "0 0 16px 16px", padding: "18px 16px 24px", maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1 }}>SELECT CLIENT</span>
@@ -4377,7 +4377,7 @@ function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPr
   return (
     <div
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(10,22,40,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(10,22,40,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 16 }}
     >
       <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' }}>
         <div style={sheet}>
@@ -5172,7 +5172,7 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
       <div style={{ background: "#fff", width: "100%", maxWidth: 480, maxHeight: "92vh", borderTopLeftRadius: 14, borderTopRightRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {/* Header */}
         <div style={{ background: NAVY2, color: "#fff", padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -8044,7 +8044,7 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
       </div>
 
       {showConfirm && pendingFile && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.6)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: "100%", maxWidth: 380, boxSizing: "border-box" }}>
             <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, marginBottom: 6 }}>
               {importMode === "replace" ? "Replace all data?" : "Merge backup into current data?"}
