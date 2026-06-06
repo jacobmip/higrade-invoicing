@@ -97,10 +97,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAd
         disabled={noAddress}
         title={noAddress ? "Add an address to this invoice" : "Open in Google Maps"}
         onClick={() => {
-          window.open(
-            `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`,
-            "_blank"
-          );
+          window.location.href = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
         }}
         style={{
           ...btnBase,
