@@ -57,34 +57,66 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAd
     }
   }
 
+  const btnBase = {
+    flex: 1,
+    padding: "13px 16px",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    fontFamily: "'Barlow Condensed', sans-serif",
+    fontWeight: 700,
+    fontSize: 16,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  };
+
   return (
-    <button
-      type="button"
-      onClick={handlePress}
-      disabled={loading || noAddress}
-      title={noAddress ? "Add an address to this invoice" : undefined}
-      style={{
-        width: "100%",
-        padding: "13px 16px",
-        background: loading ? "#ccc" : ORANGE,
-        color: "#fff",
-        border: "none",
-        borderRadius: 10,
-        fontFamily: "'Barlow Condensed', sans-serif",
-        fontWeight: 700,
-        fontSize: 16,
-        letterSpacing: 1,
-        textTransform: "uppercase",
-        cursor: loading ? "default" : "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        boxShadow: loading ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
-        opacity: noAddress ? 0.4 : 1,
-      }}
-    >
-      {error || (loading ? "Getting ETA…" : "On My Way")}
-    </button>
+    <div style={{ display: "flex", gap: 8 }}>
+      <button
+        type="button"
+        onClick={handlePress}
+        disabled={loading || noAddress}
+        title={noAddress ? "Add an address to this invoice" : undefined}
+        style={{
+          ...btnBase,
+          background: loading ? "#ccc" : ORANGE,
+          cursor: loading || noAddress ? "default" : "pointer",
+          boxShadow: loading || noAddress ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
+          opacity: noAddress ? 0.4 : 1,
+        }}
+      >
+        {error || (loading ? "Getting ETA…" : "On My Way")}
+      </button>
+
+      <button
+        type="button"
+        disabled={noAddress}
+        title={noAddress ? "Add an address to this invoice" : "Open in Google Maps"}
+        onClick={() => {
+          window.open(
+            `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`,
+            "_blank"
+          );
+        }}
+        style={{
+          ...btnBase,
+          flex: "0 0 auto",
+          padding: "13px 14px",
+          background: "#1a73e8",
+          cursor: noAddress ? "default" : "pointer",
+          boxShadow: noAddress ? "none" : "0 2px 8px rgba(26,115,232,0.25)",
+          opacity: noAddress ? 0.4 : 1,
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+        </svg>
+        Navigate
+      </button>
+    </div>
   );
 }
