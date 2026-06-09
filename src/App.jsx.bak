@@ -363,15 +363,18 @@ Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
 
 Schedule a job on Google Calendar (use when Jake mentions scheduling, booking, or setting up a job for a client on a specific date/time):
-{"action":"schedule_job","clientName":"exact or partial name","date":"YYYY-MM-DD","time":"HH:MM","durationHours":2,"jobDescription":"short description","summary":"one sentence"}
+{"action":"schedule_job","clientName":"exact or partial name","date":"YYYY-MM-DD","time":"HH:MM","durationHours":2,"jobDescription":"short description","address":"job site address if Jake gives one, else omit","summary":"one sentence"}
 Rules for schedule_job:
 - Always resolve relative dates ("tomorrow", "next Tuesday") to an absolute YYYY-MM-DD using TODAY'S DATE above before emitting the action.
 - time is 24-hour HH:MM. Default to "09:00" if Jake doesn't specify a time.
 - durationHours defaults to 2 unless Jake specifies otherwise.
 - jobDescription is concise: "Snake bathtub drain", not a paragraph.
 - If the client name is ambiguous or not found in CLIENTS above, ask for clarification in plain text instead of emitting the action.
+- ADDRESS: The "address" field is just the location pin on the calendar event. If Jake names a job-site address in his message, put it in "address". If he doesn't, OMIT the field — the app will fall back to the client's address on file, or leave the location blank. NEVER refuse to schedule because of a missing address, and NEVER ask Jake billing-vs-job-site questions. Just emit the schedule_job action and let the app handle the location. The only thing that should ever block scheduling is a missing/ambiguous client or a missing date.
 Example — Jake says "Schedule Karen tomorrow at 9 AM to snake her bathtub drain" (today is ${today()}):
 {"action":"schedule_job","clientName":"Karen","date":"resolved YYYY-MM-DD","time":"09:00","durationHours":2,"jobDescription":"Snake bathtub drain","summary":"Scheduled Karen tomorrow at 9 AM to snake her bathtub drain."}
+Example — Jake says "Book Michael for the rough-in at 742 Kapahulu Ave next Monday" (today is ${today()}):
+{"action":"schedule_job","clientName":"Michael","date":"resolved YYYY-MM-DD","time":"09:00","durationHours":2,"jobDescription":"Rough-in plumbing","address":"742 Kapahulu Ave","summary":"Scheduled Michael for rough-in plumbing next Monday."}
 
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
@@ -2001,7 +2004,10 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
               const endDt = new Date(startDt.getTime() + durationHours * 3600000);
               // Full street address goes in the calendar event's location
               // field (so it's tappable for directions), not the notes.
-              const location = [client.address1, client.address2, client.address3].filter(Boolean).join(", ")
+              // Prefer an explicit job-site address from Jake's message; fall
+              // back to the client's address on file; otherwise leave it blank.
+              const location = (action.address || "").trim()
+                || [client.address1, client.address2, client.address3].filter(Boolean).join(", ")
                 || [client.addresses?.[0]?.line1, client.addresses?.[0]?.line2, client.addresses?.[0]?.line3].filter(Boolean).join(", ")
                 || "";
               const event = {
