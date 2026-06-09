@@ -1746,14 +1746,19 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
   // iOS keyboard opens the chat shrinks (instead of being pushed off-screen).
   // We track both the viewport height AND its offsetTop because iOS shifts the
   // visual viewport down a bit when the address bar is visible.
-  const [vv, setVV] = useState(() => ({
-    height: typeof window !== "undefined" ? window.innerHeight : 0,
-    top: 0,
-  }));
+  // The panel is full-screen (100dvh). We only need to know how tall the
+  // on-screen keyboard is so the input bar can sit just above it; the rest of
+  // the time kbH is 0 and the chat fills the whole screen. Deriving height
+  // from visualViewport.height directly used to leave the panel covering only
+  // part of the screen on iOS, with the input floating up the middle.
+  const [kbH, setKbH] = useState(0);
   useEffect(() => {
     const v = window.visualViewport;
     if (!v) return;
-    const update = () => setVV({ height: v.height, top: v.offsetTop || 0 });
+    const update = () => {
+      const h = window.innerHeight - v.height - (v.offsetTop || 0);
+      setKbH(h > 80 ? h : 0); // ignore toolbar-sized deltas; only real keyboard
+    };
     update();
     v.addEventListener("resize", update);
     v.addEventListener("scroll", update);
@@ -1783,7 +1788,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
     };
   }, []);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, vv.height]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [msgs, loading, kbH]);
 
   // Pick the most natural-sounding English voice available. iOS exposes
   // "Samantha", "Ava", "Allison", "Karen" — Apple's enhanced/premium voices —
@@ -2091,7 +2096,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
 
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, top: vv.top, height: vv.height, zIndex: 2000, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
+    <div style={{ position: "fixed", left: 0, right: 0, top: 0, height: kbH ? `calc(100dvh - ${kbH}px)` : "100dvh", zIndex: 2000, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
       <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
       <div style={{ background: NAVY, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ width: 36, height: 36, background: ORANGE, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="ai" size={20} color="#fff" /></div>
