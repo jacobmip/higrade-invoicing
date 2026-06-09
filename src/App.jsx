@@ -286,9 +286,17 @@ function buildGlobalSystemPrompt(data) {
   };
   const invoiceLines = realInvoices.slice(0, 20).map(fmtLine).join("\n");
   const estimateLines = realEstimates.slice(0, 20).map(fmtLine).join("\n");
-  const clientLines = data.clients.map(c =>
-    `  ${c.name}${c.email ? " | " + c.email : ""}${c.phone ? " | " + c.phone : ""}`
-  ).join("\n");
+  const clientLines = data.clients.map(c => {
+    let line = `  ${c.name}${c.email ? " | " + c.email : ""}${c.phone ? " | " + c.phone : ""}`;
+    const billing = [c.address1, c.address2, c.address3].filter(Boolean).join(", ");
+    if (billing) line += `\n      - Billing: ${billing}`;
+    const addrs = Array.isArray(c.addresses) ? c.addresses : [];
+    for (const a of addrs) {
+      const street = [a.line1, a.line2, a.line3].filter(Boolean).join(", ");
+      if (street) line += `\n      - Job site${a.label ? ` "${a.label}"` : ""}: ${street}`;
+    }
+    return line;
+  }).join("\n");
   const savedItemLines = (data.savedItems || []).map(i => `  ${i.name}: $${i.price}`).join("\n");
 
   return `You are Jake's AI assistant for HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You have full control over the app.
@@ -303,7 +311,7 @@ ${invoiceLines || "  (none)"}
 CURRENT ESTIMATES (ID | Client | Total | Status | Date) — these are quotes/bids, NOT invoices:
 ${estimateLines || "  (none)"}
 
-CLIENTS (Name | Email | Phone):
+CLIENTS (Name | Email | Phone, with their saved billing address and job-site addresses indented below each):
 ${clientLines || "  (none)"}
 
 JAKE'S SAVED PRICES — always use these exact prices when generating estimates or invoices for matching jobs:
@@ -370,7 +378,7 @@ Rules for schedule_job:
 - durationHours defaults to 2 unless Jake specifies otherwise.
 - jobDescription is concise: "Snake bathtub drain", not a paragraph.
 - If the client name is ambiguous or not found in CLIENTS above, ask for clarification in plain text instead of emitting the action.
-- ADDRESS: The "address" field is just the location pin on the calendar event. If Jake names a job-site address in his message, put it in "address". If he doesn't, OMIT the field — the app will fall back to the client's address on file, or leave the location blank. NEVER refuse to schedule because of a missing address, and NEVER ask Jake billing-vs-job-site questions. Just emit the schedule_job action and let the app handle the location. The only thing that should ever block scheduling is a missing/ambiguous client or a missing date.
+- ADDRESS: The "address" field is the location pin on the calendar event. Many clients have one or more saved job-site addresses listed indented under their name in CLIENTS above. When Jake refers to a job site (by nickname/label like "the chip job site", or just "his job site"), find the matching job-site address under that client and put the full street address in "address". If Jake types a brand-new address in his message, use that. If the client has exactly one job-site address and Jake doesn't specify which, use it. Only OMIT "address" when the client has no saved addresses and Jake gives none — the app then leaves the location blank. NEVER claim there is no job-site address when one is listed under the client above, NEVER refuse to schedule over an address, and NEVER ask billing-vs-job-site questions. The only things that block scheduling are a missing/ambiguous client or a missing date. If a client has SEVERAL job sites and it's genuinely unclear which one Jake means, ask which job site (listing the labels) — but still never say none exist.
 Example — Jake says "Schedule Karen tomorrow at 9 AM to snake her bathtub drain" (today is ${today()}):
 {"action":"schedule_job","clientName":"Karen","date":"resolved YYYY-MM-DD","time":"09:00","durationHours":2,"jobDescription":"Snake bathtub drain","summary":"Scheduled Karen tomorrow at 9 AM to snake her bathtub drain."}
 Example — Jake says "Book Michael for the rough-in at 742 Kapahulu Ave next Monday" (today is ${today()}):
