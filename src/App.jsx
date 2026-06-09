@@ -1994,11 +1994,16 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
               const durationHours = action.durationHours || 2;
               const startDt = new Date(`${action.date}T${time}:00`);
               const endDt = new Date(startDt.getTime() + durationHours * 3600000);
+              // Full street address goes in the calendar event's location
+              // field (so it's tappable for directions), not the notes.
+              const location = [client.address1, client.address2, client.address3].filter(Boolean).join(", ")
+                || [client.addresses?.[0]?.line1, client.addresses?.[0]?.line2, client.addresses?.[0]?.line3].filter(Boolean).join(", ")
+                || "";
               const event = {
                 summary: `${client.name} – ${action.jobDescription}`,
+                location: location || undefined,
                 description: [
                   action.jobDescription,
-                  client.address1 || client.addresses?.[0]?.line1 || "",
                   client.phone || "",
                 ].filter(Boolean).join("\n"),
                 start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
