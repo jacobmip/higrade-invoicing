@@ -3727,9 +3727,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   // flat fields if addresses[] is empty.
                   const cAddresses = Array.isArray(c.addresses) ? c.addresses : [];
                   const defaultAddr = cAddresses[0] || null;
-                  const displayLine1 = defaultAddr?.line1 || c.address1 || "";
-                  const displayLine2 = defaultAddr?.line2 || c.address2 || "";
-                  const displayLine3 = defaultAddr?.line3 || c.address3 || "";
+                  // Treat the job-site address and the legacy flat fields as
+                  // mutually exclusive: if a job-site address exists use ONLY
+                  // its lines, otherwise fall back entirely to the flat fields.
+                  // Per-line fallback ("addr.line2 || c.address2") would mix a
+                  // line from one source with a line from the other, producing
+                  // hybrid display strings like "92-1307 Hunekai St, 864 Aalapapa Dr".
+                  const displayLine1 = defaultAddr ? (defaultAddr.line1 || "") : (c.address1 || "");
+                  const displayLine2 = defaultAddr ? (defaultAddr.line2 || "") : (c.address2 || "");
+                  const displayLine3 = defaultAddr ? (defaultAddr.line3 || "") : (c.address3 || "");
                   const billing = c.billingAddress || null;
                   setForm(f => ({
                     ...f,
