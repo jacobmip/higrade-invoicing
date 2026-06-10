@@ -3262,12 +3262,21 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
     name: selectedClient.name,
     email: selectedClient.email || "",
     phone: selectedClient.phone || selectedClient.mobile || "",
-    // When a job-site address is resolved, surface its lines as the displayed
-    // address so the rest of the form (PDF, email body, etc.) reflects the
-    // property the user picked. Falls back to legacy flat fields otherwise.
-    address1: resolvedJobAddress?.line1 || selectedClient.address1 || "",
-    address2: resolvedJobAddress?.line2 || selectedClient.address2 || "",
-    address3: resolvedJobAddress?.line3 || selectedClient.address3 || "",
+    // When a job-site address is resolved, surface ONLY its lines so the rest
+    // of the form (PDF, email body, etc.) reflects the property the user picked.
+    // Treat the two sources as mutually exclusive: never mix a line from the
+    // resolved job address with a line from the legacy flat fields, otherwise a
+    // client with both populated produces a hybrid address. Fall back entirely
+    // to the legacy flat fields only when no job address resolves at all.
+    ...(resolvedJobAddress ? {
+      address1: resolvedJobAddress.line1 || "",
+      address2: resolvedJobAddress.line2 || "",
+      address3: resolvedJobAddress.line3 || "",
+    } : {
+      address1: selectedClient.address1 || "",
+      address2: selectedClient.address2 || "",
+      address3: selectedClient.address3 || "",
+    }),
   } : null);
   const setClientInfoField = (k, v) => setField("clientInfo", { ...(effectiveClientInfo || {}), [k]: v });
   const categories = [...new Set(savedItems.map(i => i.category))];
