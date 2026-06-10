@@ -17,6 +17,7 @@
 // both runtimes — the dev environment occasionally smoke-tests it under
 // node.
 import * as jsPDFModule from "jspdf";
+import { resolveBillTo } from "./billTo.js";
 const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default || jsPDFModule;
 
 const NAVY = "#0a1628";
@@ -167,21 +168,40 @@ function drawBillTo(doc, form, y) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   let cy = y + 34;
-  // Single address on the invoice — job site wins if it has lines (we want
-  // the printout to reflect WHERE the work was), else fall back to the
-  // billing snapshot, then to clientInfo's flat lines for legacy data.
-  const linesOf = (src) => src ? [src.line1, src.line2, src.line3].filter(Boolean) : [];
-  const jaLines = linesOf(form.jobAddress);
-  const baLines = linesOf(form.billingAddress);
-  const addrLines = jaLines.length
-    ? jaLines
-    : (baLines.length
-        ? baLines
-        : [data.address1, data.address2, data.address3].filter(Boolean));
-  const addr = addrLines.join(", ");
-  if (addr) { doc.text(addr, MARGIN, cy); cy += 14; }
+  // Billing address (where the bill is sent — contractor / property manager)
+  // and job site (where the work was performed) are shown as two labeled
+  // blocks when they differ. Single-location clients collapse to one address.
+  // clientInfo carries the flat-field fallback for the billing address.
+  const bill = resolveBillTo(form, data);
+  const drawAddrLine = (label, lines) => {
+    if (!lines.length) return;
+    if (label) {
+      setText(doc, "#6677aa");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.text(label, MARGIN, cy);
+      cy += 12;
+    }
+    setText(doc, TEXT_MID);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text(lines.join(", "), MARGIN, cy);
+    cy += 16;
+  };
+  if (bill.split) {
+    drawAddrLine("BILLING ADDRESS", bill.billing);
+    drawAddrLine("JOB SITE", bill.job);
+  } else {
+    drawAddrLine("", bill.single);
+  }
   const contact = [data.phone, data.email].filter(Boolean).join(" · ");
-  if (contact) { setText(doc, TEXT_LIGHT); doc.text(contact, MARGIN, cy); cy += 14; }
+  if (contact) {
+    setText(doc, TEXT_LIGHT);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text(contact, MARGIN, cy);
+    cy += 14;
+  }
 
   return Math.max(cy, y + 60); // bottom of section
 }
