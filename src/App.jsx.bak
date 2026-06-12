@@ -9,6 +9,7 @@ import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import PriceBook from './PriceBook.jsx';
+import { resolveBillTo } from './billTo.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -2329,23 +2330,12 @@ function PDFPreview({ form, clients, photos = [] }) {
   const t = calcTotals(form);
   const clientRecord = clients.find(c => c.name === form.client) || {};
   const clientData = form.clientInfo || clientRecord;
-  // Single address on the invoice — the customer wants to see WHERE the job
-  // was, so the job site (if set) takes priority; otherwise fall back to
-  // the client's billing/mailing address. The billing address is the
-  // default entry method when creating a new client, so most clients only
-  // have billing.
-  const linesOf = (src) => src ? [src.line1, src.line2, src.line3].filter(Boolean) : [];
-  const jobLines = linesOf(form.jobAddress);
-  const billingLines =
-    (linesOf(form.billingAddress).length && linesOf(form.billingAddress))
-    || (linesOf(clientRecord.billingAddress).length && linesOf(clientRecord.billingAddress))
-    || [clientRecord.address1, clientRecord.address2, clientRecord.address3].filter(Boolean);
-  const addrLines = jobLines.length
-    ? jobLines
-    : (billingLines.length
-        ? billingLines
-        : [clientData.address1, clientData.address2, clientData.address3].filter(Boolean));
-  const addr = addrLines.join(", ");
+  // Billing address (where the bill is sent — contractor / property manager)
+  // and job site (where the work was performed) are shown as two labeled
+  // blocks when they differ, so it's clear who's being billed vs. where the
+  // work happened. Single-location clients (most homeowners) collapse to one
+  // clean address. Billing falls back to the client's main/flat address.
+  const bill = resolveBillTo(form, clientRecord);
   const isEstimate = form.type === "estimate";
   const lateFeeInfo = calcLateFee(form, t);
   const balanceWithFee = Math.max(0, t.balance + (lateFeeInfo.fee || 0));
@@ -2396,7 +2386,24 @@ function PDFPreview({ form, clients, photos = [] }) {
           {form.client ? (
             <>
               <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 3 }}>{clientData.name || form.client}</div>
-              {addr && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{addr}</div>}
+              {bill.split ? (
+                <>
+                  {bill.billing.length > 0 && (
+                    <div style={{ marginBottom: 4 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
+                      <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.billing.join(", ")}</div>
+                    </div>
+                  )}
+                  {bill.job.length > 0 && (
+                    <div style={{ marginBottom: 4 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Job Site</div>
+                      <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.job.join(", ")}</div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                bill.single.length > 0 && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.single.join(", ")}</div>
+              )}
               <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
                 {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
                 {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
