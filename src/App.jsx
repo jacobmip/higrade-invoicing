@@ -344,7 +344,7 @@ Save or update a price in Jake's memory (use when Jake says "save", "remember", 
 
 Create a new client:
 {"action":"create_client","client":{"name":"Full Name","email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
-NOTE: address1/2/3 on a client is the BILLING / mailing address (where the bill goes). It is NOT a job-site address. Job-site addresses are set per-invoice, never via create_client. If Jake gives you just one address for a new client, treat it as the billing address.
+NOTE: address1/2/3 on a client is the BILLING / mailing address (where the bill goes). It is NOT a job-site address. Job-site addresses live on the client record in addresses[] — add them with add_job_site_to_client, not via create_client. If Jake gives you just one address for a new client, treat it as the billing address.
 
 Update an existing invoice (set client, dates, status, notes — only include the fields you want to change):
 {"action":"update_invoice","invoiceId":"INV0000","changes":{"client":"exact name","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","status":"outstanding|paid|partial|net30","notes":"text","discount":0,"tax":4.712},"summary":"one sentence"}
@@ -366,7 +366,10 @@ Example — Jake says "adjust the invoice so the description includes that I'm r
 
 Update a client's contact info (only include fields to change):
 {"action":"update_client","clientName":"exact name","changes":{"email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
-NOTE: address1/2/3 here is the BILLING / mailing address, same as in create_client. Job-site addresses are not edited via update_client.
+NOTE: address1/2/3 here is the BILLING / mailing address, same as in create_client. Job-site addresses are not edited via update_client — they live on the client record in addresses[]; add one with add_job_site_to_client.
+
+Add a job-site address (property) to a client. Job sites belong on the client record in addresses[], NOT per-invoice. Use this whenever Jake wants to add/save a job site, property, or service address for a client:
+{"action":"add_job_site_to_client","clientName":"exact name","address":{"label":"nickname e.g. Rental Unit B","line1":"street address","line2":"","line3":""},"summary":"one sentence"}
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
@@ -8977,6 +8980,22 @@ export default function App() {
         ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
       };
       try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { console.error(e); }
+      setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
+    }
+    if (parsed.action === "add_job_site_to_client") {
+      // Job sites live on the client record in addresses[], not per-invoice.
+      const target = data.clients.find(c => c.name === parsed.clientName);
+      if (!target) return;
+      const a = parsed.address || {};
+      const newProp = {
+        id: newAddressId(),
+        label: typeof a.label === "string" ? a.label : "",
+        line1: typeof a.line1 === "string" ? a.line1 : "",
+        line2: typeof a.line2 === "string" ? a.line2 : "",
+        line3: typeof a.line3 === "string" ? a.line3 : "",
+      };
+      const updated = { ...target, addresses: [...(Array.isArray(target.addresses) ? target.addresses : []), newProp] };
+      try { await db.updateClient(updated); db.recordClientVersion(updated, "AI added job site").catch(() => {}); } catch (e) { console.error(e); }
       setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
     }
     if (parsed.action === "delete_client") {
