@@ -130,7 +130,15 @@ function calcSurcharge(amount, settings) {
   const flat = (sf != null && sf !== '' && !isNaN(Number(sf))) ? Number(sf) : 0.49;
   const base = Math.max(0, Number(amount) || 0);
   if (base <= 0) return 0;
-  return +(base * (pct / 100) + flat).toFixed(2);
+  // Gross-up: PayPal charges its fee (pct% + flat) on the FULL amount it
+  // processes (base + surcharge), not just the base. Solve
+  //   total - (total*p + flat) = base  =>  total = (base + flat) / (1 - p)
+  // so Jake nets exactly the invoice balance after PayPal's cut. surcharge =
+  // total - base.
+  const p = pct / 100;
+  const denom = 1 - p;
+  const total = denom > 0 ? +((base + flat) / denom).toFixed(2) : +(base + base * p + flat).toFixed(2);
+  return +(total - base).toFixed(2);
 }
 
 // Vercel Node runtime: handler receives (req, res) where req is a Node

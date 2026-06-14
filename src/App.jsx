@@ -1356,8 +1356,17 @@ function calcSurcharge(amount, cfg) {
   if (!c.enabled) return { enabled: false, pct: c.pct, flat: c.flat, fee: 0, total: Number(amount) || 0 };
   const base = Math.max(0, Number(amount) || 0);
   if (base <= 0) return { enabled: true, pct: c.pct, flat: c.flat, fee: 0, total: 0 };
-  const fee = +(base * (c.pct / 100) + c.flat).toFixed(2);
-  return { enabled: true, pct: c.pct, flat: c.flat, fee, total: +(base + fee).toFixed(2) };
+  // Gross-up: PayPal charges its fee (pct% + flat) on the FULL amount it
+  // processes, i.e. base + surcharge — not just the base. If we only added
+  // pct%*base + flat, PayPal's fee on the surcharge itself comes out of
+  // Jake's pocket and he nets less than the invoice. Solve
+  //   total - (total*p + flat) = base  =>  total = (base + flat) / (1 - p)
+  // so Jake nets exactly the invoice balance after PayPal's cut.
+  const p = c.pct / 100;
+  const denom = 1 - p;
+  const total = denom > 0 ? +((base + c.flat) / denom).toFixed(2) : +(base + base * p + c.flat).toFixed(2);
+  const fee = +(total - base).toFixed(2);
+  return { enabled: true, pct: c.pct, flat: c.flat, fee, total };
 }
 
 // Resolve the active payment-instructions template (saved override or
