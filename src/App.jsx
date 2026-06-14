@@ -9538,7 +9538,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0, zoom: textZoom }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: 480 / textZoom, width: `${100 / textZoom}%`, margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0, zoom: textZoom }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
@@ -9575,7 +9575,7 @@ export default function App() {
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
       {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
-      <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, zIndex: 600, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+      <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480 / textZoom, zIndex: 600, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ color: "#fff", fontSize: 18, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.5, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 8 }}>
