@@ -8898,7 +8898,9 @@ export default function App() {
       const c = parsed.client || {};
       const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", fax: c.fax || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
       const id = await db.insertClient(form);
-      const newClient = { ...form, id };
+      const hasFlat = !!(form.address1 || form.address2 || form.address3);
+      const addresses = hasFlat ? [{ id: 'primary', label: '', line1: form.address1, line2: form.address2, line3: form.address3 }] : [];
+      const newClient = { ...form, id, addresses };
       setData(d => ({ ...d, clients: [...d.clients, newClient] }));
       return newClient;
     }
