@@ -8503,6 +8503,12 @@ export default function App() {
   // because the brand header's getBoundingClientRect height changes by ~1px
   // when transitioning to sticky.
   const rootRef = useRef(null);
+  const [textZoom, setTextZoom] = useState(() => parseFloat(localStorage.getItem('higrade_text_zoom') || '1'));
+  const cycleZoom = () => {
+    const next = textZoom >= 1.35 ? 1 : textZoom >= 1.15 ? 1.4 : 1.2;
+    setTextZoom(next);
+    localStorage.setItem('higrade_text_zoom', String(next));
+  };
   // Edge-swipe-from-left back gesture. Mirrors iOS: starting a touch within
   // the leftmost ~22px of the viewport and dragging right by >70px (and
   // mostly horizontal) fires a window 'app-back' custom event. Active
@@ -9532,7 +9538,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: 480, width: "100%", margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0, zoom: textZoom }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
@@ -9583,6 +9589,14 @@ export default function App() {
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={cycleZoom}
+              aria-label="Text size"
+              title="Text size"
+              style={{ width: 36, height: 36, background: "transparent", borderRadius: 8, border: "1px solid rgba(255,255,255,0.25)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, flexDirection: "column", gap: 0 }}
+            >
+              <span style={{ color: "#fff", fontSize: textZoom >= 1.35 ? 13 : textZoom >= 1.15 ? 11 : 9, fontWeight: 700, lineHeight: 1, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 0.5 }}>Aa</span>
+            </button>
                         <NotificationsBell
               onOpenInvoice={(invoiceId) => {
                 const inv = data.invoices.find(i => i.id === invoiceId);
