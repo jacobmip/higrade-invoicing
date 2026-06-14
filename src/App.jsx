@@ -8505,7 +8505,7 @@ export default function App() {
   const rootRef = useRef(null);
   const [textZoom, setTextZoom] = useState(() => parseFloat(localStorage.getItem('higrade_text_zoom') || '1'));
   const cycleZoom = () => {
-    const next = textZoom >= 1.35 ? 1 : textZoom >= 1.15 ? 1.4 : 1.2;
+    const next = textZoom >= 1.55 ? 1 : textZoom >= 1.25 ? 1.6 : 1.3;
     setTextZoom(next);
     localStorage.setItem('higrade_text_zoom', String(next));
   };
@@ -9595,7 +9595,7 @@ export default function App() {
               title="Text size"
               style={{ width: 36, height: 36, background: "transparent", borderRadius: 8, border: "1px solid rgba(255,255,255,0.25)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, flexDirection: "column", gap: 0 }}
             >
-              <span style={{ color: "#fff", fontSize: textZoom >= 1.35 ? 13 : textZoom >= 1.15 ? 11 : 9, fontWeight: 700, lineHeight: 1, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 0.5 }}>Aa</span>
+              <span style={{ color: "#fff", fontSize: textZoom >= 1.55 ? 13 : textZoom >= 1.25 ? 11 : 9, fontWeight: 700, lineHeight: 1, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 0.5 }}>Aa</span>
             </button>
                         <NotificationsBell
               onOpenInvoice={(invoiceId) => {
