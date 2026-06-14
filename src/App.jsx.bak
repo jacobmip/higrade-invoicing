@@ -9538,7 +9538,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: "0 auto", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0, zoom: textZoom }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: textZoom === 1 ? "0 auto" : "0", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0, zoom: textZoom }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
