@@ -9451,7 +9451,8 @@ export default function App() {
       setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === id ? stamped : inv) }));
       setSelected(stamped);
     } catch (e) {
-      console.error('Auto-save (create) failed (kept local copy):', e);
+      console.error('Auto-save (create) failed:', e);
+      alert('Failed to save estimate/invoice: ' + (e.message || String(e)) + '\n\nPlease screenshot this and report it.');
     }
     return stamped;
   };
