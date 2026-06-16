@@ -8863,6 +8863,7 @@ export default function App() {
       let saveResult;
       try {
         saveResult = await db.upsertInvoice(newInvoice, true);
+        await db.claimInvoiceOwner(id);
       } catch (e) {
         console.error('DB write failed for', id, e);
         // Roll back the synchronous counter so the next call reuses this number

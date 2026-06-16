@@ -576,6 +576,12 @@ export async function deleteInvoice(id) {
   if (error) throw error
 }
 
+export async function claimInvoiceOwner(id) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.id) return;
+  await supabase.from('invoices').update({ owner_id: user.id }).eq('id', id);
+}
+
 // Restore a soft-deleted invoice/estimate by clearing deleted_at.
 export async function restoreInvoice(id) {
   const { error } = await supabase
