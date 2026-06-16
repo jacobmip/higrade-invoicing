@@ -3119,6 +3119,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       return saved;
     } catch (e) {
       console.error('Auto-save failed (kept local):', e);
+      alert('Save failed (outer): ' + (e.message || String(e)));
       return null;
     } finally {
       setAutoSaving(false);
@@ -9452,7 +9453,7 @@ export default function App() {
       setSelected(stamped);
     } catch (e) {
       console.error('Auto-save (create) failed:', e);
-      alert('Failed to save estimate/invoice: ' + (e.message || String(e)) + '\n\nPlease screenshot this and report it.');
+      alert('Save failed: ' + (e.message || String(e)));
     }
     return stamped;
   };
