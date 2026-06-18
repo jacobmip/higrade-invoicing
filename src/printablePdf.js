@@ -237,7 +237,8 @@ function drawItemsTable(doc, form, startY) {
     // Compute row height from wrapped name + description.
     const nameLines = wrap(doc, it.name || it.desc || "—", descW);
     const descLines = (it.name && it.desc) ? wrap(doc, it.desc, descW) : [];
-    const rowH = Math.max(28, 14 + nameLines.length * 14 + descLines.length * 12 + 8);
+    const hasItemDiscount = (Number(it.discount) || 0) > 0;
+    const rowH = Math.max(28, 14 + nameLines.length * 14 + descLines.length * 12 + 8 + (hasItemDiscount ? 13 : 0));
 
     // New page if we'd overflow.
     if (y + rowH > pageBottom) {
@@ -284,8 +285,29 @@ function drawItemsTable(doc, form, startY) {
     doc.text(String(it.qty ?? 1), colQtyX + 8, y + 16);
     doc.text(fmtMoney(it.price), colPriceX + 8, y + 16);
     doc.setFont("helvetica", "bold");
-    const amt = fmtMoney(calcItemTotal(it));
-    doc.text(amt, colAmtRightX - doc.getTextWidth(amt) - 8, y + 16);
+    if (hasItemDiscount) {
+      // Original amount crossed out above the discounted total
+      const grossAmt = fmtMoney((Number(it.qty) || 1) * (Number(it.price) || 0));
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      setText(doc, "#aaaaaa");
+      const grossW = doc.getTextWidth(grossAmt);
+      const grossX = colAmtRightX - grossW - 8;
+      doc.text(grossAmt, grossX, y + 12);
+      setDraw(doc, "#aaaaaa");
+      doc.setLineWidth(0.7);
+      doc.line(grossX, y + 9.5, grossX + grossW, y + 9.5);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      setText(doc, TEXT_DARK);
+      setDraw(doc, RULE);
+      doc.setLineWidth(0.5);
+      const amt = fmtMoney(calcItemTotal(it));
+      doc.text(amt, colAmtRightX - doc.getTextWidth(amt) - 8, y + 24);
+    } else {
+      const amt = fmtMoney(calcItemTotal(it));
+      doc.text(amt, colAmtRightX - doc.getTextWidth(amt) - 8, y + 16);
+    }
 
     // Bottom rule
     setDraw(doc, RULE);
