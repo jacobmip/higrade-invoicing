@@ -2431,7 +2431,16 @@ function PDFPreview({ form, clients, photos = [] }) {
                 {item.discount > 0 && <div style={{ fontSize: 11, color: "#e74c3c", marginTop: 2 }}>Discount: {item.discountType === "%" ? `${item.discount}%` : fmt(item.discount)}</div>}
               </div>
               <div style={{ fontSize: 13, color: "#666", textAlign: "center" }}>{item.qty}</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#222", textAlign: "right" }}>{fmt(calcItemTotal(item))}</div>
+              <div style={{ textAlign: "right" }}>
+                {item.discount > 0 ? (
+                  <>
+                    <div style={{ fontSize: 11, color: "#bbb", textDecoration: "line-through" }}>{fmt((item.qty || 1) * (item.price || 0))}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#222" }}>{fmt(calcItemTotal(item))}</div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#222" }}>{fmt(calcItemTotal(item))}</div>
+                )}
+              </div>
             </div>
           ))}
         </div>
