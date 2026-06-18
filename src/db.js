@@ -709,15 +709,21 @@ async function propagateClientToInvoices(client) {
   })
   if (!rpcResp.error) return rpcResp.data
   // Fallback: direct UPDATE if the function isn't installed yet.
-  const fallback = await supabase
+  // Two passes: one by client_id, one by name for invoices that were saved
+  // before client_id was reliably written (back-links client_id while fixing).
+  const byId = await supabase
     .from('invoices')
-    .update({
-      client_name: client.name || null,
-      client_info: info,
-      billing_address: billing,
-    })
+    .update({ client_name: client.name || null, client_info: info, billing_address: billing })
     .eq('client_id', client.id)
-  if (fallback.error) throw fallback.error
+  if (byId.error) throw byId.error
+  if (client.name) {
+    const byName = await supabase
+      .from('invoices')
+      .update({ client_name: client.name, client_id: client.id, client_info: info, billing_address: billing })
+      .eq('client_name', client.name)
+      .is('client_id', null)
+    if (byName.error) console.warn('name-based propagation failed:', byName.error.message)
+  }
   return null
 }
 
