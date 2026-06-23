@@ -2543,7 +2543,7 @@ function PDFPreview({ form, clients, photos = [] }) {
 function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, onOpenEdit }) {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", address2: "", address3: "" });
+  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "", billingAddress: null });
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const clearNewClientDraft = useDraftPersistence(
@@ -2575,9 +2575,11 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         email: c.email || "",
         email2: c.email2 || "",
         phone: c.phone || "",
+        fax: c.fax || "",
         address1: c.address1 || "",
         address2: c.address2 || "",
         address3: c.address3 || "",
+        billingAddress: null,
       });
       setCreating(true);
     } catch (e) {
@@ -2588,7 +2590,11 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
 
   const handleSaveNew = async () => {
     if (!newForm.name?.trim()) { alert("Name is required"); return; }
-    const saved = await onSave(newForm);
+    const bl = newForm.billingAddress || {};
+    const billing = (bl.line1 || bl.line2 || bl.line3)
+      ? { line1: bl.line1 || "", line2: bl.line2 || "", line3: bl.line3 || "" }
+      : null;
+    const saved = await onSave({ ...newForm, billingAddress: billing });
     if (saved) {
       clearNewClientDraft();
       onSelect(saved);
@@ -2610,10 +2616,18 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
           </div>
-          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
+          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["fax", "Fax", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
             <div key={k} style={{ marginBottom: 10 }}>
               <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
               <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
+            </div>
+          ))}
+          <div style={{ marginTop: 16, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
+          <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Leave blank if same as job site above.</div>
+          {[["line1", "Address"], ["line2", "City, State"], ["line3", "ZIP"]].map(([k, label]) => (
+            <div key={k} style={{ marginBottom: 10 }}>
+              <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
+              <input style={S.input} value={newForm.billingAddress?.[k] || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), [k]: e.target.value } }))} />
             </div>
           ))}
           <button onClick={handleSaveNew} style={{ ...S.btn("primary"), width: "100%", marginTop: 8, fontSize: 15, padding: 12 }}>Save Client</button>
@@ -2640,7 +2654,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         />
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", address2: "", address3: "" }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Icon name="plus" size={14} color="#fff" /> New Client
           </button>
           <button onClick={handleImport} disabled={importing} style={{ ...S.btn("navy"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: importing ? 0.6 : 1 }}>
