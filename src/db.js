@@ -636,9 +636,11 @@ function clientPayload(client) {
     phone: client.phone || null,
     contact: client.contact || null,
     address1: primary.line1 || client.address1 || null,
-    address_unit: client.unit || null,
-    address2: primary.line2 || client.address2 || null,
-    address3: primary.line3 || client.address3 || null,
+    address_unit: primary.line2 || client.unit || null,
+    // For structured clients, line3 has "City State ZIP" combined; for quick-add clients,
+    // address2 = city+state and address3 = ZIP as separate flat fields.
+    address2: primary.line3 || client.address2 || null,
+    address3: client.address3 || null,
     addresses,
     billing_address: client.billingAddress || null,
   }
@@ -665,14 +667,14 @@ export async function insertClient(client) {
 // the structure created in App.jsx when an invoice is first saved.
 function buildClientInfoForInvoices(client) {
   const addresses = Array.isArray(client.addresses) ? client.addresses : []
-  const primary = addresses[0] || {}
+  const primary = addresses[0] || null
   return {
     name: client.name || null,
     email: client.email || null,
     phone: client.mobile || client.phone || null,
-    address1: primary.line1 || client.address1 || null,
-    address2: primary.line2 || client.address2 || null,
-    address3: primary.line3 || client.address3 || null,
+    address1: primary ? (primary.line1 || '') : (client.address1 || null),
+    address2: primary ? (primary.line2 || '') : (client.address2 || null),
+    address3: primary ? (primary.line3 || '') : (client.address3 || null),
   }
 }
 

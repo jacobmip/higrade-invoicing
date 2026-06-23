@@ -2622,9 +2622,9 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
               <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
             </div>
           ))}
-          <div style={{ marginTop: 16, marginBottom: 8, fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
+          <div style={{ marginTop: 16, marginBottom: 4, fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
           <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Leave blank if same as job site above.</div>
-          {[["line1", "Address"], ["line2", "City, State"], ["line3", "ZIP"]].map(([k, label]) => (
+          {[["line1", "Street Address"], ["line2", "Apt / Unit"], ["line3", "City, State, ZIP"]].map(([k, label]) => (
             <div key={k} style={{ marginBottom: 10 }}>
               <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
               <input style={S.input} value={newForm.billingAddress?.[k] || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), [k]: e.target.value } }))} />
@@ -3217,7 +3217,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             const matched = exact || partial;
             if (matched) {
               next.client = matched.name;
-              next.clientInfo = { name: matched.name, email: matched.email || "", phone: matched.phone || matched.mobile || "", address1: matched.address1 || "", address2: matched.address2 || "", address3: matched.address3 || "" };
+              const mAddr = (Array.isArray(matched.addresses) && matched.addresses[0]) || null;
+              next.clientInfo = { name: matched.name, email: matched.email || "", phone: matched.phone || matched.mobile || "",
+                address1: mAddr ? (mAddr.line1 || '') : (matched.address1 || ''),
+                address2: mAddr ? (mAddr.line2 || '') : (matched.address2 || ''),
+                address3: mAddr ? (mAddr.line3 || '') : (matched.address3 || ''),
+              };
             } else {
               next.client = c.client;
               next.clientInfo = null;
@@ -3790,7 +3795,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             {selectedClient && !editingClient && (
               <div style={{ background: "#fff", borderRadius: 8, padding: "10px 13px", marginTop: 8, border: "1px solid #e8ecf4", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  {effectiveClientInfo?.address1 && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{effectiveClientInfo.address1}{effectiveClientInfo.address2 ? ", " + effectiveClientInfo.address2 : ""}{effectiveClientInfo.address3 ? " " + effectiveClientInfo.address3 : ""}</div>}
+                  {effectiveClientInfo?.address1 && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{effectiveClientInfo.address1}{effectiveClientInfo.address2 ? ", " + effectiveClientInfo.address2 : ""}{effectiveClientInfo.address3 ? (effectiveClientInfo.address2 ? " " : ", ") + effectiveClientInfo.address3 : ""}</div>}
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                     {effectiveClientInfo?.phone && <span style={{ fontSize: 12, color: "#777" }}>{effectiveClientInfo.phone}</span>}
                     {effectiveClientInfo?.email && <span style={{ fontSize: 12, color: "#999" }}>{effectiveClientInfo.email}</span>}
@@ -9239,14 +9244,16 @@ export default function App() {
   // Matches on client_id (primary link) or client_name when client_id is null
   // (older invoices that were created before client_id started being set).
   function refreshInvoicesForClient(invoices, client) {
-    const primary = (Array.isArray(client.addresses) && client.addresses[0]) || {};
+    const primary = (Array.isArray(client.addresses) && client.addresses[0]) || null;
+    // Use either ALL lines from the structured address OR ALL flat fields — never mix
+    // the two sources per-field, or "Honolulu HI" ends up in both address2 and address3.
     const freshInfo = {
       name: client.name || null,
       email: client.email || null,
       phone: client.mobile || client.phone || null,
-      address1: primary.line1 || client.address1 || null,
-      address2: primary.line2 || client.address2 || null,
-      address3: primary.line3 || client.address3 || null,
+      address1: primary ? (primary.line1 || '') : (client.address1 || null),
+      address2: primary ? (primary.line2 || '') : (client.address2 || null),
+      address3: primary ? (primary.line3 || '') : (client.address3 || null),
     };
     return invoices.map(inv => {
       const matchById   = client.id && inv.client_id === client.id;
