@@ -42,7 +42,7 @@ const SAVED_ITEMS = [
 ];
 
 const DEFAULT_CLIENTS = [
-  { id: 1, name: "Jacob Petersen", email: "jacobmip@gmail.com", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "" },
+  { id: 1, name: "Jacob Petersen", email: "jacobmip@gmail.com", email2: "", phone: "", address1: "", address2: "", address3: "" },
 ];
 
 const EXPENSE_CATEGORIES = [
@@ -2543,7 +2543,7 @@ function PDFPreview({ form, clients, photos = [] }) {
 function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, onOpenEdit }) {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "", billingAddress: null });
+  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", address2: "", address3: "", billingAddress: null });
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const clearNewClientDraft = useDraftPersistence(
@@ -2575,7 +2575,6 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         email: c.email || "",
         email2: c.email2 || "",
         phone: c.phone || "",
-        fax: c.fax || "",
         address1: c.address1 || "",
         address2: c.address2 || "",
         address3: c.address3 || "",
@@ -2616,7 +2615,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
           </div>
-          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["fax", "Fax", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
+          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
             <div key={k} style={{ marginBottom: 10 }}>
               <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
               <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
@@ -2654,7 +2653,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         />
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", fax: "", address1: "", address2: "", address3: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", address2: "", address3: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Icon name="plus" size={14} color="#fff" /> New Client
           </button>
           <button onClick={handleImport} disabled={importing} style={{ ...S.btn("navy"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: importing ? 0.6 : 1 }}>
@@ -4947,7 +4946,7 @@ function newAddressId() {
 
 function emptyClient() {
   return {
-    name: "", email: "", email2: "", phone: "", fax: "", contact: "",
+    name: "", email: "", email2: "", phone: "", contact: "",
     notes: "",
     addresses: [],
     billingAddress: null,
@@ -4985,7 +4984,7 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
   const sectionLabelStyle = { fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" };
   return (
     <div>
-      {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"], ["fax", "Fax"]].map(([k, l]) => (
+      {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"]].map(([k, l]) => (
         <div key={k} style={{ marginBottom: compact ? 9 : 12 }}>
           <label style={{ ...S.label, marginBottom: compact ? 3 : 4 }}>{l}</label>
           <input style={S.input} value={form[k] || ""} onChange={e => setField(k, e.target.value)} type={k === "email" || k === "email2" ? "email" : "text"} />
@@ -5124,7 +5123,6 @@ function autoMapColumns(headers) {
     email:   matchHeader(headers, ["email", "email address", "primary email", "e-mail"]),
     email2:  matchHeader(headers, ["email 2", "secondary email", "alt email", "email2", "other email"]),
     phone:   matchHeader(headers, ["phone", "phone number", "primary phone", "mobile", "mobile phone", "telephone", "contact phone", "phonenumber"]),
-    fax:     matchHeader(headers, ["fax", "fax number", "faxnumber"]),
     line1:   matchHeader(headers, ["address", "address 1", "address1", "street", "street address", "address line 1", "billing address", "billing address 1", "billing street", "shipping address", "shipping street"]),
     line2:   matchHeader(headers, ["address 2", "address2", "address line 2", "billing address 2", "shipping address 2", "unit", "apt", "suite"]),
     city:    matchHeader(headers, ["city", "town", "billing city", "shipping city"]),
@@ -5159,7 +5157,6 @@ function csvRowToClient(row, m) {
     email: get("email"),
     email2: get("email2"),
     phone: get("phone"),
-    fax: get("fax"),
     contact: "",
     addresses,
     billingAddress: null,
@@ -5219,7 +5216,6 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
       prev.email = prev.email || c.email;
       prev.email2 = prev.email2 || c.email2;
       prev.phone = prev.phone || c.phone;
-      prev.fax = prev.fax || c.fax;
       if ((!prev.addresses || prev.addresses.length === 0) && c.addresses && c.addresses.length) {
         prev.addresses = c.addresses;
       }
@@ -5260,7 +5256,6 @@ function ImportClientsModal({ existingClients, onClose, onImport }) {
     email: "Email",
     email2: "Secondary Email",
     phone: "Phone",
-    fax: "Fax",
     line1: "Address Line 1",
     line2: "Address Line 2",
     city: "City",
@@ -5532,12 +5527,11 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
 
         <div style={{ padding: 12 }}>
           {/* Contact card */}
-          {(c.email || c.email2 || c.phone || c.fax) && (
+          {(c.email || c.email2 || c.phone) && (
             <div style={{ ...S.card, padding: "12px 14px", marginBottom: 12 }}>
               {c.email && <div style={{ fontSize: 13, color: "#444" }}>{c.email}</div>}
               {c.email2 && <div style={{ fontSize: 13, color: "#444" }}>{c.email2}</div>}
               {c.phone && <div style={{ fontSize: 13, color: "#444" }}>{c.phone}</div>}
-              {c.fax && <div style={{ fontSize: 13, color: "#444" }}>fax {c.fax}</div>}
             </div>
           )}
 
@@ -8926,7 +8920,7 @@ export default function App() {
     }
     if (parsed.action === "create_client") {
       const c = parsed.client || {};
-      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", fax: c.fax || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
+      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
       const id = await db.insertClient(form);
       const newClient = { ...form, id };
       setData(d => ({ ...d, clients: [...d.clients, newClient] }));

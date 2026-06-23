@@ -92,7 +92,6 @@ function toClient(row) {
     email2: row.secondary_email || '',
     mobile: row.mobile || '',
     phone: row.phone || '',
-    fax: row.fax || '',
     contact: row.contact || '',
     // Legacy flat fields kept for any code path that still reads them
     address1: row.address1 || '',
@@ -634,7 +633,6 @@ function clientPayload(client) {
     secondary_email: client.email2 || null,
     mobile: client.mobile || null,
     phone: client.phone || null,
-    fax: client.fax || null,
     contact: client.contact || null,
     address1: primary.line1 || client.address1 || null,
     address2: primary.line2 || client.address2 || null,
