@@ -343,8 +343,8 @@ Save or update a price in Jake's memory (use when Jake says "save", "remember", 
 {"action":"save_item","item":{"name":"Item Name","category":"Category","price":000},"summary":"one sentence"}
 
 Create a new client:
-{"action":"create_client","client":{"name":"Full Name","email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
-NOTE: address1/2/3 on a client is the BILLING / mailing address (where the bill goes). It is NOT a job-site address. Job-site addresses are set per-invoice, never via create_client. If Jake gives you just one address for a new client, treat it as the billing address.
+{"action":"create_client","client":{"name":"Full Name","email":"","email2":"","phone":"","address1":"street address","unit":"apt or unit number","address2":"city and state","address3":"ZIP code"},"summary":"one sentence"}
+NOTE: address fields: address1 = street (e.g. "1234 Kalakaua Ave"), unit = apt/suite/unit (e.g. "Apt 4B"), address2 = city and state together (e.g. "Honolulu HI"), address3 = ZIP (e.g. "96815"). These are the BILLING / mailing address, NOT a job-site address. If a field isn't provided leave it blank.
 
 Update an existing invoice (set client, dates, status, notes — only include the fields you want to change):
 {"action":"update_invoice","invoiceId":"INV0000","changes":{"client":"exact name","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","status":"outstanding|paid|partial|net30","notes":"text","discount":0,"tax":4.712},"summary":"one sentence"}
@@ -365,8 +365,8 @@ Example — Jake says "adjust the invoice so the description includes that I'm r
 {"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"desc":"Cut out failing 1 inch PVC section below drain\nRemove elbow fitting from existing line\nReplace 1 inch drain pipe (the failing leaking part)\nInstall new 1 inch female adapter\nGlue and prime new fittings\nPressure test repair for leaks"},"summary":"Updated description to call out the 1 inch drain replacement."}
 
 Update a client's contact info (only include fields to change):
-{"action":"update_client","clientName":"exact name","changes":{"email":"","email2":"","phone":"","address1":"","address2":"","address3":""},"summary":"one sentence"}
-NOTE: address1/2/3 here is the BILLING / mailing address, same as in create_client. Job-site addresses are not edited via update_client.
+{"action":"update_client","clientName":"exact name","changes":{"email":"","email2":"","phone":"","address1":"street","unit":"apt or unit","address2":"city and state","address3":"ZIP"},"summary":"one sentence"}
+NOTE: address fields same as create_client — address1=street, unit=apt/suite, address2=city+state, address3=ZIP. Only include fields you are changing.
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
@@ -2543,7 +2543,7 @@ function PDFPreview({ form, clients, photos = [] }) {
 function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, onOpenEdit }) {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", address2: "", address3: "", billingAddress: null });
+  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", unit: "", address2: "", address3: "", billingAddress: null });
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const clearNewClientDraft = useDraftPersistence(
@@ -2576,6 +2576,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         email2: c.email2 || "",
         phone: c.phone || "",
         address1: c.address1 || "",
+        unit: c.unit || "",
         address2: c.address2 || "",
         address3: c.address3 || "",
         billingAddress: null,
@@ -2615,7 +2616,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
           </div>
-          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["address1", "Address"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
+          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["address1", "Street Address"], ["unit", "Apt / Unit"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
             <div key={k} style={{ marginBottom: 10 }}>
               <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
               <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
@@ -2653,7 +2654,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         />
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", address2: "", address3: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", unit: "", address2: "", address3: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Icon name="plus" size={14} color="#fff" /> New Client
           </button>
           <button onClick={handleImport} disabled={importing} style={{ ...S.btn("navy"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: importing ? 0.6 : 1 }}>
@@ -4951,7 +4952,7 @@ function emptyClient() {
     addresses: [],
     billingAddress: null,
     // Legacy flat fields kept blank
-    address1: "", address2: "", address3: "",
+    address1: "", unit: "", address2: "", address3: "",
   };
 }
 
@@ -5008,9 +5009,9 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
             <button type="button" onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
           </div>
           <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
-          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Address Line 1" />
-          <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Address Line 2 (optional)" />
-          <input style={{ ...S.input, marginBottom: isAdmin ? 6 : 0 }} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, Zip" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Apt / Unit / Suite (optional)" />
+          <input style={{ ...S.input, marginBottom: isAdmin ? 6 : 0 }} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, ZIP" />
           {isAdmin && (
             <textarea
               style={{ ...S.input, height: 60, resize: "none", fontSize: 12 }}
@@ -5028,9 +5029,9 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       </div>
       <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
-        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Address Line 1" />
-        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Address Line 2 (optional)" />
-        <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, Zip" />
+        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Street Address" />
+        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Apt / Unit / Suite (optional)" />
+        <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, ZIP" />
       </div>
 
       {isAdmin && (
@@ -8920,7 +8921,7 @@ export default function App() {
     }
     if (parsed.action === "create_client") {
       const c = parsed.client || {};
-      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", address2: c.address2 || "", address3: c.address3 || "" };
+      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", unit: c.unit || "", address2: c.address2 || "", address3: c.address3 || "" };
       const id = await db.insertClient(form);
       const newClient = { ...form, id };
       setData(d => ({ ...d, clients: [...d.clients, newClient] }));
@@ -9000,6 +9001,7 @@ export default function App() {
         ...(typeof c.email2 === "string" ? { email2: c.email2 } : {}),
         ...(typeof c.phone === "string" ? { phone: c.phone, mobile: c.phone } : {}),
         ...(typeof c.address1 === "string" ? { address1: c.address1 } : {}),
+        ...(typeof c.unit === "string" ? { unit: c.unit } : {}),
         ...(typeof c.address2 === "string" ? { address2: c.address2 } : {}),
         ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
       };

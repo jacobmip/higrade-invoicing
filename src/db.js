@@ -81,8 +81,8 @@ function toClient(row) {
       id: 'primary',
       label: '',
       line1: row.address1 || '',
-      line2: row.address2 || '',
-      line3: row.address3 || '',
+      line2: row.address_unit || '',
+      line3: [row.address2, row.address3].filter(Boolean).join(' ') || '',
     }]
   }
   return {
@@ -95,6 +95,7 @@ function toClient(row) {
     contact: row.contact || '',
     // Legacy flat fields kept for any code path that still reads them
     address1: row.address1 || '',
+    unit: row.address_unit || '',
     address2: row.address2 || '',
     address3: row.address3 || '',
     // New structured addresses
@@ -635,6 +636,7 @@ function clientPayload(client) {
     phone: client.phone || null,
     contact: client.contact || null,
     address1: primary.line1 || client.address1 || null,
+    address_unit: client.unit || null,
     address2: primary.line2 || client.address2 || null,
     address3: primary.line3 || client.address3 || null,
     addresses,
