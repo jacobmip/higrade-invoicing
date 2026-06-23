@@ -3757,6 +3757,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   setForm(f => ({
                     ...f,
                     client: c.name,
+                    client_id: c.id,
                     clientInfo: { name: c.name, email: c.email || "", phone: c.phone || c.mobile || "", address1: displayLine1, address2: displayLine2, address3: displayLine3 },
                     jobAddressId: defaultAddr?.id || null,
                     jobAddress: defaultAddr || billing || null,
@@ -4391,6 +4392,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 setForm(f => ({
                   ...f,
                   client: saved.name || f.client,
+                  client_id: saved.id || f.client_id,
                   jobAddressId: pickedJob?.id || null,
                   jobAddress: pickedJob || null,
                   billingAddress: saved.billingAddress || null,
@@ -9222,6 +9224,34 @@ export default function App() {
     setView('form');
   };
 
+  // Refresh the in-memory invoice list after a client edit so the UI reflects
+  // the new name / email / address without requiring a page reload.
+  // Matches on client_id (primary link) or client_name when client_id is null
+  // (older invoices that were created before client_id started being set).
+  function refreshInvoicesForClient(invoices, client) {
+    const primary = (Array.isArray(client.addresses) && client.addresses[0]) || {};
+    const freshInfo = {
+      name: client.name || null,
+      email: client.email || null,
+      phone: client.mobile || client.phone || null,
+      address1: primary.line1 || client.address1 || null,
+      address2: primary.line2 || client.address2 || null,
+      address3: primary.line3 || client.address3 || null,
+    };
+    return invoices.map(inv => {
+      const matchById   = client.id && inv.client_id === client.id;
+      const matchByName = !inv.client_id && inv.client === client.name;
+      if (!matchById && !matchByName) return inv;
+      return {
+        ...inv,
+        client: client.name || inv.client,
+        client_id: client.id || inv.client_id,
+        clientInfo: freshInfo,
+        billingAddress: client.billingAddress ?? inv.billingAddress,
+      };
+    });
+  }
+
   const saveClient = async (form, editing) => {
     if (editing === "new") {
       const id = await db.insertClient(form);
@@ -9231,7 +9261,11 @@ export default function App() {
     } else {
       const saved = { ...form, id: editing };
       await db.updateClient(saved);
-      setData(d => ({ ...d, clients: d.clients.map(c => c.id === editing ? saved : c) }));
+      setData(d => ({
+        ...d,
+        clients: d.clients.map(c => c.id === editing ? saved : c),
+        invoices: refreshInvoicesForClient(d.invoices, saved),
+      }));
       db.recordClientVersion(saved, "Saved").catch(() => {});
     }
   };
@@ -9685,7 +9719,11 @@ export default function App() {
             onUpdateClient={async (updated) => {
               await db.updateClient(updated);
               db.recordClientVersion(updated, "Saved").catch(() => {});
-              setData(d => ({ ...d, clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c) }));
+              setData(d => ({
+                ...d,
+                clients: d.clients.map(c => c.id === updated.id ? { ...c, ...updated } : c),
+                invoices: refreshInvoicesForClient(d.invoices, updated),
+              }));
             }}
             onCreateClient={async (form) => {
               const id = await db.insertClient(form);
