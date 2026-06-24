@@ -69,22 +69,52 @@ function toInvoice(row, items = [], payments = []) {
   }
 }
 
+// Parse "City ST" or "City, ST" into separate city and state parts.
+function parseCityState(str) {
+  if (!str) return { city: '', state: '' }
+  const m = str.match(/^(.*?)(?:,\s+|\s+)([A-Z]{2})$/)
+  return m ? { city: m[1].trim(), state: m[2] } : { city: str.trim(), state: '' }
+}
+
+// Normalize an address object: if the new city/state/zip keys are missing,
+// parse them out of the legacy line3 string. Always recomputes line3 so it
+// stays in sync with city/state/zip.
+function normalizeAddr(a) {
+  if (!a) return null
+  const hasCsz = a.city !== undefined || a.state !== undefined || a.zip !== undefined
+  let city = a.city || '', state = a.state || '', zip = a.zip || ''
+  if (!hasCsz) {
+    const line3 = a.line3 || ''
+    const zipM = line3.match(/\b(\d{5}(?:-\d{4})?)\s*$/)
+    zip = zipM ? zipM[1] : ''
+    const rest = zipM ? line3.slice(0, line3.length - zipM[0].length).trim() : line3.trim()
+    const cs = parseCityState(rest)
+    city = cs.city; state = cs.state
+  }
+  const line3 = [city, state, zip].filter(Boolean).join(' ')
+  return { ...a, city, state, zip, line3 }
+}
+
 function toClient(row) {
   // Promote legacy flat address1/2/3 into a single unlabeled entry in
   // addresses[] when addresses is empty/missing. Keeps old data usable
   // even before migration 008 is applied. Label is blank — a single
   // address with no nickname is implicitly the primary one.
-  let addresses = Array.isArray(row.addresses) ? row.addresses : []
+  let addresses = Array.isArray(row.addresses) ? row.addresses.map(normalizeAddr).filter(Boolean) : []
   const hasFlat = !!(row.address1 || row.address2 || row.address3)
   if (addresses.length === 0 && hasFlat) {
+    const { city, state } = parseCityState(row.address2 || '')
+    const zip = row.address3 || ''
     addresses = [{
       id: 'primary',
       label: '',
       line1: row.address1 || '',
       line2: row.address_unit || '',
+      city, state, zip,
       line3: [row.address2, row.address3].filter(Boolean).join(' ') || '',
     }]
   }
+  const { city: flatCity, state: flatState } = parseCityState(row.address2 || '')
   return {
     id: row.id,
     name: row.name,
@@ -93,14 +123,18 @@ function toClient(row) {
     mobile: row.mobile || '',
     phone: row.phone || '',
     contact: row.contact || '',
-    // Legacy flat fields kept for any code path that still reads them
+    // Legacy flat fields
     address1: row.address1 || '',
     unit: row.address_unit || '',
     address2: row.address2 || '',
     address3: row.address3 || '',
+    // Parsed flat fields for quick-add pre-fill
+    city: flatCity,
+    state: flatState,
+    zip: row.address3 || '',
     // New structured addresses
     addresses,
-    billingAddress: row.billing_address || null,
+    billingAddress: normalizeAddr(row.billing_address),
     ownerId: row.owner_id || null,
   }
 }
@@ -625,9 +659,21 @@ export async function loadDeletedInvoices(ownerId) {
 // we wrap in a try/catch fallback.
 function clientPayload(client) {
   const addresses = Array.isArray(client.addresses) ? client.addresses : []
-  // Mirror first job-site address back into the legacy flat columns so any
-  // code path / report still reading address1/2/3 keeps working.
   const primary = addresses[0] || {}
+  // Derive flat city/state/zip: structured address wins, then quick-add top-level fields
+  const city  = primary.city  || client.city  || ''
+  const state = primary.state || client.state || ''
+  const zip   = primary.zip   || client.zip   || client.address3 || ''
+  // Serialize every address so line3 always reflects city/state/zip
+  const serializedAddresses = addresses.map(a => ({
+    ...a,
+    line3: [a.city, a.state, a.zip].filter(Boolean).join(' ') || a.line3 || '',
+  }))
+  const bl = client.billingAddress
+  const serializedBilling = bl ? {
+    ...bl,
+    line3: [bl.city, bl.state, bl.zip].filter(Boolean).join(' ') || bl.line3 || '',
+  } : null
   return {
     name: client.name,
     email: client.email || null,
@@ -637,12 +683,10 @@ function clientPayload(client) {
     contact: client.contact || null,
     address1: primary.line1 || client.address1 || null,
     address_unit: primary.line2 || client.unit || null,
-    // For structured clients, line3 has "City State ZIP" combined; for quick-add clients,
-    // address2 = city+state and address3 = ZIP as separate flat fields.
-    address2: primary.line3 || client.address2 || null,
-    address3: client.address3 || null,
-    addresses,
-    billing_address: client.billingAddress || null,
+    address2: [city, state].filter(Boolean).join(' ') || client.address2 || null,
+    address3: zip || null,
+    addresses: serializedAddresses,
+    billing_address: serializedBilling,
   }
 }
 
@@ -668,13 +712,14 @@ export async function insertClient(client) {
 function buildClientInfoForInvoices(client) {
   const addresses = Array.isArray(client.addresses) ? client.addresses : []
   const primary = addresses[0] || null
+  // line3 is always the computed city+state+zip string (kept in sync by normalizeAddr/clientPayload)
   return {
     name: client.name || null,
     email: client.email || null,
     phone: client.mobile || client.phone || null,
     address1: primary ? (primary.line1 || '') : (client.address1 || null),
-    address2: primary ? (primary.line2 || '') : (client.address2 || null),
-    address3: primary ? (primary.line3 || '') : (client.address3 || null),
+    address2: primary ? (primary.line2 || '') : (client.unit || null),
+    address3: primary ? (primary.line3 || '') : ([client.city, client.state, client.zip].filter(Boolean).join(' ') || client.address3 || null),
   }
 }
 

@@ -67,10 +67,10 @@ function normalizeContact(c) {
   const emails = (c.emails || []).map(e => e.address).filter(Boolean);
   const addr = (c.postalAddresses && c.postalAddresses[0]) || null;
 
-  // Map iOS-style address → our 3-line form
   const address1 = addr?.street || '';
-  const address2 = [addr?.city, addr?.region].filter(Boolean).join(', ');
-  const address3 = addr?.postcode || '';
+  const city = addr?.city || '';
+  const state = addr?.region || '';
+  const zip = addr?.postcode || '';
 
   return {
     name,
@@ -78,7 +78,8 @@ function normalizeContact(c) {
     email: emails[0] || '',
     email2: emails[1] || '',
     address1,
-    address2,
-    address3,
+    city,
+    state,
+    zip,
   };
 }
