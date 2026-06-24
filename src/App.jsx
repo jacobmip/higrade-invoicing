@@ -2626,7 +2626,14 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
     const billing = (bl.line1 || bl.line2 || bl.city || bl.state || bl.zip)
       ? { line1: bl.line1 || "", line2: bl.line2 || "", city: bl.city || "", state: bl.state || "", zip: bl.zip || "", line3: [bl.city, bl.state, bl.zip].filter(Boolean).join(' ') }
       : null;
-    const saved = await onSave({ ...newForm, billingAddress: billing });
+    // Build addresses[] from the flat fields so the returned client looks the
+    // same as one reloaded from Supabase (where toClient promotes flat → addresses[]).
+    // Without this, onSelect gets a client with no addresses[] and address2/address3
+    // are blank, so the address never shows on the invoice until the next refresh.
+    const addresses = (newForm.address1 || newForm.city || newForm.zip)
+      ? [{ id: 'primary', label: '', line1: newForm.address1 || '', line2: newForm.unit || '', city: newForm.city || '', state: newForm.state || '', zip: newForm.zip || '', line3: [newForm.city, newForm.state, newForm.zip].filter(Boolean).join(' ') }]
+      : [];
+    const saved = await onSave({ ...newForm, addresses, billingAddress: billing });
     if (saved) {
       clearNewClientDraft();
       onSelect(saved);
@@ -2742,7 +2749,7 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         />
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", unit: "", address2: "", address3: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={() => { setNewForm({ name: search, email: "", email2: "", phone: "", address1: "", unit: "", city: "", state: "HI", zip: "", billingAddress: null }); setCreating(true); }} style={{ ...S.btn("primary"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Icon name="plus" size={14} color="#fff" /> New Client
           </button>
           <button onClick={handleImport} disabled={importing} style={{ ...S.btn("navy"), flex: 1, fontSize: 13, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: importing ? 0.6 : 1 }}>
