@@ -367,28 +367,16 @@ Save or update a price in Jake's memory (use when Jake says "save", "remember", 
 Create a new client:
 {"action":"create_client","client":{"name":"Full Name","email":"","email2":"","phone":"","address1":"street address","unit":"apt or unit number","address2":"city and state","address3":"ZIP code"},"summary":"one sentence"}
 NOTE: address fields: address1 = street (e.g. "1234 Kalakaua Ave"), unit = apt/suite/unit (e.g. "Apt 4B"), address2 = city and state together (e.g. "Honolulu HI"), address3 = ZIP (e.g. "96815"). These are the BILLING / mailing address, NOT a job-site address. If a field isn't provided leave it blank.
-
-Update an existing invoice (set client, dates, status, notes — only include the fields you want to change):
-{"action":"update_invoice","invoiceId":"INV0000","changes":{"client":"exact name","date":"YYYY-MM-DD","dueDate":"YYYY-MM-DD","status":"outstanding|paid|partial|net30","notes":"text","discount":0,"tax":4.712},"summary":"one sentence"}
-
-Delete an invoice or estimate:
-{"action":"delete_invoice","invoiceId":"INV0000","summary":"one sentence"}
-
-Record a payment on an invoice:
-{"action":"add_payment","invoiceId":"INV0000","payment":{"amount":000,"method":"Cash|Check|Venmo|Zelle|Card|Other","date":"YYYY-MM-DD"},"summary":"one sentence"}
-
-Remove a line item from an invoice (1-based index as it appears in the invoice):
-{"action":"remove_item","invoiceId":"INV0000","itemIndex":1,"summary":"one sentence"}
-
-Update an existing line item on an invoice (1-based index; only include fields to change). USE THIS for ANY change to an existing line — description rewrites, name changes, qty/price tweaks, marking taxable. "Adjust the description", "rewrite the desc", "change the price", "tweak line 1", "add a step to the description", "include that I'm replacing the 1 inch drain" → ALL update_item:
-{"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"name":"...","desc":"...","qty":1,"price":000,"taxable":true},"summary":"one sentence"}
-
-Example — Jake says "adjust the invoice so the description includes that I'm replacing the 1 inch drain":
-{"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"desc":"Cut out failing 1 inch PVC section below drain\nRemove elbow fitting from existing line\nReplace 1 inch drain pipe (the failing leaking part)\nInstall new 1 inch female adapter\nGlue and prime new fittings\nPressure test repair for leaks"},"summary":"Updated description to call out the 1 inch drain replacement."}
+CRITICAL — CREATE CLIENT RULES:
+- You CAN read text in uploaded images and screenshots. Extract name, phone, email, and address directly from them.
+- Include ALL information you can see — name, phone, email, address — in the JSON on the first attempt. Never create the client and then admit you left the address out.
+- NEVER claim in your summary that you added an address if address1 is blank in your JSON.
+- If you already created the client but the address is missing, emit update_client IMMEDIATELY in your next response — do NOT ask Jake to retype information you already have or can see.
 
 Update a client's contact info (only include fields to change):
 {"action":"update_client","clientName":"exact name","changes":{"email":"","email2":"","phone":"","address1":"street","unit":"apt or unit","address2":"city and state","address3":"ZIP"},"summary":"one sentence"}
 NOTE: address fields same as create_client — address1=street, unit=apt/suite, address2=city+state, address3=ZIP. Only include fields you are changing.
+CRITICAL — You can ALWAYS update an existing client with update_client. Never say "I cannot go back and update the client" — just emit the action.
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
@@ -2018,7 +2006,14 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
         } else if (action.action === "create_client") {
           const newClient = await onAction(action);
           if (newClient) {
-            setMsgs(p => [...p, { role: "assistant", text: action.summary || `Client "${newClient.name}" added.`, card: { type: "created_client", client: newClient } }]);
+            // Guard: if AI summary claims an address was added but address1 is blank, warn.
+            const summaryMentionsAddr = /address|street|ave|blvd|lane|drive|place|rd\b|at \d/i.test(action.summary || "");
+            const jsonHasAddr = !!(action.client?.address1);
+            if (summaryMentionsAddr && !jsonHasAddr) {
+              setMsgs(p => [...p, { role: "assistant", text: `⚠️ Client "${newClient.name}" was created but the address was not saved — the address fields were missing from the action. Ask me to update the client with the address.`, card: { type: "created_client", client: newClient } }]);
+            } else {
+              setMsgs(p => [...p, { role: "assistant", text: action.summary || `Client "${newClient.name}" added.`, card: { type: "created_client", client: newClient } }]);
+            }
           }
         } else if (action.action === "schedule_job") {
           const client = fuzzyFindClient(data.clients, action.clientName);
@@ -9084,7 +9079,14 @@ export default function App() {
     }
     if (parsed.action === "create_client") {
       const c = parsed.client || {};
-      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", unit: c.unit || "", address2: c.address2 || "", address3: c.address3 || "" };
+      const cs = parseCityState(c.address2 || '');
+      const city = cs.city || '';
+      const state = cs.state || '';
+      const zip = c.address3 || '';
+      const addresses = (c.address1 || city || zip)
+        ? [{ id: 'primary', label: '', line1: c.address1 || '', line2: c.unit || '', city, state, zip, line3: [city, state, zip].filter(Boolean).join(' ') }]
+        : [];
+      const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", unit: c.unit || "", address2: c.address2 || "", address3: c.address3 || "", addresses };
       const id = await db.insertClient(form);
       const newClient = { ...form, id };
       setData(d => ({ ...d, clients: [...d.clients, newClient] }));
