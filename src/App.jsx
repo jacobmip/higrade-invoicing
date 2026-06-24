@@ -41,6 +41,35 @@ const SAVED_ITEMS = [
   { id: 16, category: "Service", name: "After Hours Emergency", price: 385 },
 ];
 
+// ─── Address helpers ──────────────────────────────────────────────────────────
+
+// Parse "City ST" or "City, ST" into separate parts.
+function parseCityState(str) {
+  if (!str) return { city: '', state: '' };
+  const m = str.match(/^(.*?)(?:,\s+|\s+)([A-Z]{2})$/);
+  return m ? { city: m[1].trim(), state: m[2] } : { city: str.trim(), state: '' };
+}
+
+// Geocode a street address via OpenStreetMap Nominatim (free, no API key).
+// Returns { city, state, zip } or null on failure / no result.
+async function geocodeStreet(street) {
+  if (!street || street.trim().length < 5) return null;
+  try {
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=1&q='
+      + encodeURIComponent(street.trim());
+    const r = await fetch(url, { headers: { 'User-Agent': 'HiGrade-Invoicing/1.0 (higrade-invoicing.vercel.app)' } });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data[0]?.address) return null;
+    const a = data[0].address;
+    const city = a.city || a.town || a.village || a.hamlet || a.suburb || '';
+    const iso = a['ISO3166-2-lvl4'] || '';
+    const state = iso.startsWith('US-') ? iso.slice(3) : (a.state_code || '');
+    const zip = a.postcode || '';
+    return (city || state || zip) ? { city, state, zip } : null;
+  } catch { return null; }
+}
+
 const DEFAULT_CLIENTS = [
   { id: 1, name: "Jacob Petersen", email: "jacobmip@gmail.com", email2: "", phone: "", address1: "", address2: "", address3: "" },
 ];
@@ -2543,7 +2572,9 @@ function PDFPreview({ form, clients, photos = [] }) {
 function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, onOpenEdit }) {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", unit: "", address2: "", address3: "", billingAddress: null });
+  const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", unit: "", city: "", state: "HI", zip: "", billingAddress: null });
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookingUpBilling, setLookingUpBilling] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const clearNewClientDraft = useDraftPersistence(
@@ -2576,9 +2607,10 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
         email2: c.email2 || "",
         phone: c.phone || "",
         address1: c.address1 || "",
-        unit: c.unit || "",
-        address2: c.address2 || "",
-        address3: c.address3 || "",
+        unit: "",
+        city: c.city || "",
+        state: c.state || "HI",
+        zip: c.zip || "",
         billingAddress: null,
       });
       setCreating(true);
@@ -2591,8 +2623,8 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   const handleSaveNew = async () => {
     if (!newForm.name?.trim()) { alert("Name is required"); return; }
     const bl = newForm.billingAddress || {};
-    const billing = (bl.line1 || bl.line2 || bl.line3)
-      ? { line1: bl.line1 || "", line2: bl.line2 || "", line3: bl.line3 || "" }
+    const billing = (bl.line1 || bl.line2 || bl.city || bl.state || bl.zip)
+      ? { line1: bl.line1 || "", line2: bl.line2 || "", city: bl.city || "", state: bl.state || "", zip: bl.zip || "", line3: [bl.city, bl.state, bl.zip].filter(Boolean).join(' ') }
       : null;
     const saved = await onSave({ ...newForm, billingAddress: billing });
     if (saved) {
@@ -2616,20 +2648,76 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, flex: 1 }}>NEW CLIENT</span>
             <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 26, lineHeight: 1, padding: "0 4px" }}>×</button>
           </div>
-          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"], ["address1", "Street Address"], ["unit", "Apt / Unit"], ["address2", "City, State"], ["address3", "ZIP"]].map(([k, label, type]) => (
+          {[["name", "Name"], ["email", "Email", "email"], ["email2", "Secondary Email", "email"], ["phone", "Phone", "tel"]].map(([k, label, type]) => (
             <div key={k} style={{ marginBottom: 10 }}>
               <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
               <input style={S.input} type={type || "text"} value={newForm[k] || ""} onChange={e => setNewForm(f => ({ ...f, [k]: e.target.value }))} />
             </div>
           ))}
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ ...S.label, marginBottom: 3 }}>Street Address</label>
+            <input style={S.input} value={newForm.address1 || ""} onChange={e => setNewForm(f => ({ ...f, address1: e.target.value }))}
+              onBlur={async () => {
+                if (!newForm.address1 || newForm.city || newForm.zip) return;
+                setLookingUp(true);
+                const r = await geocodeStreet(newForm.address1);
+                setLookingUp(false);
+                if (r) setNewForm(f => ({ ...f, city: r.city || f.city, state: r.state || f.state, zip: r.zip || f.zip }));
+              }} />
+            {lookingUp && <div style={{ fontSize: 11, color: "#888", marginTop: 3 }}>Looking up address…</div>}
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ ...S.label, marginBottom: 3 }}>Apt / Unit</label>
+            <input style={S.input} value={newForm.unit || ""} onChange={e => setNewForm(f => ({ ...f, unit: e.target.value }))} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <div style={{ flex: 2 }}>
+              <label style={{ ...S.label, marginBottom: 3 }}>City</label>
+              <input style={S.input} value={newForm.city || ""} onChange={e => setNewForm(f => ({ ...f, city: e.target.value }))} />
+            </div>
+            <div style={{ width: 58 }}>
+              <label style={{ ...S.label, marginBottom: 3 }}>State</label>
+              <input style={{ ...S.input, textTransform: "uppercase" }} maxLength={2} value={newForm.state || ""} onChange={e => setNewForm(f => ({ ...f, state: e.target.value.toUpperCase() }))} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ ...S.label, marginBottom: 3 }}>ZIP</label>
+            <input style={S.input} value={newForm.zip || ""} onChange={e => setNewForm(f => ({ ...f, zip: e.target.value }))} />
+          </div>
           <div style={{ marginTop: 16, marginBottom: 4, fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
           <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Leave blank if same as job site above.</div>
-          {[["line1", "Street Address"], ["line2", "Apt / Unit"], ["line3", "City, State, ZIP"]].map(([k, label]) => (
-            <div key={k} style={{ marginBottom: 10 }}>
-              <label style={{ ...S.label, marginBottom: 3 }}>{label}</label>
-              <input style={S.input} value={newForm.billingAddress?.[k] || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), [k]: e.target.value } }))} />
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ ...S.label, marginBottom: 3 }}>Street Address</label>
+            <input style={S.input} value={newForm.billingAddress?.line1 || ""}
+              onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line1: e.target.value } }))}
+              onBlur={async () => {
+                const bl = newForm.billingAddress || {};
+                if (!bl.line1 || bl.city || bl.zip) return;
+                setLookingUpBilling(true);
+                const r = await geocodeStreet(bl.line1);
+                setLookingUpBilling(false);
+                if (r) setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), city: r.city || "", state: r.state || "", zip: r.zip || "" } }));
+              }} />
+            {lookingUpBilling && <div style={{ fontSize: 11, color: "#888", marginTop: 3 }}>Looking up address…</div>}
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ ...S.label, marginBottom: 3 }}>Apt / Unit</label>
+            <input style={S.input} value={newForm.billingAddress?.line2 || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line2: e.target.value } }))} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <div style={{ flex: 2 }}>
+              <label style={{ ...S.label, marginBottom: 3 }}>City</label>
+              <input style={S.input} value={newForm.billingAddress?.city || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), city: e.target.value } }))} />
             </div>
-          ))}
+            <div style={{ width: 58 }}>
+              <label style={{ ...S.label, marginBottom: 3 }}>State</label>
+              <input style={{ ...S.input, textTransform: "uppercase" }} maxLength={2} value={newForm.billingAddress?.state || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), state: e.target.value.toUpperCase() } }))} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ ...S.label, marginBottom: 3 }}>ZIP</label>
+            <input style={S.input} value={newForm.billingAddress?.zip || ""} onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), zip: e.target.value } }))} />
+          </div>
           <button onClick={handleSaveNew} style={{ ...S.btn("primary"), width: "100%", marginTop: 8, fontSize: 15, padding: 12 }}>Save Client</button>
         </div>
       </div>,
@@ -3842,7 +3930,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   onChange={e => {
                     const newId = e.target.value;
                     if (newId === "__add_property__") {
-                      setPropertyDraft({ id: newAddressId(), label: "", line1: "", line2: "", line3: "" });
+                      setPropertyDraft({ id: newAddressId(), label: "", line1: "", line2: "", city: "", state: "HI", zip: "" });
                       setAddingProperty(true);
                       return;
                     }
@@ -3890,6 +3978,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   placeholder="Street address"
                   value={propertyDraft.line1}
                   onChange={e => setPropertyDraft(p => ({ ...p, line1: e.target.value }))}
+                  onBlur={async e => {
+                    if (!propertyDraft.city && !propertyDraft.zip) {
+                      const geo = await geocodeStreet(e.target.value);
+                      if (geo) setPropertyDraft(p => ({ ...p, ...geo }));
+                    }
+                  }}
                 />
                 <input
                   style={{ ...S.input, marginBottom: 8 }}
@@ -3897,12 +3991,11 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   value={propertyDraft.line2}
                   onChange={e => setPropertyDraft(p => ({ ...p, line2: e.target.value }))}
                 />
-                <input
-                  style={{ ...S.input, marginBottom: 8 }}
-                  placeholder="City, State ZIP"
-                  value={propertyDraft.line3}
-                  onChange={e => setPropertyDraft(p => ({ ...p, line3: e.target.value }))}
-                />
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  <input style={{ ...S.input, flex: 1 }} value={propertyDraft.city || ""} onChange={e => setPropertyDraft(p => ({ ...p, city: e.target.value }))} placeholder="City" />
+                  <input style={{ ...S.input, width: 58, textTransform: "uppercase" }} value={propertyDraft.state || ""} onChange={e => setPropertyDraft(p => ({ ...p, state: e.target.value.toUpperCase().slice(0, 2) }))} placeholder="ST" maxLength={2} />
+                  <input style={{ ...S.input, width: 80 }} value={propertyDraft.zip || ""} onChange={e => setPropertyDraft(p => ({ ...p, zip: e.target.value }))} placeholder="ZIP" maxLength={10} />
+                </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     type="button"
@@ -3918,7 +4011,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                       // it, then select it as the job site on this invoice.
                       setSavingProperty(true);
                       try {
-                        const newProp = { ...propertyDraft };
+                        const newProp = {
+                          ...propertyDraft,
+                          line3: [propertyDraft.city, propertyDraft.state, propertyDraft.zip].filter(Boolean).join(" "),
+                        };
                         const updatedAddresses = [...(selectedClient.addresses || []), newProp];
                         const updated = { ...selectedClient, addresses: updatedAddresses };
                         if (selectedClient.id && onUpdateClient) {
@@ -4974,8 +5070,13 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
     next[idx] = { ...next[idx], [field]: val };
     onChange({ ...form, addresses: next });
   };
+  const setAddrFields = (idx, fields) => {
+    const next = [...addresses];
+    next[idx] = { ...next[idx], ...fields };
+    onChange({ ...form, addresses: next });
+  };
   const addAddress = () => {
-    onChange({ ...form, addresses: [...addresses, { id: newAddressId(), label: "", line1: "", line2: "", line3: "" }] });
+    onChange({ ...form, addresses: [...addresses, { id: newAddressId(), label: "", line1: "", line2: "", city: "", state: "HI", zip: "" }] });
   };
   const removeAddress = (idx) => {
     onChange({ ...form, addresses: addresses.filter((_, i) => i !== idx) });
@@ -4983,6 +5084,9 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
   const billing = form.billingAddress || {};
   const setBillingField = (field, val) => {
     onChange({ ...form, billingAddress: { ...billing, [field]: val } });
+  };
+  const setBillingFields = (fields) => {
+    onChange({ ...form, billingAddress: { ...billing, ...fields } });
   };
   // In compact mode (used inside the invoice form) we drop the heavier
   // padding and tighten the section labels so the editor fits cleanly
@@ -5014,9 +5118,20 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
             <button type="button" onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
           </div>
           <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
-          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address"
+            onBlur={async e => {
+              if (!a.city && !a.zip) {
+                const geo = await geocodeStreet(e.target.value);
+                if (geo) setAddrFields(idx, geo);
+              }
+            }}
+          />
           <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Apt / Unit / Suite (optional)" />
-          <input style={{ ...S.input, marginBottom: isAdmin ? 6 : 0 }} value={a.line3 || ""} onChange={e => setAddrField(idx, "line3", e.target.value)} placeholder="City, State, ZIP" />
+          <div style={{ display: "flex", gap: 6, marginBottom: isAdmin ? 6 : 0 }}>
+            <input style={{ ...S.input, flex: 1 }} value={a.city || ""} onChange={e => setAddrField(idx, "city", e.target.value)} placeholder="City" />
+            <input style={{ ...S.input, width: 58, textTransform: "uppercase" }} value={a.state || ""} onChange={e => setAddrField(idx, "state", e.target.value.toUpperCase().slice(0, 2))} placeholder="ST" maxLength={2} />
+            <input style={{ ...S.input, width: 80 }} value={a.zip || ""} onChange={e => setAddrField(idx, "zip", e.target.value)} placeholder="ZIP" maxLength={10} />
+          </div>
           {isAdmin && (
             <textarea
               style={{ ...S.input, height: 60, resize: "none", fontSize: 12 }}
@@ -5034,9 +5149,20 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       </div>
       <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
-        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Street Address" />
+        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Street Address"
+          onBlur={async e => {
+            if (!billing.city && !billing.zip) {
+              const geo = await geocodeStreet(e.target.value);
+              if (geo) setBillingFields(geo);
+            }
+          }}
+        />
         <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Apt / Unit / Suite (optional)" />
-        <input style={S.input} value={billing.line3 || ""} onChange={e => setBillingField("line3", e.target.value)} placeholder="City, State, ZIP" />
+        <div style={{ display: "flex", gap: 6 }}>
+          <input style={{ ...S.input, flex: 1 }} value={billing.city || ""} onChange={e => setBillingField("city", e.target.value)} placeholder="City" />
+          <input style={{ ...S.input, width: 58, textTransform: "uppercase" }} value={billing.state || ""} onChange={e => setBillingField("state", e.target.value.toUpperCase().slice(0, 2))} placeholder="ST" maxLength={2} />
+          <input style={{ ...S.input, width: 80 }} value={billing.zip || ""} onChange={e => setBillingField("zip", e.target.value)} placeholder="ZIP" maxLength={10} />
+        </div>
       </div>
 
       {isAdmin && (
@@ -5054,19 +5180,34 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
   );
 }
 
-// Normalize a draft client before save: ensure every address has an id and
-// fall back to empty strings for missing label/line fields.
+// Normalize a draft client before save: ensure every address has an id,
+// parse legacy line3 into city/state/zip if needed, and compute line3.
 function normalizeClientDraft(draft) {
   return {
     ...draft,
-    addresses: (draft.addresses || []).map(a => ({
-      id: a.id || newAddressId(),
-      label: a.label || "",
-      line1: a.line1 || "",
-      line2: a.line2 || "",
-      line3: a.line3 || "",
-      notes: a.notes || "",
-    })),
+    addresses: (draft.addresses || []).map(a => {
+      let city = a.city || "", state = a.state || "", zip = a.zip || "";
+      // Back-compat: if no parsed fields but line3 exists, extract from it
+      if (!city && !state && !zip && a.line3) {
+        const zipM = a.line3.match(/\b(\d{5}(?:-\d{4})?)\s*$/);
+        zip = zipM ? zipM[1] : "";
+        const rest = zipM ? a.line3.slice(0, a.line3.length - zipM[0].length).trim() : a.line3.trim();
+        const csM = rest.match(/^(.*?)(?:,\s+|\s+)([A-Z]{2})$/);
+        if (csM) { city = csM[1].trim(); state = csM[2]; } else { city = rest; }
+      }
+      const line3 = [city, state, zip].filter(Boolean).join(" ");
+      return {
+        id: a.id || newAddressId(),
+        label: a.label || "",
+        line1: a.line1 || "",
+        line2: a.line2 || "",
+        line3,
+        city,
+        state,
+        zip,
+        notes: a.notes || "",
+      };
+    }),
   };
 }
 
