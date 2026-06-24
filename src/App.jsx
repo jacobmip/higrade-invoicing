@@ -50,23 +50,16 @@ function parseCityState(str) {
   return m ? { city: m[1].trim(), state: m[2] } : { city: str.trim(), state: '' };
 }
 
-// Geocode a street address via OpenStreetMap Nominatim (free, no API key).
+// Geocode a street address via the /api/geocode serverless route (Google Maps).
 // Returns { city, state, zip } or null on failure / no result.
 async function geocodeStreet(street) {
   if (!street || street.trim().length < 5) return null;
   try {
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=1&q='
-      + encodeURIComponent(street.trim());
-    const r = await fetch(url, { headers: { 'User-Agent': 'HiGrade-Invoicing/1.0 (higrade-invoicing.vercel.app)' } });
+    const r = await fetch('/api/geocode?address=' + encodeURIComponent(street.trim()));
     if (!r.ok) return null;
     const data = await r.json();
-    if (!data[0]?.address) return null;
-    const a = data[0].address;
-    const city = a.city || a.town || a.village || a.hamlet || a.suburb || '';
-    const iso = a['ISO3166-2-lvl4'] || '';
-    const state = iso.startsWith('US-') ? iso.slice(3) : (a.state_code || '');
-    const zip = a.postcode || '';
-    return (city || state || zip) ? { city, state, zip } : null;
+    if (data.error || (!data.city && !data.state && !data.zip)) return null;
+    return { city: data.city || '', state: data.state || '', zip: data.zip || '' };
   } catch { return null; }
 }
 
@@ -2573,7 +2566,8 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [newForm, setNewForm] = useState({ name: "", email: "", email2: "", phone: "", address1: "", unit: "", city: "", state: "HI", zip: "", billingAddress: null });
-
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookingUpBilling, setLookingUpBilling] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const clearNewClientDraft = useDraftPersistence(
@@ -2679,7 +2673,15 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
           ))}
           <div style={{ marginBottom: 10 }}>
             <label style={{ ...S.label, marginBottom: 3 }}>Street Address</label>
-            <input style={S.input} value={newForm.address1 || ""} onChange={e => setNewForm(f => ({ ...f, address1: e.target.value }))} />
+            <input style={S.input} value={newForm.address1 || ""} onChange={e => setNewForm(f => ({ ...f, address1: e.target.value }))}
+              onBlur={async () => {
+                if (!newForm.address1 || newForm.city || newForm.zip) return;
+                setLookingUp(true);
+                const r = await geocodeStreet(newForm.address1);
+                setLookingUp(false);
+                if (r) setNewForm(f => ({ ...f, city: r.city || f.city, state: r.state || f.state, zip: r.zip || f.zip }));
+              }} />
+            {lookingUp && <div style={{ fontSize: 11, color: "#888", marginTop: 3 }}>Looking up address…</div>}
           </div>
           <div style={{ marginBottom: 10 }}>
             <label style={{ ...S.label, marginBottom: 3 }}>Apt / Unit</label>
@@ -2704,7 +2706,16 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
           <div style={{ marginBottom: 10 }}>
             <label style={{ ...S.label, marginBottom: 3 }}>Street Address</label>
             <input style={S.input} value={newForm.billingAddress?.line1 || ""}
-              onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line1: e.target.value } }))} />
+              onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line1: e.target.value } }))}
+              onBlur={async () => {
+                const bl = newForm.billingAddress || {};
+                if (!bl.line1 || bl.city || bl.zip) return;
+                setLookingUpBilling(true);
+                const r = await geocodeStreet(bl.line1);
+                setLookingUpBilling(false);
+                if (r) setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), city: r.city || "", state: r.state || "", zip: r.zip || "" } }));
+              }} />
+            {lookingUpBilling && <div style={{ fontSize: 11, color: "#888", marginTop: 3 }}>Looking up address…</div>}
           </div>
           <div style={{ marginBottom: 10 }}>
             <label style={{ ...S.label, marginBottom: 3 }}>Apt / Unit</label>
@@ -3984,6 +3995,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   placeholder="Street address"
                   value={propertyDraft.line1}
                   onChange={e => setPropertyDraft(p => ({ ...p, line1: e.target.value }))}
+                  onBlur={async e => {
+                    if (!propertyDraft.city && !propertyDraft.zip) {
+                      const geo = await geocodeStreet(e.target.value);
+                      if (geo) setPropertyDraft(p => ({ ...p, ...geo }));
+                    }
+                  }}
                 />
                 <input
                   style={{ ...S.input, marginBottom: 8 }}
@@ -5118,7 +5135,14 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
             <button type="button" onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
           </div>
           <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
-          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address"
+            onBlur={async e => {
+              if (!a.city && !a.zip) {
+                const geo = await geocodeStreet(e.target.value);
+                if (geo) setAddrFields(idx, geo);
+              }
+            }}
+          />
           <input style={{ ...S.input, marginBottom: 6 }} value={a.line2 || ""} onChange={e => setAddrField(idx, "line2", e.target.value)} placeholder="Apt / Unit / Suite (optional)" />
           <div style={{ display: "flex", gap: 6, marginBottom: isAdmin ? 6 : 0 }}>
             <input style={{ ...S.input, flex: 1 }} value={a.city || ""} onChange={e => setAddrField(idx, "city", e.target.value)} placeholder="City" />
@@ -5142,7 +5166,14 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       </div>
       <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
-        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Street Address" />
+        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Street Address"
+          onBlur={async e => {
+            if (!billing.city && !billing.zip) {
+              const geo = await geocodeStreet(e.target.value);
+              if (geo) setBillingFields(geo);
+            }
+          }}
+        />
         <input style={{ ...S.input, marginBottom: 6 }} value={billing.line2 || ""} onChange={e => setBillingField("line2", e.target.value)} placeholder="Apt / Unit / Suite (optional)" />
         <div style={{ display: "flex", gap: 6 }}>
           <input style={{ ...S.input, flex: 1 }} value={billing.city || ""} onChange={e => setBillingField("city", e.target.value)} placeholder="City" />
