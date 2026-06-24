@@ -2580,7 +2580,20 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
   const clearNewClientDraft = useDraftPersistence(
     'higrade_quick_add_client',
     creating ? newForm : null,
-    (draft) => { setNewForm(draft); setCreating(true); },
+    (draft) => {
+      // Migrate old combined address2/address3 keys to separate city/state/zip
+      const migrated = { ...draft };
+      if (migrated.city === undefined && migrated.address2 !== undefined) {
+        const cs = parseCityState(migrated.address2 || '');
+        migrated.city = cs.city || '';
+        migrated.state = cs.state || 'HI';
+        migrated.zip = migrated.address3 || '';
+        delete migrated.address2;
+        delete migrated.address3;
+      }
+      setNewForm({ ...migrated, state: migrated.state || 'HI' });
+      setCreating(true);
+    },
     null
   );
 
@@ -2628,10 +2641,14 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
       : null;
     // Build addresses[] from the flat fields so the returned client looks the
     // same as one reloaded from Supabase (where toClient promotes flat → addresses[]).
-    // Without this, onSelect gets a client with no addresses[] and address2/address3
-    // are blank, so the address never shows on the invoice until the next refresh.
-    const addresses = (newForm.address1 || newForm.city || newForm.zip)
-      ? [{ id: 'primary', label: '', line1: newForm.address1 || '', line2: newForm.unit || '', city: newForm.city || '', state: newForm.state || '', zip: newForm.zip || '', line3: [newForm.city, newForm.state, newForm.zip].filter(Boolean).join(' ') }]
+    // Also fall back to old address2/address3 keys in case a stale localStorage
+    // draft was restored before the migration ran.
+    const cs = parseCityState(newForm.address2 || '');
+    const city = newForm.city || cs.city || '';
+    const state = newForm.state || cs.state || '';
+    const zip = newForm.zip || newForm.address3 || '';
+    const addresses = (newForm.address1 || city || zip)
+      ? [{ id: 'primary', label: '', line1: newForm.address1 || '', line2: newForm.unit || '', city, state, zip, line3: [city, state, zip].filter(Boolean).join(' ') }]
       : [];
     const saved = await onSave({ ...newForm, addresses, billingAddress: billing });
     if (saved) {

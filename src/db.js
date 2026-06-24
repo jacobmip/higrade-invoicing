@@ -113,6 +113,20 @@ function toClient(row) {
       city, state, zip,
       line3: [row.address2, row.address3].filter(Boolean).join(' ') || '',
     }]
+  } else if (addresses.length > 0 && !addresses[0].city && !addresses[0].zip && hasFlat) {
+    // Primary address was saved with empty city/state/zip (e.g. stale draft before
+    // refactor) but the flat columns have the data — backfill from them.
+    const { city, state } = parseCityState(row.address2 || '')
+    const zip = row.address3 || ''
+    if (city || state || zip) {
+      addresses[0] = {
+        ...addresses[0],
+        line1: addresses[0].line1 || row.address1 || '',
+        line2: addresses[0].line2 || row.address_unit || '',
+        city, state, zip,
+        line3: [row.address2, row.address3].filter(Boolean).join(' ') || '',
+      }
+    }
   }
   const { city: flatCity, state: flatState } = parseCityState(row.address2 || '')
   return {
