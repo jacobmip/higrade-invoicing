@@ -18,7 +18,7 @@ export function linesOf(src) {
 // Normalize an address (array of lines) for equality comparison: lowercased,
 // whitespace-collapsed, so "same place typed twice" reads as identical.
 function normAddr(lines) {
-  return lines.join("|").toLowerCase().replace(/\s+/g, " ").trim();
+  return lines.join(" ").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 // form: the invoice form snapshot (jobAddress, billingAddress, clientInfo).
