@@ -6082,10 +6082,10 @@ function NotificationsBell({ onOpenInvoice }) {
         )}
       </button>
 
-      {open && (
+      {open && createPortal(
         <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, background: 'transparent', zIndex: 200 }} />
-          <div style={{ position: 'absolute', top: 56, right: 16, width: 'min(360px, calc(100vw - 32px))', maxHeight: 'min(70vh, 520px)', background: '#fff', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 201, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, background: 'transparent', zIndex: 9000 }} />
+          <div style={{ position: 'fixed', top: 56, right: 16, width: 'min(360px, calc(100vw - 32px))', maxHeight: 'min(70vh, 520px)', background: '#fff', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 9001, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '12px 14px', borderBottom: '1px solid #eaecf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f8f9fc' }}>
               <div style={{ fontWeight: 700, color: NAVY, fontSize: 14 }}>Notifications</div>
               {unread > 0 && (
@@ -6123,7 +6123,8 @@ function NotificationsBell({ onOpenInvoice }) {
               })}
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </>
   );
