@@ -25,11 +25,12 @@ export async function fetchInvoicePhotos(invoiceId) {
 }
 
 export default function JobPhotos({ invoiceId }) {
-  const [photos, setPhotos]       = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError]         = useState(null);
-  const [fullsize, setFullsize]   = useState(null); // url string when modal open
+  const [photos, setPhotos]               = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [uploading, setUploading]         = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null); // { current, total }
+  const [error, setError]                 = useState(null);
+  const [fullsize, setFullsize]           = useState(null); // photo object when modal open
 
   const [caption, setCaption] = useState('');
   const [type, setType]       = useState('other');
@@ -58,48 +59,52 @@ export default function JobPhotos({ invoiceId }) {
   }
 
   async function handleFileChange(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     e.target.value = '';
 
     setUploading(true);
     setError(null);
+    setUploadProgress({ current: 0, total: files.length });
 
-    const ext      = file.name.split('.').pop();
-    const filename = `${Date.now()}.${ext}`;
-    const path     = `${invoiceId}/${filename}`;
+    for (let i = 0; i < files.length; i++) {
+      setUploadProgress({ current: i + 1, total: files.length });
+      const file = files[i];
+      const ext      = file.name.split('.').pop();
+      const filename = `${Date.now()}_${i}.${ext}`;
+      const path     = `${invoiceId}/${filename}`;
 
-    const { error: uploadErr } = await supabase.storage
-      .from(BUCKET)
-      .upload(path, file, { upsert: false });
+      const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, file, { upsert: false });
 
-    if (uploadErr) {
-      setError('Upload failed: ' + uploadErr.message);
-      setUploading(false);
-      return;
+      if (uploadErr) {
+        setError(`Upload failed (${file.name}): ${uploadErr.message}`);
+        continue;
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from(BUCKET)
+        .getPublicUrl(path);
+
+      const { error: insertErr } = await supabase
+        .from('job_photos')
+        .insert({ invoice_id: invoiceId, url: publicUrl, caption: caption.trim() || null, type });
+
+      if (insertErr) {
+        setError(`Saved to storage but DB insert failed (${file.name}): ${insertErr.message}`);
+      }
     }
 
-    const { data: { publicUrl } } = supabase.storage
-      .from(BUCKET)
-      .getPublicUrl(path);
-
-    const { error: insertErr } = await supabase
-      .from('job_photos')
-      .insert({ invoice_id: invoiceId, url: publicUrl, caption: caption.trim() || null, type });
-
-    if (insertErr) {
-      setError('Photo saved to storage but DB insert failed: ' + insertErr.message);
-    } else {
-      setCaption('');
-      await fetchPhotos();
-    }
+    setUploadProgress(null);
+    setCaption('');
+    await fetchPhotos();
     setUploading(false);
   }
 
   async function handleDelete(photo) {
     if (!confirm('Delete this photo?')) return;
 
-    // Derive storage path from the public URL
     const pathMatch = photo.url.match(/job-photos\/(.+)$/);
     if (pathMatch) {
       await supabase.storage.from(BUCKET).remove([pathMatch[1]]);
@@ -107,7 +112,20 @@ export default function JobPhotos({ invoiceId }) {
 
     await supabase.from('job_photos').delete().eq('id', photo.id);
     setPhotos(ps => ps.filter(p => p.id !== photo.id));
+    if (fullsize?.id === photo.id) setFullsize(null);
   }
+
+  async function handleRelabel(photo, newType) {
+    await supabase.from('job_photos').update({ type: newType }).eq('id', photo.id);
+    setPhotos(ps => ps.map(p => p.id === photo.id ? { ...p, type: newType } : p));
+    setFullsize(f => f?.id === photo.id ? { ...f, type: newType } : f);
+  }
+
+  const uploadLabel = uploading
+    ? (uploadProgress && uploadProgress.total > 1
+        ? `Uploading ${uploadProgress.current} / ${uploadProgress.total}…`
+        : 'Uploading…')
+    : '+ Add Photos';
 
   return (
     <div style={{ padding: '0 0 16px' }}>
@@ -155,9 +173,9 @@ export default function JobPhotos({ invoiceId }) {
             fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1,
           }}
         >
-          {uploading ? 'Uploading…' : '+ Add Photo'}
+          {uploadLabel}
         </button>
-        <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileChange} />
+        <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileChange} />
       </div>
 
       {error && (
@@ -182,7 +200,7 @@ export default function JobPhotos({ invoiceId }) {
               <img
                 src={photo.url}
                 alt={photo.caption || photo.type}
-                onClick={() => setFullsize(photo.url)}
+                onClick={() => setFullsize(photo)}
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', cursor: 'pointer' }}
               />
               {/* Type badge */}
@@ -224,21 +242,51 @@ export default function JobPhotos({ invoiceId }) {
         </div>
       )}
 
-      {/* Full-size modal */}
+      {/* Full-size modal with type editor */}
       {fullsize && (
         <div
           onClick={() => setFullsize(null)}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)',
-            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             padding: 16,
           }}
         >
-          <img
-            src={fullsize}
-            alt=""
-            style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8, objectFit: 'contain' }}
-          />
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
+          >
+            <img
+              src={fullsize.url}
+              alt=""
+              style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8, objectFit: 'contain' }}
+            />
+            {/* Type selector */}
+            <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+              {['before', 'after', 'other'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => handleRelabel(fullsize, t)}
+                  style={{
+                    flex: 1, padding: '10px 4px', border: 'none', borderRadius: 8, cursor: 'pointer',
+                    fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13,
+                    letterSpacing: 1, textTransform: 'uppercase',
+                    background: fullsize.type === t ? TYPE_COLORS[t] : 'rgba(255,255,255,0.15)',
+                    color: '#fff',
+                    outline: fullsize.type === t ? `2px solid ${TYPE_COLORS[t]}` : 'none',
+                    outlineOffset: 2,
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            {fullsize.caption && (
+              <div style={{ color: '#ccd', fontSize: 13, fontFamily: "'Barlow', sans-serif", textAlign: 'center' }}>
+                {fullsize.caption}
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setFullsize(null)}
             style={{
