@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from './supabase.js';
 
 const NAVY   = '#0a1628';
@@ -242,13 +243,13 @@ export default function JobPhotos({ invoiceId }) {
         </div>
       )}
 
-      {/* Full-size modal with type editor */}
-      {fullsize && (
+      {/* Full-size modal — rendered via portal so tab transforms don't clip it */}
+      {fullsize && createPortal(
         <div
           onClick={() => setFullsize(null)}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)',
-            zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             padding: 16,
           }}
         >
@@ -299,7 +300,8 @@ export default function JobPhotos({ invoiceId }) {
           >
             ×
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
