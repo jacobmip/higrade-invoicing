@@ -18,6 +18,7 @@ const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
 const NAVY2 = "#0f2040";
 const CACHE_KEY = "higrade_v6";
+const APP_VERSION = "1.1.0";
 const LIGHT = "#f4f6fa";
 const TAX_RATE = 4.712;
 const GLOBAL_HEADER_H = 64; // px — brand NAVY bar height, no subheader
@@ -8327,6 +8328,10 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
           </div>
         </div>
       )}
+
+      <div style={{ textAlign: "center", color: "#aab1bf", fontSize: 11, padding: "24px 0 8px", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
+        HI GRADE INVOICING v{APP_VERSION}
+      </div>
     </div>
   );
 }
