@@ -173,8 +173,8 @@ function drawBillTo(doc, form, y) {
   // blocks when they differ. Single-location clients collapse to one address.
   // clientInfo carries the flat-field fallback for the billing address.
   const bill = resolveBillTo(form, data);
-  const drawAddrLine = (label, lines) => {
-    if (!lines.length) return;
+  const drawAddrLine = (label, lines, nickname = null) => {
+    if (!lines.length && !nickname) return;
     if (label) {
       setText(doc, "#6677aa");
       doc.setFont("helvetica", "bold");
@@ -182,17 +182,26 @@ function drawBillTo(doc, form, y) {
       doc.text(label, MARGIN, cy);
       cy += 12;
     }
+    if (nickname) {
+      setText(doc, TEXT_DARK);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(nickname, MARGIN, cy);
+      cy += 14;
+    }
     setText(doc, TEXT_MID);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
-    doc.text(lines.join(", "), MARGIN, cy);
-    cy += 16;
+    if (lines.length) {
+      doc.text(lines.join(", "), MARGIN, cy);
+      cy += 16;
+    }
   };
   if (bill.split) {
     drawAddrLine("BILLING ADDRESS", bill.billing);
-    drawAddrLine("JOB SITE", bill.job);
+    drawAddrLine("JOB SITE", bill.job, form.jobAddress?.label || null);
   } else {
-    drawAddrLine("", bill.single);
+    drawAddrLine("", bill.single, form.jobAddress?.label || null);
   }
   const contact = [data.phone, data.email].filter(Boolean).join(" · ");
   if (contact) {

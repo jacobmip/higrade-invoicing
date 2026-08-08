@@ -2412,15 +2412,21 @@ function PDFPreview({ form, clients, photos = [] }) {
                       <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.billing.join(", ")}</div>
                     </div>
                   )}
-                  {bill.job.length > 0 && (
+                  {(bill.job.length > 0 || form.jobAddress?.label) && (
                     <div style={{ marginBottom: 4 }}>
                       <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Job Site</div>
-                      <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.job.join(", ")}</div>
+                      {form.jobAddress?.label && <div style={{ fontSize: 13, fontWeight: 700, color: "#333", lineHeight: 1.4 }}>{form.jobAddress.label}</div>}
+                      {bill.job.length > 0 && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.job.join(", ")}</div>}
                     </div>
                   )}
                 </>
               ) : (
-                bill.single.length > 0 && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.single.join(", ")}</div>
+                (bill.single.length > 0 || form.jobAddress?.label) && (
+                  <div>
+                    {form.jobAddress?.label && <div style={{ fontSize: 13, fontWeight: 700, color: "#333", lineHeight: 1.4 }}>{form.jobAddress.label}</div>}
+                    {bill.single.length > 0 && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.single.join(", ")}</div>}
+                  </div>
+                )
               )}
               <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
                 {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
@@ -6710,6 +6716,7 @@ function PublicViewerPage({ token }) {
       (linesOf(invForm.jobAddress).length && linesOf(invForm.jobAddress))
       || (linesOf(invForm.billingAddress).length && linesOf(invForm.billingAddress))
       || [ci.address1, ci.address2, ci.address3].filter(Boolean);
+    const jobLabel = invForm.jobAddress?.label || null;
     const fmtDate = (s) => {
       if (!s) return '';
       const d = new Date(s);
@@ -6828,8 +6835,9 @@ function PublicViewerPage({ token }) {
             <div style={{ flex: '1 1 240px' }}>
               <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
               <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
-              {addrLines.length > 0 && (
+              {(addrLines.length > 0 || jobLabel) && (
                 <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
+                  {jobLabel && <div style={{ fontWeight: 700, color: '#333', fontSize: 15 }}>{jobLabel}</div>}
                   {addrLines.map((l, i) => <div key={i}>{l}</div>)}
                 </div>
               )}

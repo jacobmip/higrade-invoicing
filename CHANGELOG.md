@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.1 — 2026-08-08
+
+### New Features
+- **Job site nickname on invoices** — when a property has a nickname (e.g. "Rental Unit B"), it now appears in bold above the address lines on the on-screen invoice preview, the printed/downloaded PDF, and the customer-facing public viewer link.
+
+---
+
 ## v1.2.0 — 2026-08-08
 
 ### New Features
