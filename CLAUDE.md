@@ -22,6 +22,10 @@ Read this file first. It captures everything an AI agent needs to safely continu
 10. **Verify Jake is logged into the right account before destructive RLS / chat-history work.** Past bug: chat history got moved to the wrong account because we didn't check first.
 11. **Before committing any changes to `src/App.jsx`, first copy it to `src/App.jsx.bak` and commit that backup as a separate commit with message "Backup App.jsx before [description of change]".** Push the backup commit before making any code changes. This gives Jake a one-command restore point: `cp src/App.jsx.bak src/App.jsx`.
 12. **Push directly to `main` — no feature branches, no PRs, no merge step.** Vercel auto-deploys from `main`, and Jake prefers commits to land live without an extra merge. Only work on a separate branch if Jake explicitly asks in that session. (If a session is launched pinned to a development branch, that pin overrides this for that session, but it is not the default Jake wants.)
+13. **Before every `git push origin main`, update `src/version.js` and `CHANGELOG.md`.**
+    - Bump the version: patch (+0.0.1) for bug fixes / small changes, minor (+0.1.0) for new features, major (+1.0.0) for big architectural changes. Also update `APP_BUILD_DATE` to today's date (YYYY-MM-DD).
+    - Prepend a new `## vX.Y.Z — YYYY-MM-DD` section to `CHANGELOG.md` describing every change in that push.
+    - Commit both files in the same commit as the code change (not a separate commit).
 
 ## Stack
 - **Frontend**: Vite + React (single-file `src/App.jsx`, ~8500 lines). No component split yet.

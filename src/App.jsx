@@ -10,6 +10,7 @@ import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo } from './billTo.js';
+import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -18,7 +19,6 @@ const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
 const NAVY2 = "#0f2040";
 const CACHE_KEY = "higrade_v6";
-const APP_VERSION = "1.1.0";
 const LIGHT = "#f4f6fa";
 const TAX_RATE = 4.712;
 const GLOBAL_HEADER_H = 64; // px — brand NAVY bar height, no subheader
@@ -8330,7 +8330,7 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
       )}
 
       <div style={{ textAlign: "center", color: "#aab1bf", fontSize: 11, padding: "24px 0 8px", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
-        HI GRADE INVOICING v{APP_VERSION}
+        HI GRADE INVOICING v{APP_VERSION} &nbsp;·&nbsp; {APP_BUILD_DATE}
       </div>
     </div>
   );
