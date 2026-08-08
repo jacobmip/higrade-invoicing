@@ -31,18 +31,26 @@ function normAddr(lines) {
 // "Job Site". When split is false, render `single` as a plain address line.
 export function resolveBillTo(form = {}, clientRecord = {}) {
   const jobLines = linesOf(form.jobAddress);
+
+  // Only an *explicitly-set* billing address triggers the split.
+  // The legacy flat-field fallback (address1/2/3) is deliberately excluded
+  // here: those fields contain job-site addresses for property-manager clients,
+  // not billing addresses. Using them caused a job-site address to appear
+  // labeled "Billing Address" whenever no real billing address was on file.
   const billingLines =
     (linesOf(form.billingAddress).length && linesOf(form.billingAddress)) ||
     (linesOf(clientRecord.billingAddress).length && linesOf(clientRecord.billingAddress)) ||
-    [clientRecord.address1, clientRecord.address2, clientRecord.address3].filter(Boolean);
+    [];
+
   const haveJob = jobLines.length > 0;
   const haveBilling = billingLines.length > 0;
   const differ = haveJob && haveBilling && normAddr(jobLines) !== normAddr(billingLines);
   if (differ) {
     return { split: true, billing: billingLines, job: jobLines, single: [] };
   }
-  // Single address: prefer the job site (most specific) when present, else the
-  // billing address.
-  const single = haveJob ? jobLines : billingLines;
+  // Single address: prefer job site, then explicit billing, then the legacy
+  // flat fields (homeowner clients who pre-date the addresses[] system).
+  const flatFallback = [clientRecord.address1, clientRecord.address2, clientRecord.address3].filter(Boolean);
+  const single = haveJob ? jobLines : (haveBilling ? billingLines : flatFallback);
   return { split: false, billing: billingLines, job: jobLines, single };
 }

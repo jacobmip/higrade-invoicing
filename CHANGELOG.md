@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.2 — 2026-08-08
+
+### Bug Fixes
+- **Billing Address / Job Site split incorrect for property managers** — when a client had no explicit billing address, `resolveBillTo` was falling back to the legacy `address1/2/3` flat fields and treating that old job-site address as the billing address. For any client with addresses in those flat fields plus a different job site selected, this caused a false split showing the flat-field address labeled "Billing Address". Fixed by removing the flat-field fallback from the split-decision path. The flat fields are still used as a last-resort for the *single* address display (homeowner clients who pre-date the addresses[] system), but they no longer trigger a split.
+
+---
+
 ## v1.2.1 — 2026-08-08
 
 ### New Features
