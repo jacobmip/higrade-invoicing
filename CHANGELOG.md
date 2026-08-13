@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.3 — 2026-08-08
+
+### New Features
+- **Property internal nickname** — each job-site property now has two name fields: "Name" (shown on invoices — what was previously called "Nickname") and "Internal Nickname" (admin-only, dashed border, never printed on invoices). Both are saved to the addresses[] JSON. The internal nickname appears in both the full client-edit modal and the quick "Add Property" form on invoices.
+
+---
+
 ## v1.2.2 — 2026-08-08
 
 ### Bug Fixes

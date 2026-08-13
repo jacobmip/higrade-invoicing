@@ -3949,7 +3949,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   onChange={e => {
                     const newId = e.target.value;
                     if (newId === "__add_property__") {
-                      setPropertyDraft({ id: newAddressId(), label: "", line1: "", line2: "", city: "", state: "HI", zip: "" });
+                      setPropertyDraft({ id: newAddressId(), label: "", nickname: "", line1: "", line2: "", city: "", state: "HI", zip: "" });
                       setAddingProperty(true);
                       return;
                     }
@@ -3988,10 +3988,18 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 <div style={{ ...S.label, marginBottom: 8 }}>Add Property</div>
                 <input
                   style={{ ...S.input, marginBottom: 8 }}
-                  placeholder="Nickname (optional, e.g. Unit 4B)"
+                  placeholder="Name (e.g. Unit 4B)"
                   value={propertyDraft.label}
                   onChange={e => setPropertyDraft(p => ({ ...p, label: e.target.value }))}
                 />
+                {isAdmin && (
+                  <input
+                    style={{ ...S.input, marginBottom: 8, borderStyle: "dashed", fontSize: 12 }}
+                    placeholder="Internal nickname — admin only, not on invoice"
+                    value={propertyDraft.nickname || ""}
+                    onChange={e => setPropertyDraft(p => ({ ...p, nickname: e.target.value }))}
+                  />
+                )}
                 <input
                   style={{ ...S.input, marginBottom: 8 }}
                   placeholder="Street address"
@@ -5136,7 +5144,10 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
             <span style={{ ...sectionLabelStyle, letterSpacing: 1 }}>Property {idx + 1}</span>
             <button type="button" onClick={() => { if (confirm("Remove this property?")) removeAddress(idx); }} style={{ background: "none", border: "none", color: "#cc4444", fontSize: 12, cursor: "pointer", padding: 4 }}>Remove</button>
           </div>
-          <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Nickname (e.g. Kaimuki Duplex)" />
+          <input style={{ ...S.input, marginBottom: 6 }} value={a.label || ""} onChange={e => setAddrField(idx, "label", e.target.value)} placeholder="Name (e.g. Unit 4B, Kaimuki Duplex)" />
+          {isAdmin && (
+            <input style={{ ...S.input, marginBottom: 6, borderStyle: "dashed", fontSize: 12 }} value={a.nickname || ""} onChange={e => setAddrField(idx, "nickname", e.target.value)} placeholder="Internal nickname — admin only, not shown on invoice" />
+          )}
           <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address"
             onBlur={async e => {
               if (!a.city && !a.zip) {
@@ -5218,6 +5229,7 @@ function normalizeClientDraft(draft) {
       return {
         id: a.id || newAddressId(),
         label: a.label || "",
+        nickname: a.nickname || "",
         line1: a.line1 || "",
         line2: a.line2 || "",
         line3,
