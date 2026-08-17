@@ -206,7 +206,9 @@ function drawBillTo(doc, form, y) {
     cy += 14;
   }
   if (bill.split) {
-    drawAddrLine("BILLING ADDRESS", bill.billing);
+    if (form.showBillingAddress ?? true) {
+      drawAddrLine("BILLING ADDRESS", bill.billing);
+    }
     drawAddrLine("JOB SITE", bill.job, form.jobAddress?.label || null);
   } else {
     drawAddrLine("", bill.single, form.jobAddress?.label || null);

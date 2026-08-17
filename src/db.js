@@ -27,6 +27,7 @@ function toInvoice(row, items = [], payments = []) {
     viewToken: row.view_token || null,
     jobAddress: row.job_address || null,
     billingAddress: row.billing_address || null,
+    showBillingAddress: row.show_billing_address ?? true,
     lateFeeWaived: row.late_fee_waived ?? false,
     // Down-payment workflow (estimates only — see migration 016).
     // downPaymentPct: 0–100, the % of the estimate total to bill on signing.
@@ -440,6 +441,7 @@ export async function upsertInvoice(inv, isNew) {
       down_payment_invoice_id: inv.downPaymentInvoiceId || null,
       job_address: inv.jobAddress || null,
       billing_address: inv.billingAddress || null,
+      show_billing_address: inv.showBillingAddress ?? true,
       late_fee_waived: inv.lateFeeWaived ?? false,
     },
     items: (inv.items || []).map((it, i) => ({

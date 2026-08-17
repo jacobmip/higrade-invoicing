@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.11 — 2026-08-17
+
+### New Features
+- **"Show billing address" toggle** — a checkbox appears below the client info card on the invoice edit form whenever a client has job site properties. Checked by default. Unchecking hides the billing address from the on-screen preview and printed/downloaded PDF. The setting is saved with the invoice. Requires migration 019 (see below).
+
+---
+
 ## v1.2.10 — 2026-08-17
 
 ### Bug Fixes

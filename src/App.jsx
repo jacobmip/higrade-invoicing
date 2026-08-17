@@ -2476,7 +2476,7 @@ function PDFPreview({ form, clients, photos = [] }) {
               </div>
               {bill.split ? (
                 <>
-                  {bill.billing.length > 0 && (
+                  {(form.showBillingAddress ?? true) && bill.billing.length > 0 && (
                     <div style={{ marginBottom: 4 }}>
                       <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
                       <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.billing.join(", ")}</div>
@@ -3063,7 +3063,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
   const [activeTab, setActiveTab] = useState(isReadOnly ? "preview" : "edit");
@@ -4012,6 +4012,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   setEditingClient(true);
                 }} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
               </div>
+            )}
+            {selectedClient && !editingClient && clientAddresses.length >= 1 && (
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={form.showBillingAddress ?? true}
+                  onChange={e => setForm(f => ({ ...f, showBillingAddress: e.target.checked }))}
+                  style={{ width: 16, height: 16, accentColor: NAVY, cursor: "pointer" }}
+                />
+                <span style={{ fontSize: 13, color: "#555" }}>Show billing address</span>
+              </label>
             )}
             {selectedClient && !editingClient && clientAddresses.length >= 1 && !addingProperty && (
               <div style={{ marginTop: 8 }}>
@@ -6701,6 +6712,7 @@ function PublicViewerPage({ token }) {
     clientInfo: state.invoice.client_info || null,
     billingAddress: state.invoice.billing_address || null,
     jobAddress: state.invoice.job_address || null,
+    showBillingAddress: state.invoice.show_billing_address ?? true,
     items: (state.items || []).sort((a, b) => a.sort_order - b.sort_order).map(it => ({
       name: it.name || '',
       desc: it.description ?? it.desc ?? '',
