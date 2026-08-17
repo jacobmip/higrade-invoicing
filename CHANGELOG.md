@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.4 — 2026-08-08
+
+### Bug Fixes
+- **Job site defaulting to first address on reopen** — `jobAddressId` is a session-only field that is never stored in the database; only the full `jobAddress` JSON snapshot is persisted. On reopen, `jobAddressId` was always `undefined`, causing the dropdown, `resolvedJobAddress`, and autosave to all fall through to `clientAddresses[0]` instead of the saved address. Fixed by computing `effectiveJobId = jobAddressId || jobAddress?.id` and using it everywhere the ID is needed, so the snapshot's embedded id is honored without requiring a separate DB column.
+
+---
+
 ## v1.2.3 — 2026-08-08
 
 ### New Features

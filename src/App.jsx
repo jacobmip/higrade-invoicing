@@ -3234,7 +3234,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       const f = formRef.current;
       const c = clients.find(x => x.name === f.client);
       const cAddrs = Array.isArray(c?.addresses) ? c.addresses : [];
-      const pickedJob = (f.jobAddressId && cAddrs.find(a => a.id === f.jobAddressId)) || f.jobAddress || cAddrs[0] || null;
+      // jobAddressId is session-only (never in DB); fall back to the snapshot's
+      // embedded id so reopened invoices pick the right address, not the first.
+      const effJobId = f.jobAddressId || f.jobAddress?.id || null;
+      const pickedJob = (effJobId && cAddrs.find(a => a.id === effJobId)) || f.jobAddress || cAddrs[0] || null;
       const billing = f.billingAddress || c?.billingAddress || null;
       const saved = await onAutoSave({
         ...f,
@@ -3389,12 +3392,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
 
   const selectedClient = clients.find(c => c.name === form.client);
   const clientAddresses = Array.isArray(selectedClient?.addresses) ? selectedClient.addresses : [];
-  // Resolve which job-site address applies to this invoice. Prefer the
-  // explicitly picked id, then the snapshot already saved on the invoice,
-  // then the client's first address.
+  // Resolve which job-site address applies to this invoice.
+  // jobAddressId is a session-only field — it is never stored in the DB;
+  // only the full jobAddress snapshot is persisted. So on load, jobAddressId
+  // is always undefined. Use the snapshot's embedded id as the tiebreaker
+  // before falling all the way back to the client's first address.
+  const effectiveJobId = form.jobAddressId || form.jobAddress?.id || null;
   const resolvedJobAddress = (() => {
-    if (form.jobAddressId && clientAddresses.length) {
-      const found = clientAddresses.find(a => a.id === form.jobAddressId);
+    if (effectiveJobId && clientAddresses.length) {
+      const found = clientAddresses.find(a => a.id === effectiveJobId);
       if (found) return found;
     }
     if (form.jobAddress) return form.jobAddress;
@@ -3945,7 +3951,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                 <label style={{ ...S.label, marginBottom: 4 }}>Job Site</label>
                 <select
                   style={{ ...S.input, background: "#fff", cursor: "pointer" }}
-                  value={form.jobAddressId || clientAddresses[0]?.id || ""}
+                  value={effectiveJobId || clientAddresses[0]?.id || ""}
                   onChange={e => {
                     const newId = e.target.value;
                     if (newId === "__add_property__") {
