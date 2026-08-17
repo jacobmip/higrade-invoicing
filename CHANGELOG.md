@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.9 — 2026-08-17
+
+### Changes
+- **Job site UI cleanup** — on the invoice edit form, the client info card no longer shows the address when a client has job site properties (the address is already shown via the job site dropdown). For homeowner clients with no properties, the address still appears in the client info card as before. The job site section is hidden entirely when a client has no properties. The preview card below the dropdown has been removed; the internal nickname now appears as a single small italic line directly below the dropdown (admin-only).
+
+---
+
 ## v1.2.8 — 2026-08-08
 
 ### Reverted
