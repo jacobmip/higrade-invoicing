@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.8 — 2026-08-08
+
+### Reverted
+- Removed nickname from the invoice Preview tab bill-to section (v1.2.6). Nickname stays admin-only in the edit form job site card only.
+
+---
+
 ## v1.2.7 — 2026-08-08
 
 ### New Features

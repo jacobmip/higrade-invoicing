@@ -2482,7 +2482,6 @@ function PDFPreview({ form, clients, photos = [] }) {
                     <div style={{ marginBottom: 4 }}>
                       <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Job Site</div>
                       {form.jobAddress?.label && <div style={{ fontSize: 13, fontWeight: 700, color: "#333", lineHeight: 1.4 }}>{form.jobAddress.label}</div>}
-                      {form.jobAddress?.nickname && <div style={{ fontSize: 11, color: "#8899bb", fontStyle: "italic", lineHeight: 1.4 }}>{form.jobAddress.nickname}</div>}
                       {bill.job.length > 0 && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.job.join(", ")}</div>}
                     </div>
                   )}
@@ -2491,7 +2490,6 @@ function PDFPreview({ form, clients, photos = [] }) {
                 (bill.single.length > 0 || form.jobAddress?.label) && (
                   <div>
                     {form.jobAddress?.label && <div style={{ fontSize: 13, fontWeight: 700, color: "#333", lineHeight: 1.4 }}>{form.jobAddress.label}</div>}
-                    {form.jobAddress?.nickname && <div style={{ fontSize: 11, color: "#8899bb", fontStyle: "italic", lineHeight: 1.4 }}>{form.jobAddress.nickname}</div>}
                     {bill.single.length > 0 && <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.single.join(", ")}</div>}
                   </div>
                 )
