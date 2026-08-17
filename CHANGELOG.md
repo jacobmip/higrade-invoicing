@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.6 — 2026-08-08
+
+### Bug Fixes
+- **Job site nickname missing from invoice preview** — the internal nickname was not appearing in the on-screen bill-to preview. Now shows in muted italic below the property name in both split and single address modes. Does not affect the printed PDF or customer-facing public viewer (nickname stays admin-only there).
+
+---
+
 ## v1.2.5 — 2026-08-08
 
 ### New Features
