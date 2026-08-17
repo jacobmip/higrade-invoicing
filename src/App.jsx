@@ -2469,7 +2469,11 @@ function PDFPreview({ form, clients, photos = [] }) {
           <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 7 }}>Bill To</div>
           {form.client ? (
             <>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 3 }}>{clientData.name || form.client}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 2 }}>{clientData.name || form.client}</div>
+              <div style={{ display: "flex", gap: 16, marginBottom: 4, flexWrap: "wrap" }}>
+                {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
+                {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
+              </div>
               {bill.split ? (
                 <>
                   {bill.billing.length > 0 && (
@@ -2494,10 +2498,6 @@ function PDFPreview({ form, clients, photos = [] }) {
                   </div>
                 )
               )}
-              <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
-                {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
-                {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
-              </div>
             </>
           ) : (
             <div style={{ fontSize: 13, color: "#bbb", fontStyle: "italic" }}>No client selected</div>
@@ -6925,15 +6925,15 @@ function PublicViewerPage({ token }) {
             <div style={{ flex: '1 1 240px' }}>
               <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
               <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
+              {(ci.phone || ci.email) && (
+                <div style={{ color: '#777', fontSize: 13, marginTop: 3 }}>
+                  {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
+                </div>
+              )}
               {(addrLines.length > 0 || jobLabel) && (
                 <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
                   {jobLabel && <div style={{ fontWeight: 700, color: '#333', fontSize: 15 }}>{jobLabel}</div>}
                   {addrLines.map((l, i) => <div key={i}>{l}</div>)}
-                </div>
-              )}
-              {(ci.phone || ci.email) && (
-                <div style={{ color: '#555', fontSize: 14, marginTop: 2 }}>
-                  {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
                 </div>
               )}
             </div>

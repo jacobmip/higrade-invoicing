@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.10 — 2026-08-17
+
+### Bug Fixes
+- **Phone/email position on invoice** — client phone and email now appear directly below the client name in the on-screen preview, public viewer, and printed PDF. Previously they appeared after the address block.
+
+---
+
 ## v1.2.9 — 2026-08-17
 
 ### Changes

@@ -197,12 +197,6 @@ function drawBillTo(doc, form, y) {
       cy += 16;
     }
   };
-  if (bill.split) {
-    drawAddrLine("BILLING ADDRESS", bill.billing);
-    drawAddrLine("JOB SITE", bill.job, form.jobAddress?.label || null);
-  } else {
-    drawAddrLine("", bill.single, form.jobAddress?.label || null);
-  }
   const contact = [data.phone, data.email].filter(Boolean).join(" · ");
   if (contact) {
     setText(doc, TEXT_LIGHT);
@@ -210,6 +204,12 @@ function drawBillTo(doc, form, y) {
     doc.setFontSize(11);
     doc.text(contact, MARGIN, cy);
     cy += 14;
+  }
+  if (bill.split) {
+    drawAddrLine("BILLING ADDRESS", bill.billing);
+    drawAddrLine("JOB SITE", bill.job, form.jobAddress?.label || null);
+  } else {
+    drawAddrLine("", bill.single, form.jobAddress?.label || null);
   }
 
   return Math.max(cy, y + 60); // bottom of section
