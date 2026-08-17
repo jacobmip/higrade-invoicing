@@ -7,7 +7,8 @@ export default async function handler(req) {
     // viewLink takes the customer to the trackable public viewer; from there
     // they click Review & Sign to reach the signing canvas. items kept for
     // legacy callers but no longer rendered (link-only design).
-    const { to, clientName, estimateId, total, viewLink, message } = await req.json();
+    const { to, ccAddresses, bccAdmin = true, clientName, estimateId, total, viewLink, message } = await req.json();
+    const ccList = Array.isArray(ccAddresses) ? ccAddresses.filter(Boolean) : [];
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) return new Response(JSON.stringify({ error: 'Email not configured' }), {
@@ -67,10 +68,9 @@ export default async function handler(req) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${resendKey}` },
       body: JSON.stringify({
         from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
-        to: [to],
-        // BCC Jake on every outbound customer email so he can see exactly
-        // what the customer received.
-        bcc: ['higradeplumbing@gmail.com'],
+        to: Array.isArray(to) ? to : [to],
+        ...(ccList.length > 0 ? { cc: ccList } : {}),
+        ...(bccAdmin ? { bcc: ['higradeplumbing@gmail.com'] } : {}),
         subject: `Estimate ${estimateId} from HI Grade Plumbing — Ready to Review`,
         html: body,
       }),

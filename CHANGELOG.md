@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.5 — 2026-08-08
+
+### New Features
+- **Multi-recipient email send** — the Send modal now lets you add unlimited email addresses. Client saved emails (email + email2) appear as toggleable chips. Below them an "Add another email…" input + "+" button lets you add any extra addresses on the fly; added addresses show with a × to remove them. First recipient is "TO", all others are "CC".
+- **Admin copy toggle** — a blue "Send me a copy" checkbox in the Send modal controls whether higradeplumbing@gmail.com is BCC'd. Checked by default (same as previous behavior); uncheck to send without a copy to admin on that specific send.
+
+---
+
 ## v1.2.4 — 2026-08-08
 
 ### Bug Fixes

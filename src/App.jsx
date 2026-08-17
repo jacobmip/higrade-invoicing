@@ -498,7 +498,7 @@ function stripActionBlocks(text) {
   return result.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-async function sendInvoiceEmail(invoice, client, message, viewLink) {
+async function sendInvoiceEmail(invoice, client, message, viewLink, toAddresses = null, bccAdmin = true) {
   const t = calcTotals(invoice);
   // Review-request links are only attached to invoice emails (estimates
   // get sent before the job is done, so we never ask for a review there).
@@ -525,8 +525,9 @@ async function sendInvoiceEmail(invoice, client, message, viewLink) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      to: client.email,
-      cc: client.email2 || "",
+      to: (toAddresses && toAddresses.length > 0) ? toAddresses[0] : (client.email || ""),
+      ccAddresses: (toAddresses && toAddresses.length > 1) ? toAddresses.slice(1) : (client.email2 ? [client.email2] : []),
+      bccAdmin,
       clientName: client.name,
       invoiceId: invoice.id,
       total: t.total.toFixed(2),
@@ -1444,15 +1445,42 @@ function hydrateTemplatesFromSettings(settings) {
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
   // kind: "invoice" | "estimate"
   const availEmails = [client?.email, client?.email2].filter(Boolean);
-  const [email, setEmail] = useState(client?.email || "");
+  // Pre-check the first saved email. User can toggle any saved email and
+  // add unlimited extra addresses via the + field.
   const [checkedEmails, setCheckedEmails] = useState(() => new Set(client?.email ? [client.email] : []));
-  const [name, setName]   = useState(client?.name  || invoice?.client || "");
+  const [extraEmails, setExtraEmails]     = useState([]);
+  const [extraInput, setExtraInput]       = useState("");
+  const [ccAdmin, setCcAdmin]             = useState(true);
+  const [name, setName]                   = useState(client?.name || invoice?.client || "");
   const t = calcTotals(invoice);
   const isEstimate = kind === "estimate";
+  // All recipients: checked client emails (in order) + manually added extras.
+  // First = TO, rest = CC.
   const orderedChecked = availEmails.filter(a => checkedEmails.has(a));
-  const toAddr = availEmails.length >= 2 ? (orderedChecked[0] || "") : email;
-  const ccAddr = availEmails.length >= 2 ? (orderedChecked[1] || "") : "";
-  const valid = /\S+@\S+\.\S+/.test(toAddr);
+  const allRecipients  = [...orderedChecked, ...extraEmails];
+  const valid = allRecipients.length > 0 && /\S+@\S+\.\S+/.test(allRecipients[0]);
+
+  const toggleClient = (addr) => {
+    setCheckedEmails(prev => {
+      const next = new Set(prev);
+      if (next.has(addr)) {
+        // Don't uncheck the last selected email if there are no extras.
+        if (next.size <= 1 && extraEmails.length === 0) return prev;
+        next.delete(addr);
+      } else {
+        next.add(addr);
+      }
+      return next;
+    });
+  };
+
+  const addExtra = () => {
+    const e = extraInput.trim().toLowerCase();
+    if (/\S+@\S+\.\S+/.test(e) && !allRecipients.includes(e)) {
+      setExtraEmails(prev => [...prev, e]);
+    }
+    setExtraInput("");
+  };
   const docNum = invoice?.id || (isEstimate ? "EST0000" : "INV0000");
   // Down-payment percentage (estimates only). 0 = no down payment requested.
   // When > 0, the customer's signature on the public viewer auto-creates a
@@ -1551,40 +1579,78 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
           <label style={S.label}>Recipient name</label>
           <input value={name} onChange={e => setName(e.target.value)} style={S.input} placeholder="Client name" />
 
-          <label style={{ ...S.label, marginTop: 10 }}>Send to email</label>
-          {availEmails.length >= 2 ? (
+          <label style={{ ...S.label, marginTop: 10 }}>Send to</label>
+
+          {/* Client saved emails — toggle to include/exclude */}
+          {availEmails.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
               {availEmails.map(addr => {
                 const checked = checkedEmails.has(addr);
-                const isCc = checked && orderedChecked[1] === addr;
+                const roleIdx = allRecipients.indexOf(addr);
                 return (
-                  <button
-                    key={addr}
-                    type="button"
-                    onClick={() => setCheckedEmails(prev => {
-                      const next = new Set(prev);
-                      if (next.has(addr) && next.size > 1) next.delete(addr);
-                      else if (!next.has(addr)) next.add(addr);
-                      return next;
-                    })}
+                  <button key={addr} type="button" onClick={() => toggleClient(addr)}
                     style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${checked ? ORANGE : "#dde2ee"}`, background: checked ? "#fff9f5" : "#fafbfd", cursor: "pointer", textAlign: "left", fontFamily: "'Barlow', sans-serif" }}
                   >
                     <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${checked ? ORANGE : "#c8cedc"}`, background: checked ? ORANGE : "#fff", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       {checked && <svg width="10" height="8" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>}
                     </div>
                     <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, color: "#222", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{addr}</div>
-                    {checked && <div style={{ fontSize: 10, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, color: ORANGE, flexShrink: 0 }}>{isCc ? "CC" : "TO"}</div>}
+                    {checked && <div style={{ fontSize: 10, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, color: ORANGE, flexShrink: 0 }}>{roleIdx === 0 ? "TO" : "CC"}</div>}
                   </button>
                 );
               })}
-              {!valid && <div style={{ fontSize: 11, color: "#cc4444" }}>Select at least one valid email.</div>}
             </div>
-          ) : (
-            <>
-              <input value={email} onChange={e => setEmail(e.target.value)} style={S.input} placeholder="name@example.com" type="email" autoCapitalize="none" autoCorrect="off" />
-              {!valid && email.length > 0 && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 4 }}>That doesn't look like a valid email.</div>}
-            </>
           )}
+
+          {/* Manually added extra recipients */}
+          {extraEmails.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+              {extraEmails.map((addr, i) => {
+                const roleIdx = allRecipients.indexOf(addr);
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${ORANGE}`, background: "#fff9f5" }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 4, background: ORANGE, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg width="10" height="8" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: "#222", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{addr}</div>
+                    <div style={{ fontSize: 10, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, color: ORANGE, flexShrink: 0, marginRight: 4 }}>{roleIdx === 0 ? "TO" : "CC"}</div>
+                    <button type="button" onClick={() => setExtraEmails(prev => prev.filter((_, j) => j !== i))}
+                      style={{ background: "none", border: "none", color: "#cc4444", fontSize: 18, lineHeight: 1, cursor: "pointer", padding: "0 2px", flexShrink: 0 }}
+                    >×</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add email row */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+            <input
+              value={extraInput}
+              onChange={e => setExtraInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addExtra(); } }}
+              style={{ ...S.input, flex: 1, marginBottom: 0 }}
+              placeholder={allRecipients.length === 0 ? "name@example.com" : "Add another email…"}
+              type="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <button type="button" onClick={addExtra}
+              disabled={!/\S+@\S+\.\S+/.test(extraInput.trim())}
+              style={{ background: ORANGE, border: "none", borderRadius: 8, color: "#fff", fontSize: 22, fontWeight: 300, lineHeight: 1, padding: "0 16px", cursor: "pointer", flexShrink: 0, opacity: /\S+@\S+\.\S+/.test(extraInput.trim()) ? 1 : 0.35 }}
+            >+</button>
+          </div>
+          {!valid && allRecipients.length === 0 && <div style={{ fontSize: 11, color: "#cc4444", marginBottom: 6 }}>Add at least one email address.</div>}
+
+          {/* Admin copy toggle */}
+          <button type="button" onClick={() => setCcAdmin(v => !v)}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${ccAdmin ? "#3a7bd5" : "#dde2ee"}`, background: ccAdmin ? "#f0f6ff" : "#fafbfd", cursor: "pointer", marginBottom: 4, textAlign: "left", fontFamily: "'Barlow', sans-serif" }}
+          >
+            <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${ccAdmin ? "#3a7bd5" : "#c8cedc"}`, background: ccAdmin ? "#3a7bd5" : "#fff", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {ccAdmin && <svg width="10" height="8" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>}
+            </div>
+            <div style={{ flex: 1, fontSize: 13, color: "#333" }}>Send me a copy <span style={{ color: "#888", fontSize: 12 }}>(BCC to admin)</span></div>
+          </button>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 4 }}>
             <label style={{ ...S.label, marginBottom: 0 }}>Message</label>
@@ -1607,7 +1673,7 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
 
         <div style={{ display: "flex", gap: 10, padding: "16px 20px 0" }}>
           <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
-          <button onClick={() => valid && onConfirm({ name, email: toAddr, ccEmail: ccAddr, message, downPaymentPct: downPct })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
+          <button onClick={() => valid && onConfirm({ name, toAddresses: allRecipients, ccAdmin, message, downPaymentPct: downPct })} disabled={!valid || sending} style={{ ...S.btn("primary"), flex: 2, opacity: (!valid || sending) ? 0.5 : 1 }}>
             {sending ? "Sending…" : (isEstimate ? "Send Estimate" : "Send Invoice")}
           </button>
         </div>
@@ -3499,9 +3565,10 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   // For estimates, downPaymentPct is the share of the total to bill when the
   // customer signs (0 = none). We persist it on the estimate row before
   // sending so submit-signature.js can read it back when the customer signs.
-  const handleConfirmedSend = async ({ name, email, ccEmail = "", message, downPaymentPct }) => {
+  const handleConfirmedSend = async ({ name, toAddresses = [], ccAdmin = true, message, downPaymentPct }) => {
     autoUpdateDueDate(form, setForm, onPartialSave);
-    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email, email2: ccEmail, name };
+    const primaryEmail = toAddresses[0] || "";
+    const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email: primaryEmail, name };
     setSending(true);
     // Persist the chosen down-payment percent on the estimate. Best-effort:
     // if this fails we still send the email, but the customer's signature
@@ -3528,25 +3595,25 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       if (confirmSend === "estimate") {
         const t2 = calcTotals(form);
         const items = form.items.map(it => ({ name: it.name, total: calcItemTotal(it).toFixed(2) }));
-        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: email, cc: ccEmail || "", clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" }) });
+        await fetch(api("/api/send-estimate"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: primaryEmail, ccAddresses: toAddresses.slice(1), bccAdmin: ccAdmin, clientName: name, estimateId: form.id || "EST0000", total: t2.total.toFixed(2), viewLink, items, message: message || "" }) });
         // Log a "sent" activity event + snapshot version (both best-effort).
         if (form.id) {
-          try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'estimate' }); }
+          try { await db.recordInvoiceEvent(form.id, 'sent', primaryEmail, { kind: 'estimate' }); }
           catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-          try { await db.recordInvoiceVersion(form, email, "Estimate sent"); }
+          try { await db.recordInvoiceVersion(form, primaryEmail, "Estimate sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
         }
         alert("Estimate sent. The link in the email will be tracked when opened.");
       } else {
-        const result = await sendInvoiceEmail(form, client, message, viewLink);
+        const result = await sendInvoiceEmail(form, client, message, viewLink, toAddresses, ccAdmin);
         if (result?.error) {
           setEmailStatus("Failed");
         } else {
           setEmailStatus("✓ Sent!");
           if (form.id) {
-            try { await db.recordInvoiceEvent(form.id, 'sent', email, { kind: 'invoice' }); }
+            try { await db.recordInvoiceEvent(form.id, 'sent', primaryEmail, { kind: 'invoice' }); }
             catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-            try { await db.recordInvoiceVersion(form, email, "Invoice sent"); }
+            try { await db.recordInvoiceVersion(form, primaryEmail, "Invoice sent"); }
             catch (e) { console.warn('Version snapshot failed:', e); }
           }
         }

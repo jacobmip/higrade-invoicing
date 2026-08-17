@@ -6,7 +6,13 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
+    // ccAddresses is the new multi-recipient field (array). cc is the legacy
+    // single-string field. Merge them and deduplicate.
+    const ccList = [...new Set([
+      ...(Array.isArray(ccAddresses) ? ccAddresses : (ccAddresses ? [ccAddresses] : [])),
+      ...(cc && cc.trim() ? [cc.trim()] : []),
+    ])].filter(Boolean);
 
     const resendKey = process.env.RESEND_API_KEY;
     if (!resendKey) {
@@ -131,12 +137,11 @@ export default async function handler(req) {
       },
       body: JSON.stringify({
         from: 'HI Grade Plumbing <invoices@higradeplumbing.com>',
-        to: [to],
-        ...(cc && cc.trim() ? { cc: [cc.trim()] } : {}),
-        // BCC Jake on every outbound customer email so he can see exactly
-        // what the customer received. Resend silently hides this from the
-        // primary recipient.
-        bcc: ['higradeplumbing@gmail.com'],
+        to: Array.isArray(to) ? to : [to],
+        ...(ccList.length > 0 ? { cc: ccList } : {}),
+        // BCC Jake on every outbound customer email unless he opted out
+        // for this specific send (bccAdmin=false in the modal).
+        ...(bccAdmin ? { bcc: ['higradeplumbing@gmail.com'] } : {}),
         subject: isPaidInFull
           ? `Mahalo \u2014 ${invoiceId} paid in full`
           : `Invoice ${invoiceId} from HI Grade Plumbing`,
