@@ -4056,6 +4056,15 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   })}
                   <option value="__add_property__">+ Add new property…</option>
                 </select>
+                {resolvedJobAddress && (
+                  <div style={{ marginTop: 6, background: "#f7f9fc", border: "1px solid #e0e6f0", borderRadius: 8, padding: "9px 13px" }}>
+                    {resolvedJobAddress.label && <div style={{ fontSize: 13, fontWeight: 700, color: "#1a2340", lineHeight: 1.4 }}>{resolvedJobAddress.label}</div>}
+                    {isAdmin && resolvedJobAddress.nickname && <div style={{ fontSize: 12, color: "#8899bb", fontStyle: "italic", lineHeight: 1.4 }}>{resolvedJobAddress.nickname}</div>}
+                    {[resolvedJobAddress.line1, resolvedJobAddress.line2, resolvedJobAddress.line3].filter(Boolean).map((l, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>{l}</div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {addingProperty && propertyDraft && (

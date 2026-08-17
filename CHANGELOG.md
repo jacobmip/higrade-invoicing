@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.7 — 2026-08-08
+
+### New Features
+- **Job site preview card on invoice edit form** — selecting a job site from the dropdown now shows a small card below it with the full address details: property name in bold, internal nickname in muted italic (admin only), and all three address lines. Makes it easy to confirm you have the right property selected without switching to the Preview tab.
+
+---
+
 ## v1.2.6 — 2026-08-08
 
 ### Bug Fixes
