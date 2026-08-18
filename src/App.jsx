@@ -2333,7 +2333,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
               <Icon name="ai" size={12} color={improving ? "#aaa" : "#fff"} />{improving ? "Improving…" : "AI Improve"}
             </button>
           </div>
-          <input style={{ ...S.input, fontWeight: 600 }} value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Drain Clean – Snake" autoFocus />
+          <input style={{ ...S.input, fontWeight: 600 }} value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Drain Clean – Snake" />
         </div>
 
         {/* Description */}

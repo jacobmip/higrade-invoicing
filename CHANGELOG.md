@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.13 — 2026-08-17
+
+### Bug Fixes
+- **Keyboard auto-opens on line item edit modal** — removed `autoFocus` from the item name field so the keyboard no longer pops up automatically when the modal opens on mobile.
+
+---
+
 ## v1.2.12 — 2026-08-17
 
 ### Bug Fixes
