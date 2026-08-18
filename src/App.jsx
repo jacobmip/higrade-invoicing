@@ -2339,7 +2339,21 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
         {/* Description */}
         <div style={{ marginBottom: 12 }}>
           <label style={S.label}>Description <span style={{ fontWeight: 400, color: "#aaa", textTransform: "none", letterSpacing: 0 }}>(optional)</span></label>
-          <textarea style={{ ...S.input, height: 64, resize: "none", color: "#555" }} value={form.desc} onChange={e => set("desc", e.target.value)} placeholder="Notes about the work done…" />
+          <textarea
+            style={{ ...S.input, minHeight: 100, resize: "none", color: "#555", overflow: "hidden" }}
+            value={form.desc}
+            onChange={e => {
+              set("desc", e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = e.target.scrollHeight + "px";
+            }}
+            onInput={e => {
+              e.target.style.height = "auto";
+              e.target.style.height = e.target.scrollHeight + "px";
+            }}
+            ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+            placeholder="Notes about the work done…"
+          />
         </div>
 
         {/* Qty / Unit / Price */}

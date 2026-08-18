@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.2.12 — 2026-08-17
+
+### Bug Fixes
+- **Line item description box too small** — textarea now starts at 100px (~5 lines) and auto-grows as you type. No more scrolling through the text.
+
+---
+
 ## v1.2.11 — 2026-08-17
 
 ### New Features
