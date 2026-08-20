@@ -15,6 +15,8 @@ function toInvoice(row, items = [], payments = []) {
     discount: parseFloat(row.discount ?? 0),
     discountType: row.discount_type || '$',
     notes: row.notes || '',
+    internalNotes: row.internal_notes || '',
+    source: row.source || null,
     year: row.year,
     gcalDate: row.gcal_date || null,
     gcalEventId: row.gcal_event_id || null,
