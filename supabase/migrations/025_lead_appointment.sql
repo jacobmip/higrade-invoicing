@@ -1,53 +1,15 @@
--- 021_lead_internal_notes.sql
--- ─── Clean lead capture + auto-priced line items from the price book ─────────
+-- 025_lead_appointment.sql
+-- Adds p_appointment to create_estimate_from_lead so Lisa can pencil in a
+-- preferred visit time. Stored in invoices.gcal_date (same field the app's own
+-- Schedule Job modal uses), so the job shows on the app's internal schedule
+-- immediately — no Google Calendar connection required. gcal_event_id stays
+-- null until Jake taps "Schedule" to push it to Google.
 --
--- Supersedes the 020 version of create_estimate_from_lead. Two upgrades:
---
---   1. Clean data placement (fixes the "everything dumped in customer notes"
---      problem from 020):
---        contact   -> client record (matched/created)
---        address   -> invoices.job_address (jsonb)
---        the rest  -> invoices.internal_notes (private, admin/staff only)
---        customer notes -> left empty
---      Plus invoices.source = 'ai_lead' so the lead text fires ONLY for AI
---      captures, never manual estimates/invoices.
---
---   2. Auto-pricing. Lisa matches the caller's problem to service name(s) from
---      the price book (saved_items) and passes them in p_services. The function
---      looks each up and creates a real, priced line item — as if Jake were
---      about to do the job. Falls back to "Service Call / Diagnostic" if nothing
---      matches.
---
--- save_invoice_with_items is intentionally NOT modified — it already leaves the
--- new columns (internal_notes, source) untouched on save, so they're preserved.
+-- New 12-arg signature; the 11-arg version from 024 is dropped to avoid
+-- overload ambiguity.
 
-alter table public.invoices
-  add column if not exists internal_notes text,
-  add column if not exists source         text;
-
--- Edit the private notes in isolation (does not touch updated_at, so it can't
--- trip the main save's optimistic lock).
-create or replace function public.set_invoice_internal_notes(
-  p_id text,
-  p_internal_notes text
-) returns void
-language sql
-security definer
-set search_path = public
-as $$
-  update public.invoices
-     set internal_notes = p_internal_notes
-   where id = p_id;
-$$;
-
-grant execute on function public.set_invoice_internal_notes(text, text)
-  to anon, authenticated;
-
--- ─── Reworked lead → auto-priced draft estimate ─────────────────────────────
--- Drop the 10-arg version from migration 020 so the new 11-arg version below
--- isn't ambiguous with it when called without p_services.
 drop function if exists public.create_estimate_from_lead(
-  text, text, text, text, text, text, text, text, text, text
+  text, text, text, text, text, text, text, text, text, text, text[]
 );
 
 create or replace function public.create_estimate_from_lead(
@@ -61,14 +23,14 @@ create or replace function public.create_estimate_from_lead(
   p_owner_or_tenant text default null,
   p_new_or_existing text default null,
   p_heard_from      text default null,
-  p_services        text[] default null   -- price-book service names Lisa matched
+  p_services        text[] default null,
+  p_appointment     text default null   -- ISO local 'YYYY-MM-DDTHH:MM' Hawaii time
 ) returns jsonb
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  -- Jake's price-book owner scope (see 20260515_price_book_seed.sql).
   c_owner    constant uuid := '0a3bcefd-6faf-4bae-b43b-cd4492dd9938';
   v_secret        text;
   v_phone_digits  text;
@@ -96,7 +58,6 @@ begin
     raise exception 'INVALID_INPUT: caller name is required';
   end if;
 
-  -- Match an existing client on the last 10 digits of the phone.
   v_phone_digits := right(regexp_replace(coalesce(p_phone, ''), '\D', '', 'g'), 10);
   if length(v_phone_digits) = 10 then
     select id into v_client_id
@@ -114,7 +75,6 @@ begin
     v_is_new_client := true;
   end if;
 
-  -- Next EST#### number, collision-safe (mirrors the app's own counter).
   select max((regexp_replace(id, '\D', '', 'g'))::int) into v_max
     from public.invoices
    where type = 'estimate' and id ~ '^EST[0-9]+$';
@@ -127,8 +87,6 @@ begin
     v_num := v_num + 1;
   end loop;
 
-  -- Private, admin/staff-only notes. Includes the caller's verbatim words so
-  -- Jake sees exactly what was said, even though the priced line drives the doc.
   v_internal :=
       'AI receptionist (Lisa) lead — ' || to_char(now(), 'Mon DD, HH12:MI AM') || E'\n' ||
       'Caller''s words: '   || coalesce(nullif(trim(p_problem), ''), '(not specified)') || E'\n' ||
@@ -152,15 +110,15 @@ begin
 
   insert into public.invoices (
     id, type, client_id, client_name, date, status,
-    notes, internal_notes, source, job_address, year,
+    notes, internal_notes, source, job_address, gcal_date, year,
     client_info, view_token, updated_at
   ) values (
     v_id, 'estimate', v_client_id, p_name, current_date, 'outstanding',
     '', v_internal, 'ai_lead', v_job_address,
+    nullif(trim(coalesce(p_appointment, '')), '')::timestamptz,
     extract(year from current_date)::int, v_client_info, v_token, now()
   );
 
-  -- Auto-price: one line item per matched price-book service.
   if p_services is not null then
     foreach v_svc in array p_services loop
       if coalesce(trim(v_svc), '') = '' then continue; end if;
@@ -168,7 +126,7 @@ begin
         from public.saved_items
        where owner_id = c_owner
          and (lower(name) = lower(trim(v_svc)) or name ilike '%' || trim(v_svc) || '%')
-       order by (lower(name) = lower(trim(v_svc))) desc  -- exact match first
+       order by (lower(name) = lower(trim(v_svc))) desc
        limit 1;
       if found then
         insert into public.invoice_items (invoice_id, name, description, qty, price, unit, taxable, sort_order)
@@ -180,7 +138,6 @@ begin
     end loop;
   end if;
 
-  -- Nothing matched → fall back to a diagnostic service call from the book.
   if v_matched = 0 then
     select name, description, price, unit, taxable into v_item
       from public.saved_items
@@ -206,11 +163,12 @@ begin
     'client_id',      v_client_id,
     'is_new_client',  v_is_new_client,
     'items_priced',   greatest(v_matched, 1),
+    'appointment',    nullif(trim(coalesce(p_appointment, '')), ''),
     'view_token',     v_token
   );
 end;
 $$;
 
 grant execute on function public.create_estimate_from_lead(
-  text, text, text, text, text, text, text, text, text, text, text[]
+  text, text, text, text, text, text, text, text, text, text, text[], text
 ) to anon, authenticated;

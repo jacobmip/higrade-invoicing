@@ -1,4 +1,4 @@
--- 023_lead_sms_alert.sql
+-- 026_lead_sms_alert.sql
 -- Texts Jake whenever an AI-captured lead estimate is created (source='ai_lead').
 -- Never fires on manual estimates/invoices. Wrapped so a texting failure can
 -- never block the estimate from saving.

@@ -1,5 +1,5 @@
--- 024_lead_email_alert.sql
--- Supersedes 023's SMS alert. SMS is blocked until the Twilio number completes
+-- 027_lead_email_alert.sql
+-- Supersedes 026's SMS alert. SMS is blocked until the Twilio number completes
 -- A2P 10DLC registration (carrier error 30034 — unregistered number). Until
 -- then, notify Jake via EMAIL through the app's existing /api/send-email
 -- endpoint (Resend key already configured there) + an in-app notification row.
@@ -8,7 +8,7 @@
 --  * gcal_date is a TEXT column, so cast to timestamptz before to_char.
 --  * 20s pg_net timeout so a cold Vercel function doesn't time out.
 --  * Whole body wrapped so a notification failure never blocks the estimate.
---  * Once A2P 10DLC is approved, re-add the Twilio SMS send (see 023) alongside
+--  * Once A2P 10DLC is approved, re-add the Twilio SMS send (see 026) alongside
 --    or instead of the email.
 
 create or replace function public.notify_owner_of_lead()
@@ -50,5 +50,5 @@ begin
 end;
 $$;
 
--- Trigger already exists from 023 (trg_notify_owner_of_lead) pointing at this
+-- Trigger already exists from 026 (trg_notify_owner_of_lead) pointing at this
 -- function; create-or-replace above updates the behavior in place.
