@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, ccAddresses, bccAdmin = true, subject, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
     // ccAddresses is the new multi-recipient field (array). cc is the legacy
     // single-string field. Merge them and deduplicate.
     const ccList = [...new Set([
@@ -129,6 +129,60 @@ export default async function handler(req) {
       </div>
     `;
 
+    // ─── AI receptionist lead alert ──────────────────────────────────────────
+    // An internal note to Jake, not a customer document. The invoice template
+    // above renders letterhead, a license number, a currency label and a
+    // "Review & Pay" button, none of which belong on a lead, and they pushed
+    // the name and callback number below the fold. The action that actually
+    // matters on a lead is calling the person back, so the phone number is the
+    // button. Triggered by template: 'lead' from notify_owner_of_lead().
+    const isLead = template === 'lead';
+
+    const digits = String(leadPhone || '').replace(/\D/g, '');
+    const telHref = digits ? `tel:${digits.length === 10 ? '+1' : ''}${digits}` : '';
+    const prettyPhone = digits.length === 10
+      ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+      : (leadPhone || 'no number given');
+
+    const callBtn = telHref
+      ? `<a href="${escapeHtml(telHref)}" style="display:inline-block;background:#0070ba;color:#ffffff;text-decoration:none;font-size:19px;font-weight:bold;padding:14px 32px;border-radius:6px;">
+           ${escapeHtml(prettyPhone)}
+         </a>
+         <p style="color:#999;font-size:12px;margin:8px 0 0;">Tap to call back</p>`
+      : `<p style="color:#c0392b;font-size:16px;font-weight:bold;margin:0;">No callback number captured</p>`;
+
+    const whenBlock = leadWhen
+      ? `<div style="margin:18px 0 0;padding:12px 14px;background:#fff8e6;border:1px solid #f0dfae;border-radius:8px;">
+           <p style="color:#8a6d1f;font-size:13px;margin:0;"><strong>Requested time:</strong> ${escapeHtml(leadWhen)}</p>
+         </div>`
+      : '';
+
+    const detailsBlock = leadDetails
+      ? `<div style="margin:18px 0 0;padding:14px;background:#f5f7fa;border:1px solid #e8ecf4;border-radius:8px;">
+           <p style="color:#66748c;font-size:11px;font-weight:bold;letter-spacing:1px;margin:0 0 8px;">WHAT THEY SAID</p>
+           <div style="color:#333;font-size:14px;line-height:1.6;">${escapeHtml(leadDetails).replace(/\n/g, '<br>')}</div>
+         </div>`
+      : '';
+
+    const leadHtml = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;max-width:520px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e3e8f0;">
+        <div style="background:#0a1628;padding:14px 20px;">
+          <p style="color:#7fd1a3;font-size:11px;font-weight:bold;letter-spacing:2px;margin:0;">NEW LEAD &middot; LISA</p>
+        </div>
+        <div style="padding:22px 20px;text-align:center;">
+          <p style="color:#0a1628;font-size:21px;font-weight:bold;margin:0 0 14px;">${escapeHtml(clientName || 'Unknown caller')}</p>
+          ${callBtn}
+          <div style="text-align:left;">
+            ${whenBlock}
+            ${detailsBlock}
+          </div>
+          <p style="color:#8894a8;font-size:12px;margin:20px 0 0;text-align:left;">
+            Draft estimate <strong>${escapeHtml(invoiceId || '')}</strong> is waiting in the app.
+          </p>
+        </div>
+      </div>
+    `;
+
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -150,7 +204,7 @@ export default async function handler(req) {
           : (isPaidInFull
               ? `Mahalo \u2014 ${invoiceId} paid in full`
               : `Invoice ${invoiceId} from HI Grade Plumbing`),
-        html: emailBody,
+        html: isLead ? leadHtml : emailBody,
       }),
     });
 
