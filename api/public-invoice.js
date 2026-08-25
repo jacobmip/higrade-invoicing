@@ -36,6 +36,37 @@ function supaUrl() {
   return process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || SUPABASE_URL_FALLBACK;
 }
 
+// Columns the customer-facing viewer is allowed to see.
+//
+// This list is a security boundary, not an optimisation. PostgREST returns
+// EVERY column when no select= is given, and this route hands the whole row
+// to the browser, so before this existed a customer could open devtools on
+// their own estimate link and read internal_notes — which now carries the AI
+// receptionist's lead capture and is where staff are told to put gate codes,
+// access instructions and account history.
+//
+// Derived from every invoice.<field> reference in PublicViewerPage. If the
+// viewer starts showing a new field, add it here deliberately. Never widen
+// this to '*'.
+const PUBLIC_FIELDS = [
+  'id',
+  'type',
+  'status',
+  'client_name',
+  'client_info',
+  'date',
+  'due_date',
+  'tax',
+  'discount',
+  'discount_type',
+  'notes',
+  'job_address',
+  'billing_address',
+  'show_billing_address',
+  'down_payment_pct',
+  'converted_to_id',
+].join(',');
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
 
@@ -52,7 +83,10 @@ export default async function handler(req, res) {
 
   try {
     const invRes = await fetch(
-      `${base}/rest/v1/invoices?view_token=eq.${encodeURIComponent(token)}&limit=1`,
+      // deleted_at filter: a soft-deleted invoice must stop being publicly
+      // viewable. Without it, every invoice ever deleted stayed readable to
+      // anyone still holding its link.
+      `${base}/rest/v1/invoices?view_token=eq.${encodeURIComponent(token)}&deleted_at=is.null&select=${PUBLIC_FIELDS}&limit=1`,
       { headers }
     );
     if (!invRes.ok) {
