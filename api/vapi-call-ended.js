@@ -59,6 +59,16 @@ function extractType(p) {
   return m?.type || p?.type || null;
 }
 
+function extractTranscript(p) {
+  const m = p?.message || p || {};
+  return m?.artifact?.transcript || m?.transcript || m?.call?.transcript || null;
+}
+
+function extractSummary(p) {
+  const m = p?.message || p || {};
+  return m?.analysis?.summary || m?.summary || null;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
 
@@ -94,6 +104,34 @@ export default async function handler(req, res) {
     return json(res, 200, { ok: true, skipped: 'no caller number in payload' });
   }
 
+  // ─── Safety net: never lose a caller who hung up ─────────────────────────
+  // Lisa files the estimate at the END of the call, once she has everything,
+  // which is what produces complete, correctly priced estimates. The cost is
+  // that a hangup part-way through leaves no record at all. A live test on
+  // 2026-08-25 ran 87 seconds and produced nothing: no estimate, no email, no
+  // number to call back.
+  //
+  // capture_abandoned_call() no-ops when the call already filed a lead, so on
+  // a normal completed call this does nothing. Runs before the SMS branch so
+  // the lead is captured even while outbound texting is blocked by A2P.
+  let rescued = null;
+  try {
+    rescued = await rpc('capture_abandoned_call', {
+      p_secret: expected,
+      p_caller_id: to,
+      p_call_id: callId,
+      p_transcript: extractTranscript(params),
+      p_summary: extractSummary(params),
+    });
+    if (rescued?.created) {
+      console.log('[vapi-call-ended] abandoned call captured', {
+        to, estimate: rescued.estimate_id,
+      });
+    }
+  } catch (e) {
+    console.error('[vapi-call-ended] abandoned-call capture failed:', e.message || e);
+  }
+
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
   if (!enabled) {
     console.log('[vapi-call-ended] send skipped, sms_outbound_enabled is false', { to, callId });
@@ -101,6 +139,7 @@ export default async function handler(req, res) {
       ok: true,
       skipped: 'sms_outbound_enabled is false (A2P 10DLC not registered)',
       wouldHaveSentTo: to,
+      leadCapture: rescued,
     });
   }
 
