@@ -3073,7 +3073,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
+function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3660,6 +3660,31 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
     if (!confirm(msg)) return;
     onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
+  };
+
+  // ─── Estimate ↔ invoice cross-link ─────────────────────────────────────────
+  // A converted estimate records the new invoice's id in convertedToId (the
+  // down-payment flow uses downPaymentInvoiceId). There is no column pointing
+  // the other way, so the invoice → estimate direction is resolved by scanning
+  // the loaded docs for whichever estimate claims this invoice. Once a pair
+  // exists the Convert button becomes a jump-to-the-counterpart button, so the
+  // two documents are always one tap apart.
+  const linkedDoc = useMemo(() => {
+    const all = data?.invoices || [];
+    const byId = (id) => (id ? all.find(d => d.id === id) : null);
+    if (isEstimate) {
+      return byId(form.convertedToId) || byId(form.downPaymentInvoiceId) || null;
+    }
+    return all.find(d => d.type === "estimate" && (d.convertedToId === form.id || d.downPaymentInvoiceId === form.id)) || null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.invoices, isEstimate, form.id, form.convertedToId, form.downPaymentInvoiceId]);
+
+  // Flush any pending auto-save before swapping the form over, otherwise the
+  // in-flight edit would be written against the doc we just navigated away from.
+  const handleOpenLinked = async () => {
+    if (!linkedDoc) return;
+    try { await flushAutoSaveRef.current(); } catch (e) { console.warn('flush before cross-link failed:', e); }
+    onOpenLinked?.(linkedDoc);
   };
 
   const saveSnapshot = async (note) => {
@@ -4496,7 +4521,12 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={handlePrint} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="print" size={16} color="#444" /> Print / PDF</button>
-              {invoice && onConvert && (
+              {invoice && linkedDoc && (
+                <button onClick={handleOpenLinked} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <Icon name="swap" size={16} color={ORANGE} /> {isEstimate ? "→ " : "← "}{linkedDoc.id}
+                </button>
+              )}
+              {invoice && !linkedDoc && onConvert && (
                 <button onClick={handleConvert} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   <Icon name="swap" size={16} color="#444" /> {isEstimate ? "→ Invoice" : "→ Estimate"}
                 </button>
@@ -9672,6 +9702,11 @@ export default function App() {
       // is brand new and viewToken must be unique across all invoices.
       convertedToId: null,
       viewToken: null,
+      // Down-payment settings belong to the estimate, not the invoice it
+      // becomes. Carrying them over made the new invoice think it still owed
+      // a deposit and left it pointing at another invoice.
+      downPaymentPct: targetType === "estimate" ? (form.downPaymentPct || 0) : 0,
+      downPaymentInvoiceId: null,
       notes: form.notes ? form.notes : "",
     };
     // Two flows:
@@ -10067,6 +10102,7 @@ export default function App() {
             }}
             onOpenClient={(c) => { setView("list"); setTab("clients"); setOpenClientId(c.id); }}
             onConvert={convertInvoice}
+            onOpenLinked={(doc) => { setSelected(doc); setTab(doc.type === "estimate" ? "estimates" : "invoices"); }}
             isAdmin={isAdmin}
             isReadOnly={previewReadOnly}
             onRestore={restoreInvoice}

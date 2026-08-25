@@ -5,6 +5,18 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.3.0 — 2026-08-25
+
+### New Features
+- **Estimate ↔ invoice cross-link button** — once an estimate has been converted, the "→ Invoice" button on the form turns into a jump button showing the counterpart's number (e.g. `→ INV0456`). Open that invoice and the same button reads `← EST0123` and takes you straight back. Works for both conversion paths: the in-app Convert button and the automatic conversion that fires when a customer pays a down payment online. Any pending edit is auto-saved before the form swaps over.
+
+### Bug Fixes
+- **Down-payment invoice was invisible after an online payment** — when a customer paid a down payment through the estimate link, `/api/paypal-capture-order` created the new INV#### row using the service-role key. `auth.uid()` is NULL there, so the `set_owner_id` trigger left `owner_id` NULL and RLS hid the row. The invoice existed in the database but never appeared in the app, so the estimate looked like it had never converted. The new invoice now inherits the estimate's `owner_id` (plus a PATCH backfill in case the insert trigger clobbers it).
+- **Auto-created invoice lost the job site and internal notes** — the same server-side conversion never copied `job_address`, `billing_address`, `show_billing_address`, `internal_notes`, or `source`, so the resulting invoice printed with no address and dropped every private note the estimate carried. All of them now carry across.
+- **Converted invoice inherited the estimate's down-payment settings** — `convertInvoice` copied `downPaymentPct` and `downPaymentInvoiceId` onto the new document, so a freshly converted invoice still thought a deposit was outstanding and pointed at another invoice. Both are now reset on the invoice side.
+
+---
+
 ## v1.2.13 — 2026-08-17
 
 ### Bug Fixes

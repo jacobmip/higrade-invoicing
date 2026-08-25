@@ -146,11 +146,39 @@ async function convertEstimateToInvoice(estimateId) {
       client_info: est.client_info || null,
       view_token: viewToken,
       down_payment_pct: 0,
+      // Carry the job site / billing address and the private notes across.
+      // Without these the auto-created invoice printed with no address and
+      // lost every internal note the estimate carried.
+      job_address: est.job_address || null,
+      billing_address: est.billing_address || null,
+      show_billing_address: est.show_billing_address ?? true,
+      internal_notes: est.internal_notes || '',
+      source: est.source || null,
+      // Inherit the estimate's owner. This insert runs with the service-role
+      // key, so auth.uid() is NULL and the set_owner_id trigger would leave
+      // owner_id NULL -- an orphaned row that RLS then hides from Jake. The
+      // invoice would exist in the DB but never show up in the app, so the
+      // estimate looked like it had never converted at all.
+      owner_id: est.owner_id || null,
     }),
   });
   if (!insertRes.ok) {
     const t = await insertRes.text();
     throw new Error(`Invoice insert failed: ${insertRes.status} ${t}`);
+  }
+
+  // Belt-and-suspenders on ownership: if the BEFORE INSERT trigger clobbered
+  // owner_id with a NULL auth.uid(), stamp it back on with a PATCH (which the
+  // insert trigger can't touch). Cheap, and it guarantees the row is visible.
+  if (est.owner_id) {
+    const ownRes = await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(newId)}&owner_id=is.null`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ owner_id: est.owner_id }),
+    });
+    if (!ownRes.ok) {
+      console.error('[paypal-capture] owner_id backfill failed:', await ownRes.text());
+    }
   }
 
   // Copy items at full price, preserving qty/unit/discount/taxable.
