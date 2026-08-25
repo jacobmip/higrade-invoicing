@@ -2333,13 +2333,27 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
               <Icon name="ai" size={12} color={improving ? "#aaa" : "#fff"} />{improving ? "Improving…" : "AI Improve"}
             </button>
           </div>
-          <input style={{ ...S.input, fontWeight: 600 }} value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Drain Clean – Snake" autoFocus />
+          <input style={{ ...S.input, fontWeight: 600 }} value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Drain Clean – Snake" />
         </div>
 
         {/* Description */}
         <div style={{ marginBottom: 12 }}>
           <label style={S.label}>Description <span style={{ fontWeight: 400, color: "#aaa", textTransform: "none", letterSpacing: 0 }}>(optional)</span></label>
-          <textarea style={{ ...S.input, height: 64, resize: "none", color: "#555" }} value={form.desc} onChange={e => set("desc", e.target.value)} placeholder="Notes about the work done…" />
+          <textarea
+            style={{ ...S.input, minHeight: 100, resize: "none", color: "#555", overflow: "hidden" }}
+            value={form.desc}
+            onChange={e => {
+              set("desc", e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = e.target.scrollHeight + "px";
+            }}
+            onInput={e => {
+              e.target.style.height = "auto";
+              e.target.style.height = e.target.scrollHeight + "px";
+            }}
+            ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+            placeholder="Notes about the work done…"
+          />
         </div>
 
         {/* Qty / Unit / Price */}
@@ -2469,10 +2483,14 @@ function PDFPreview({ form, clients, photos = [] }) {
           <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 7 }}>Bill To</div>
           {form.client ? (
             <>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 3 }}>{clientData.name || form.client}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#111", marginBottom: 2 }}>{clientData.name || form.client}</div>
+              <div style={{ display: "flex", gap: 16, marginBottom: 4, flexWrap: "wrap" }}>
+                {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
+                {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
+              </div>
               {bill.split ? (
                 <>
-                  {bill.billing.length > 0 && (
+                  {(form.showBillingAddress ?? true) && bill.billing.length > 0 && (
                     <div style={{ marginBottom: 4 }}>
                       <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Billing Address</div>
                       <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>{bill.billing.join(", ")}</div>
@@ -2494,10 +2512,6 @@ function PDFPreview({ form, clients, photos = [] }) {
                   </div>
                 )
               )}
-              <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
-                {clientData.phone && <div style={{ fontSize: 12, color: "#777" }}>{clientData.phone}</div>}
-                {clientData.email && <div style={{ fontSize: 12, color: "#999" }}>{clientData.email}</div>}
-              </div>
             </>
           ) : (
             <div style={{ fontSize: 13, color: "#bbb", fontStyle: "italic" }}>No client selected</div>
@@ -3063,7 +3077,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
   const [activeTab, setActiveTab] = useState(isReadOnly ? "preview" : "edit");
@@ -3975,7 +3989,7 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             {selectedClient && !editingClient && (
               <div style={{ background: "#fff", borderRadius: 8, padding: "10px 13px", marginTop: 8, border: "1px solid #e8ecf4", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  {effectiveClientInfo?.address1 && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{effectiveClientInfo.address1}{effectiveClientInfo.address2 ? ", " + effectiveClientInfo.address2 : ""}{effectiveClientInfo.address3 ? (effectiveClientInfo.address2 ? " " : ", ") + effectiveClientInfo.address3 : ""}</div>}
+                  {effectiveClientInfo?.address1 && clientAddresses.length === 0 && <div style={{ fontSize: 13, color: "#444", marginBottom: 3 }}>{effectiveClientInfo.address1}{effectiveClientInfo.address2 ? ", " + effectiveClientInfo.address2 : ""}{effectiveClientInfo.address3 ? (effectiveClientInfo.address2 ? " " : ", ") + effectiveClientInfo.address3 : ""}</div>}
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                     {effectiveClientInfo?.phone && <span style={{ fontSize: 12, color: "#777" }}>{effectiveClientInfo.phone}</span>}
                     {effectiveClientInfo?.email && <span style={{ fontSize: 12, color: "#999" }}>{effectiveClientInfo.email}</span>}
@@ -4012,6 +4026,17 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   setEditingClient(true);
                 }} style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "0 0 0 10px", flexShrink: 0 }}>Edit</button>
               </div>
+            )}
+            {selectedClient && !editingClient && clientAddresses.length >= 1 && (
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={form.showBillingAddress ?? true}
+                  onChange={e => setForm(f => ({ ...f, showBillingAddress: e.target.checked }))}
+                  style={{ width: 16, height: 16, accentColor: NAVY, cursor: "pointer" }}
+                />
+                <span style={{ fontSize: 13, color: "#555" }}>Show billing address</span>
+              </label>
             )}
             {selectedClient && !editingClient && clientAddresses.length >= 1 && !addingProperty && (
               <div style={{ marginTop: 8 }}>
@@ -4054,13 +4079,9 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
                   })}
                   <option value="__add_property__">+ Add new property…</option>
                 </select>
-                {resolvedJobAddress && (
-                  <div style={{ marginTop: 6, background: "#f7f9fc", border: "1px solid #e0e6f0", borderRadius: 8, padding: "9px 13px" }}>
-                    {resolvedJobAddress.label && <div style={{ fontSize: 13, fontWeight: 700, color: "#1a2340", lineHeight: 1.4 }}>{resolvedJobAddress.label}</div>}
-                    {isAdmin && resolvedJobAddress.nickname && <div style={{ fontSize: 12, color: "#8899bb", fontStyle: "italic", lineHeight: 1.4 }}>{resolvedJobAddress.nickname}</div>}
-                    {[resolvedJobAddress.line1, resolvedJobAddress.line2, resolvedJobAddress.line3].filter(Boolean).map((l, i) => (
-                      <div key={i} style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>{l}</div>
-                    ))}
+                {isAdmin && resolvedJobAddress?.nickname && (
+                  <div style={{ fontSize: 12, color: "#8899bb", fontStyle: "italic", marginTop: 4, paddingLeft: 2 }}>
+                    {resolvedJobAddress.nickname}
                   </div>
                 )}
               </div>
@@ -4272,10 +4293,36 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             </div>
           </div>
 
-          {/* Notes */}
+          {/* Notes — customer-facing. Rendered on the invoice, the PDF and the
+              public /v/<token> viewer. Relabelled so it can't be confused with
+              the internal box directly below it. */}
           <div style={{ padding: "12px 16px 0" }}>
-            <label style={S.label}>Notes</label>
-            <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions…" />
+            <label style={S.label}>Customer Notes</label>
+            <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions… (the customer sees this)" />
+          </div>
+
+          {/* Internal notes — staff only, never leaves the app. On AI-captured
+              leads this arrives pre-filled with what the caller told Lisa.
+              /api/public-invoice allowlists the columns it returns, so
+              internal_notes is not sent to the customer viewer. */}
+          <div style={{ padding: "12px 16px 0" }}>
+            <label style={{ ...S.label, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              Internal Notes
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: "#8a6d1f", background: "#fff8e6", border: "1px solid #f0dfae", borderRadius: 3, padding: "1px 5px" }}>
+                STAFF ONLY
+              </span>
+              {form.source === "ai_lead" && (
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: "#1f6b4a", background: "#eaf7f0", border: "1px solid #b9e3cd", borderRadius: 3, padding: "1px 5px" }}>
+                  FROM LISA
+                </span>
+              )}
+            </label>
+            <textarea
+              style={{ ...S.input, height: 132, resize: "vertical", lineHeight: 1.5 }}
+              value={form.internalNotes || ""}
+              onChange={e => setField("internalNotes", e.target.value)}
+              placeholder="Call details, gate code, dog in the yard, account history… Never shown to the customer."
+            />
           </div>
 
           {/* Schedule & Reminders */}
@@ -6705,6 +6752,7 @@ function PublicViewerPage({ token }) {
     clientInfo: state.invoice.client_info || null,
     billingAddress: state.invoice.billing_address || null,
     jobAddress: state.invoice.job_address || null,
+    showBillingAddress: state.invoice.show_billing_address ?? true,
     items: (state.items || []).sort((a, b) => a.sort_order - b.sort_order).map(it => ({
       name: it.name || '',
       desc: it.description ?? it.desc ?? '',
@@ -6929,15 +6977,15 @@ function PublicViewerPage({ token }) {
             <div style={{ flex: '1 1 240px' }}>
               <div style={{ color: '#888', fontSize: 11, letterSpacing: 2, fontWeight: 700 }}>BILL TO</div>
               <div style={{ color: NAVY, fontSize: 18, fontWeight: 700, marginTop: 4 }}>{invForm.client || '—'}</div>
+              {(ci.phone || ci.email) && (
+                <div style={{ color: '#777', fontSize: 13, marginTop: 3 }}>
+                  {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
+                </div>
+              )}
               {(addrLines.length > 0 || jobLabel) && (
                 <div style={{ color: '#555', fontSize: 14, marginTop: 4, lineHeight: 1.5 }}>
                   {jobLabel && <div style={{ fontWeight: 700, color: '#333', fontSize: 15 }}>{jobLabel}</div>}
                   {addrLines.map((l, i) => <div key={i}>{l}</div>)}
-                </div>
-              )}
-              {(ci.phone || ci.email) && (
-                <div style={{ color: '#555', fontSize: 14, marginTop: 2 }}>
-                  {[ci.phone, ci.email].filter(Boolean).join('  ·  ')}
                 </div>
               )}
             </div>
