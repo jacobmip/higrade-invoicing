@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, ccAddresses, bccAdmin = true, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, subject, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
     // ccAddresses is the new multi-recipient field (array). cc is the legacy
     // single-string field. Merge them and deduplicate.
     const ccList = [...new Set([
@@ -142,9 +142,14 @@ export default async function handler(req) {
         // BCC Jake on every outbound customer email unless he opted out
         // for this specific send (bccAdmin=false in the modal).
         ...(bccAdmin ? { bcc: ['higradeplumbing@gmail.com'] } : {}),
-        subject: isPaidInFull
-          ? `Mahalo \u2014 ${invoiceId} paid in full`
-          : `Invoice ${invoiceId} from HI Grade Plumbing`,
+        // Optional subject override. Lead alerts from the AI receptionist pass
+        // their own so they don't sit in the inbox looking like a customer
+        // invoice. Falls back to the normal invoice/receipt subjects.
+        subject: (typeof subject === 'string' && subject.trim())
+          ? subject.trim()
+          : (isPaidInFull
+              ? `Mahalo \u2014 ${invoiceId} paid in full`
+              : `Invoice ${invoiceId} from HI Grade Plumbing`),
         html: emailBody,
       }),
     });
