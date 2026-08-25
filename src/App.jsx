@@ -4293,10 +4293,36 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
             </div>
           </div>
 
-          {/* Notes */}
+          {/* Notes — customer-facing. Rendered on the invoice, the PDF and the
+              public /v/<token> viewer. Relabelled so it can't be confused with
+              the internal box directly below it. */}
           <div style={{ padding: "12px 16px 0" }}>
-            <label style={S.label}>Notes</label>
-            <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions…" />
+            <label style={S.label}>Customer Notes</label>
+            <textarea style={{ ...S.input, height: 72, resize: "none" }} value={form.notes} onChange={e => setField("notes", e.target.value)} placeholder="Job notes, payment instructions… (the customer sees this)" />
+          </div>
+
+          {/* Internal notes — staff only, never leaves the app. On AI-captured
+              leads this arrives pre-filled with what the caller told Lisa.
+              /api/public-invoice allowlists the columns it returns, so
+              internal_notes is not sent to the customer viewer. */}
+          <div style={{ padding: "12px 16px 0" }}>
+            <label style={{ ...S.label, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              Internal Notes
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: "#8a6d1f", background: "#fff8e6", border: "1px solid #f0dfae", borderRadius: 3, padding: "1px 5px" }}>
+                STAFF ONLY
+              </span>
+              {form.source === "ai_lead" && (
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: "#1f6b4a", background: "#eaf7f0", border: "1px solid #b9e3cd", borderRadius: 3, padding: "1px 5px" }}>
+                  FROM LISA
+                </span>
+              )}
+            </label>
+            <textarea
+              style={{ ...S.input, height: 132, resize: "vertical", lineHeight: 1.5 }}
+              value={form.internalNotes || ""}
+              onChange={e => setField("internalNotes", e.target.value)}
+              placeholder="Call details, gate code, dog in the yard, account history… Never shown to the customer."
+            />
           </div>
 
           {/* Schedule & Reminders */}

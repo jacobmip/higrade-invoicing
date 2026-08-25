@@ -486,8 +486,25 @@ export async function upsertInvoice(inv, isNew) {
     throw error
   }
 
+  const savedId = data?.id || inv.id
+
+  // internal_notes rides a separate RPC on purpose. save_invoice_with_items
+  // never touches the column (see migration 024), which is what preserves the
+  // AI receptionist's lead capture when the app saves an estimate built from
+  // a call. Persist it only when the caller actually carried the field, so a
+  // code path that builds an invoice object without it can't blank the notes.
+  if (typeof inv.internalNotes === 'string') {
+    const { error: noteErr } = await supabase.rpc('set_invoice_internal_notes', {
+      p_id: savedId,
+      p_internal_notes: inv.internalNotes,
+    })
+    // Don't fail the whole save over notes; the invoice itself is already
+    // committed. Surface it so it isn't silent.
+    if (noteErr) console.error('[db] internal notes not saved:', noteErr.message || noteErr)
+  }
+
   return {
-    id: data?.id || inv.id,
+    id: savedId,
     updatedAt: data?.updated_at || null,
   }
 }
