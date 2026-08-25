@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.3.1 — 2026-08-25
+
+### Changes
+- **Migration 037 — backfill orphaned down-payment invoices** — repairs the invoices already created with `owner_id` NULL before the v1.3.0 fix landed. Each one is claimed by the owner of the estimate it came from, with a sweep for any whose estimate is also orphaned or deleted. Includes a preview query to run first and a verification query to run last. Must be applied by hand in the Supabase SQL editor.
+
+---
+
 ## v1.3.0 — 2026-08-25
 
 ### New Features
