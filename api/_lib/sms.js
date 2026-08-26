@@ -57,8 +57,25 @@ export async function getSetting(key) {
   return rows?.[0]?.value ?? null;
 }
 
-export function webhookSecret() {
-  return process.env.SMS_WEBHOOK_SECRET || null;
+// Secrets resolve from Vercel env first, then fall back to the settings table.
+//
+// The fallback exists because every value these routes need was already in
+// settings (sms_webhook_secret, twilio_sid, twilio_token, notify_from) and the
+// routes already hold working Supabase credentials — public-invoice.js proves
+// that. Duplicating them into Vercel env bought nothing except a second place
+// to keep in sync, and leaving them unset silently 403'd every inbound webhook.
+//
+// Env still wins where set, so a future deploy can override without a DB edit.
+export async function webhookSecret() {
+  return process.env.SMS_WEBHOOK_SECRET || (await getSetting('sms_webhook_secret'));
+}
+
+export async function twilioAuthToken() {
+  return process.env.TWILIO_AUTH_TOKEN || (await getSetting('twilio_token'));
+}
+
+export async function twilioAccountSid() {
+  return process.env.TWILIO_ACCOUNT_SID || (await getSetting('twilio_sid'));
 }
 
 // Constant-time compare so a wrong secret can't be brute-forced by timing.
@@ -89,8 +106,8 @@ export function validateTwilioSignature({ signature, url, params, authToken }) {
 }
 
 export async function sendTwilioSms({ to, body, from }) {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
+  const sid = await twilioAccountSid();
+  const token = await twilioAuthToken();
   if (!sid || !token) throw new Error('Twilio credentials not configured');
 
   const fromNumber = from || process.env.TWILIO_FROM_NUMBER || (await getSetting('notify_from'));

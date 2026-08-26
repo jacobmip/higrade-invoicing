@@ -79,7 +79,7 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'Invalid body' });
   }
 
-  const expected = webhookSecret();
+  const expected = await webhookSecret();
   const provided =
     req.headers['x-webhook-secret'] ||
     req.headers['x-vapi-secret'] ||

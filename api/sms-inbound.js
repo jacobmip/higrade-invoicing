@@ -18,7 +18,7 @@
 // message and would be dropped by carriers anyway.
 
 import {
-  rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature,
+  rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature, twilioAuthToken,
 } from './_lib/sms.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 10 };
@@ -50,7 +50,7 @@ export default async function handler(req, res) {
     return twiml(res); // never make Twilio retry over a parse problem
   }
 
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const authToken = await twilioAuthToken();
   const signature = req.headers['x-twilio-signature'];
 
   let authed = false;
@@ -62,7 +62,7 @@ export default async function handler(req, res) {
   } else {
     // Fallback for before TWILIO_AUTH_TOKEN is set in Vercel env.
     const url = new URL(fullUrl(req));
-    authed = secretMatches(url.searchParams.get('k'), webhookSecret());
+    authed = secretMatches(url.searchParams.get('k'), await webhookSecret());
     if (!authed) return deny(res, 'no signature and no valid ?k= secret');
     console.warn('[sms-inbound] accepted via ?k= fallback; set TWILIO_AUTH_TOKEN for signature validation');
   }
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
 
   try {
     const result = await rpc('log_client_message', {
-      p_secret: webhookSecret(),
+      p_secret: await webhookSecret(),
       p_phone: from,
       p_direction: 'inbound',
       p_body: String(body),
