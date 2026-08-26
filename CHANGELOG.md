@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.4.1 — 2026-08-26
+
+### Changes
+- **Handoff doc: queued bugs list rewritten against the code** — six of the eight listed bugs were already fixed and were sending agents to chase work that no longer existed (secondary email, job site nickname on the PDF and on screen, the property selector gate, client and per-property notes, and the version history UI — all verified present in the source). Two remain genuinely open: the saved-items sharing model, which is a product decision rather than a defect, and the iPhone text-selection drag, which needs reproducing on a device before anyone writes code. Also records the states that must not be "fixed" (EST0767's deliberate mismatch, legacy documents having no paired numbers) and the one blind spot the id/type guards cannot cover. No app changes.
+
+---
+
 ## v1.4.0 — 2026-08-26
 
 ### New Features

@@ -131,15 +131,62 @@ This is read-only and runs outside Claude Code. Do not duplicate it in this repo
 - Client search modal (quick add) lives in App.jsx around the search bar; the full edit modal is much larger.
 - Edit-client modal already has `email2`. The quick-add modal does **not** — that's a queued bug.
 
-## Queued bugs (in priority order)
-1. **Secondary email rollout** — quick-add client modal, AI `create_client`, AI `update_client`, auto-CC on send-invoice. The full edit modal already supports `email2` and Excel import maps it. (Paused at Jake's request to avoid mid-workday breakage.)
-2. **Job site nickname on printed invoice** — `form.jobAddress` is an object `{id, label, line1, line2, line3}`, but `printablePdf.js` (around line 176) treats it as a string, so the nickname has been silently invisible on PDFs. Render `label` as the heading and the three address lines under it.
-3. **Property selector always visible** — currently the dropdown only renders when a client has 2+ addresses (App.jsx ~line 3071). Show it whenever the client has ≥1 address so Jake can switch and use "Add property" inline.
-4. **Render job site nickname on the on-screen invoice** (parallel to #2).
-5. **Notes field on client and per-property** — admin-only visibility, gate codes, water shutoff location, tenant info.
-6. **iPhone customer-info text-selection drags the page** — known iOS Safari issue, needs touch-action / user-select tweak on the affected inputs.
-7. **Version history UI** for `invoice_versions` (data exists, no view yet).
-8. **Saved items model for plumbers** — currently scoped per-user, so journeymen start with empty saved items. Decide whether admin's saved items should be shared.
+## Queued bugs
+
+Verified against the code on 2026-08-26. Anything listed as fixed was confirmed
+by reading the source, not by trusting the changelog — six of the original eight
+were already done and were sending agents chasing work that did not exist.
+
+### Open
+
+1. **Saved items model for plumbers** — `saved_items` is scoped per-user
+   (`owner_id`, unique index on `(owner_id, name)`, price book seeded only to
+   Jake's uuid), so a journeyman starts with an empty library. This is a
+   product decision, not a defect: decide whether admin's saved items should
+   be readable by all plumbers, copied on account creation, or stay private.
+   Nothing is broken until a second plumber actually uses the app.
+2. **iPhone customer-info text-selection drags the page** — needs checking on a
+   real device before anyone writes code. `index.html` already sets
+   `touch-action: pan-y` globally and the list cards set
+   `userSelect/WebkitUserSelect/WebkitTouchCallout: none`, so some of this was
+   addressed already. Reproduce it first and find which input still misbehaves.
+
+### Known state, not bugs
+
+- **`EST0767` is deliberately an invoice.** It carries `type = 'invoice'` with
+  an estimate's number because of the form state-bleed bug fixed in v1.3.2, and
+  Megill was emailed an invoice under that number before it was caught. Jake
+  chose to leave it rather than confuse the customer with a correction. The
+  migration 039 trigger grandfathers already-mismatched rows for exactly this
+  reason, so it stays editable. **Do not "fix" it.**
+- **Documents numbered below 1000 have no paired estimate/invoice numbers.**
+  They predate the shared sequence (migration 040) and come from the old
+  side-by-side counters, where `INV0767` and `EST0767` are both real and
+  unrelated. Conversion falls back to a fresh number when the paired id is
+  taken. Legacy pairs are linked by the cross-link button, which never depended
+  on numbers matching.
+
+### Blind spot worth knowing
+
+The id/type guards (v1.3.2 app-side, migration 039 in the database) catch a
+document whose number contradicts its type. They cannot catch the *other* shape
+of state-bleed: if the wrong contents reach the form before the number is
+minted, the id is assigned to match what it was handed, and the row looks
+perfectly consistent while being the wrong document entirely. v1.3.5 closed the
+paths that could cause this (type-scoped drafts, the epoch guard), but if a
+document ever turns up with the right-looking number and someone else's
+contents, this is the class to investigate — not the id/type rule.
+
+### Fixed — do not re-open
+
+- Secondary email rollout — `email2` is live in the quick-add modal, AI
+  `create_client` / `update_client`, and auto-CC on send.
+- Job site nickname on the printed PDF and on the on-screen invoice.
+- Property selector — shows at `clientAddresses.length >= 1`, with inline
+  "Add property".
+- Notes on client and per-property — admin-gated, in `ClientEditFields`.
+- Version history UI — the History tab, with snapshots and a manual snapshot
+  button.
 
 The user explicitly chose to **keep `addresses` as JSON** rather than break it out into a separate `properties` table — the migration risk wasn't worth it for a system he runs his business on. Re-evaluate only if cross-property reporting becomes a real need.
 
