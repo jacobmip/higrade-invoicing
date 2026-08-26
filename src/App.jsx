@@ -3264,6 +3264,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const autoSaveTimerRef = useRef(null);
   const skipFirstRef = useRef(true);
   const lastNewSeqRef = useRef(newDocSeq);
+  // Bumped every time the form is pointed at a different document. An
+  // auto-save started before the switch resolves after it, and its
+  // completion block writes autoSavedId and the updatedAt token -- which
+  // would re-point the form at the document we just left and hand the new
+  // one a stale lock token. Compare the epoch to know the answer is stale.
+  const formEpochRef = useRef(0);
   // When the parent swaps in a different invoice/estimate (e.g. after Convert
   // or after the AI creates a new doc), reset the form to the new record so we
   // don't keep editing the previous doc's data — which would otherwise get
@@ -3271,6 +3277,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   useEffect(() => {
     if (invoice?.id) {
       if (invoice.id !== autoSavedId) {
+        formEpochRef.current += 1;
         setForm({ discountType: "$", ...invoice });
         setAutoSavedId(invoice.id);
         updatedAtRef.current = invoice.updatedAt || null;
@@ -3298,6 +3305,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // document's row. That is how EST0767 ended up with type 'invoice' and
     // got emailed to a customer under an estimate's number. newDocSeq bumps
     // on every + tap so two new documents in a row still reset.
+    // Save the document being left before wiping the form. Auto-save debounces
+    // for 800ms, so without this the last edits before tapping + are dropped:
+    // the reset below replaces the form and the pending timer gets cleared.
+    // flushAutoSave reads formRef/autoSavedId synchronously before its first
+    // await, so it still sees the outgoing document.
+    flushAutoSaveRef.current();
+    formEpochRef.current += 1;
     setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
     setAutoSavedId(null);
     updatedAtRef.current = null;
@@ -3321,7 +3335,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
   // Draft persistence — saves form to localStorage on every change so that
   // iOS Safari backgrounding / reload doesn't lose unsaved edits.
-  const _invoiceDraftKey = 'higrade_invoice_draft_' + (invoice?.id || 'new');
+  // Scope an unsaved new document's draft by type. Every new document used to
+  // share the key 'new', so an abandoned draft invoice would restore into the
+  // next new estimate -- the same state-bleed as the EST0767 bug, and one the
+  // id/type guards cannot catch because the minted id matches the wrong type
+  // it was handed.
+  const _invoiceDraftKey = 'higrade_invoice_draft_' + (invoice?.id || ('new-' + (defaultType || 'invoice')));
   const clearInvoiceDraft = useDraftPersistence(_invoiceDraftKey, form, setForm, invoice?.updatedAt);
 
   const flushAutoSaveRef = useRef(async () => {});
@@ -3339,6 +3358,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // Also snapshot the currently-selected job site + billing address from
       // the client onto the invoice so it stays correct even if the client's
       // addresses are edited later.
+      const epoch = formEpochRef.current;
       const f = formRef.current;
       const c = clients.find(x => x.name === f.client);
       const cAddrs = Array.isArray(c?.addresses) ? c.addresses : [];
@@ -3371,6 +3391,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         id: targetId,
         updatedAt: updatedAtRef.current,
       });
+      // The form moved to a different document while this save was in flight.
+      // Applying any of it now would drag the new document back onto the old
+      // one's id, so keep the save (it landed) and drop the bookkeeping.
+      if (formEpochRef.current !== epoch) return saved;
       if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
       if (saved?.updatedAt) updatedAtRef.current = saved.updatedAt;
       if (saved) clearInvoiceDraft();

@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.3.5 — 2026-08-26
+
+### Bug Fixes
+- **An in-flight save could drag a new document onto the previous one's row** — auto-save is async, and its completion block writes `autoSavedId` and the optimistic-lock token. A save started just before you tapped **+** resolved *after* the form had already reset, re-pointing the fresh document at the id of the one you just left and handing it a stale lock token. That is the v1.3.2 fix defeated by timing alone. The form now carries an epoch that bumps whenever it switches documents; a save that resolves against a stale epoch still counts as saved, but its bookkeeping is discarded.
+- **The last edits before tapping + were silently dropped** — auto-save debounces for 800ms and the reset cleared the pending timer, so anything typed in that window never reached the database. The outgoing document is now flushed before the form is wiped.
+- **An abandoned new-document draft could restore into the wrong kind of document** — every unsaved new document shared the draft key `new`, so a half-written invoice would reappear inside the next new estimate. The draft key is now scoped by type. This is the same state-bleed that produced EST0767, and notably one the id/type guards cannot catch: the minted id matches the wrong type it was handed, so the row looks perfectly consistent.
+
+---
+
 ## v1.3.4 — 2026-08-26
 
 ### Changes
