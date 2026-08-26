@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.3.4 — 2026-08-26
+
+### Changes
+- **Handoff doc: SQL hand-off rules** — one query per code block, always include the Supabase SQL editor link, and a note that the editor only returns the last statement's result in a multi-statement batch. No app changes.
+
+---
+
 ## v1.3.3 — 2026-08-26
 
 ### Changes

@@ -16,6 +16,9 @@ Read this file first. It captures everything an AI agent needs to safely continu
 4. Git identity: `user.email "jacobmip@gmail.com"`, `user.name "Jacob Petersen"`.
 5. Use a commit message file (`/tmp/commitmsg.txt` + `git commit -F`), not inline `-m` for multi-line messages.
 6. **SQL migrations: paste the full SQL inline in chat for Jake to run in the Supabase SQL editor.** Do not assume any CLI access to Supabase.
+   - **One query per code block.** Never put several statements in one box expecting Jake to run them separately — he copies a whole box at a time. If a step must run on its own, give it its own box.
+   - **Always include the SQL editor link** with any query: https://supabase.com/dashboard/project/cwhgcxxszyvevjpbnnkc/sql/new
+   - Remember the editor only returns the result of the **last** statement in a batch, so a multi-statement box silently hides the earlier results.
 7. **Never use the words "scrape" / "scraping" / "crawl" / "crawling".** Use "extract" / "fetch" / "read".
 8. **No emoji in chat or code output.** (The ⚠️ in the AI chat fallback is the only intentional one.)
 9. Jake works mostly from his phone — keep replies short, no long diagnostic detours.
