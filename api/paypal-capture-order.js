@@ -100,29 +100,47 @@ async function convertEstimateToInvoice(estimateId) {
     }
   }
 
-  // Pull items + settings (for next_num)
+  // Pull items + the shared document counter + every existing id.
   const [itemsRes, settingsRes, allInvRes] = await Promise.all([
     fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(estimateId)}&order=sort_order.asc&select=*`, { headers }),
-    fetch(`${url}/rest/v1/settings?key=eq.next_num&select=*`, { headers }),
-    fetch(`${url}/rest/v1/invoices?type=eq.invoice&select=id&order=id.desc&limit=200`, { headers }),
+    fetch(`${url}/rest/v1/settings?key=eq.next_doc_num&select=*`, { headers }),
+    fetch(`${url}/rest/v1/invoices?select=id`, { headers }),
   ]);
   const items = await itemsRes.json();
   const settingRows = await settingsRes.json();
   const allInv = await allInvRes.json();
 
-  let persistedNext = 1;
+  const takenIds = new Set(Array.isArray(allInv) ? allInv.map(r => r.id) : []);
+
+  // Same rule the app follows: the number identifies the job, so a converted
+  // estimate keeps it (EST1000 -> INV1000). Safe because the shared sequence
+  // issued that number once. Legacy numbers come from the old side-by-side
+  // sequences where INV0767 and EST0767 are both real and unrelated, so when
+  // the paired id is taken we fall back to a fresh number off the shared
+  // counter and let the cross-link button carry the relationship instead.
+  const SHARED_NUMBER_FLOOR = 1000;
+  let persistedNext = 0;
   if (Array.isArray(settingRows) && settingRows.length > 0) {
-    persistedNext = parseInt(settingRows[0].value, 10) || 1;
+    persistedNext = parseInt(settingRows[0].value, 10) || 0;
   }
-  let highestActual = 0;
-  if (Array.isArray(allInv)) {
-    for (const r of allInv) {
-      const m = /^INV(\d+)$/.exec(r.id || '');
-      if (m) highestActual = Math.max(highestActual, parseInt(m[1], 10));
-    }
+  let highestAny = 0;
+  for (const id of takenIds) {
+    const m = /^(?:EST|INV)(\d+)$/.exec(id || '');
+    if (m) highestAny = Math.max(highestAny, parseInt(m[1], 10));
   }
-  const num = Math.max(persistedNext, highestActual + 1);
-  const newId = 'INV' + String(num).padStart(4, '0');
+
+  const estNum = parseInt((/^(?:EST|INV)(\d+)$/.exec(estimateId) || [])[1], 10);
+  const pairedId = Number.isFinite(estNum) ? 'INV' + String(estNum).padStart(4, '0') : null;
+
+  let num, newId;
+  if (pairedId && !takenIds.has(pairedId)) {
+    num = estNum;
+    newId = pairedId;
+  } else {
+    num = Math.max(persistedNext, highestAny + 1, SHARED_NUMBER_FLOOR);
+    newId = 'INV' + String(num).padStart(4, '0');
+    if (pairedId) console.warn(`[paypal-capture] ${pairedId} taken; minted ${newId} for ${estimateId}`);
+  }
   const viewToken = generateViewToken();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -205,13 +223,21 @@ async function convertEstimateToInvoice(estimateId) {
     }
   }
 
-  // Bump settings.next_num
-  await fetch(`${url}/rest/v1/settings?key=eq.next_num`, { method: 'DELETE', headers });
-  await fetch(`${url}/rest/v1/settings`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ key: 'next_num', value: String(num + 1) }),
-  });
+  // Advance the shared counter past whatever we just used. Only ever forwards:
+  // read the current value again and keep the larger, so a concurrent write
+  // cannot walk it backwards onto a number already issued.
+  {
+    const curRes = await fetch(`${url}/rest/v1/settings?key=eq.next_doc_num&select=value`, { headers });
+    const curRows = await curRes.json();
+    const current = Array.isArray(curRows) && curRows.length ? (parseInt(curRows[0].value, 10) || 0) : 0;
+    const advanced = Math.max(current, num + 1, SHARED_NUMBER_FLOOR);
+    await fetch(`${url}/rest/v1/settings?key=eq.next_doc_num`, { method: 'DELETE', headers });
+    await fetch(`${url}/rest/v1/settings`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ key: 'next_doc_num', value: String(advanced) }),
+    });
+  }
 
   // Link the estimate to the new invoice (status stays 'approved' if it
   // was already signed — we just record the conversion). The estimate

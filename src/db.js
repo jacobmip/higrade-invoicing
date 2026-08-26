@@ -353,12 +353,34 @@ export async function loadAll() {
   }, 0)
   const nextEstimateNum = Math.max(persistedEst, highestActualEst + 1)
 
+  // ── Shared document counter ────────────────────────────────────────────────
+  // Estimates and invoices draw from ONE sequence so a converted estimate can
+  // keep its number: EST1000 becomes INV1000. That only works if a number is
+  // handed out once, to a job, rather than once per document type -- otherwise
+  // the invoice side would eventually collide with a number the estimate side
+  // already issued.
+  //
+  // It cannot be applied backwards. INV0767 and EST0767 are both real, separate
+  // documents, so the shared sequence starts above everything ever issued and
+  // legacy documents keep the numbers already on their PDFs. Clamped to the
+  // highest number in use across BOTH prefixes, so a bulk import or a row
+  // neither counter knew about can never cause a reissue.
+  const SHARED_NUMBER_FLOOR = 1000
+  const persistedDoc = parseInt(
+    (settingRows || []).find(s => s.key === 'next_doc_num')?.value ?? '0', 10
+  ) || 0
+  const highestAnyDoc = (invoiceRows || []).reduce((mx, row) => {
+    const m = /^(?:EST|INV)(\d+)$/.exec(row.id || '')
+    return m ? Math.max(mx, parseInt(m[1], 10)) : mx
+  }, 0)
+  const nextDocNum = Math.max(persistedDoc, highestAnyDoc + 1, SHARED_NUMBER_FLOOR)
+
   // Roll the rest of the settings (everything that isn't a counter) into a
   // simple {key: value} map so the UI can read user preferences like custom
   // email/text message templates without re-querying the table.
   const settings = {}
   for (const row of (settingRows || [])) {
-    if (row?.key && row.key !== 'next_num' && row.key !== 'next_estimate_num') {
+    if (row?.key && row.key !== 'next_num' && row.key !== 'next_estimate_num' && row.key !== 'next_doc_num') {
       settings[row.key] = row.value
     }
   }
@@ -371,6 +393,7 @@ export async function loadAll() {
     settings,
     nextNum,
     nextEstimateNum,
+    nextDocNum,
   }
 }
 
@@ -510,6 +533,21 @@ export async function upsertInvoice(inv, isNew) {
   }
 
   const savedId = data?.id || inv.id
+
+  // Persist the shared counter past the number just used. Fire-and-forget: the
+  // client already clamps to the highest id it can see on every load, so this
+  // only matters when a row is invisible to that scan -- soft-deleted, or
+  // hidden by RLS. That is exactly the case migration 020 had to clean up
+  // after, where the counter reset onto a number that was already taken.
+  if (isNew) {
+    const m = /^(?:EST|INV)(\d+)$/.exec(savedId || '')
+    if (m) {
+      supabase.rpc('bump_doc_num', { p_num: parseInt(m[1], 10) + 1 })
+        .then(({ error: bumpErr }) => {
+          if (bumpErr) console.warn('bump_doc_num failed (counter still self-heals on load):', bumpErr)
+        })
+    }
+  }
 
   // internal_notes rides a separate RPC on purpose. save_invoice_with_items
   // never touches the column (see migration 024), which is what preserves the

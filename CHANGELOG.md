@@ -5,6 +5,25 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.4.0 — 2026-08-26
+
+### New Features
+- **Estimates and invoices now share one number** — a converted estimate keeps its number instead of taking a new one, so EST1000 becomes INV1000. Both types draw from a single sequence, which is what makes the pairing collision-proof: a number is handed out once, to a job, so the invoice side can never land on one the estimate side already issued. Requires migration 040 (see below).
+  - **Invoice numbers are no longer contiguous.** Three estimates then an invoice gives EST1000, EST1001, EST1002, INV1003. Gaps are normal for GET filing; this was an explicit trade-off for a rule with no exceptions.
+  - **Documents below 1000 are unaffected.** The old scheme ran two independent sequences, so INV0767 and EST0767 are both real, unrelated documents. Reusing a legacy number would collide with something already sent to a customer, so conversion checks whether the paired id is free and falls back to a fresh number when it isn't. Those pairs stay linked by the cross-link button, which never depended on matching numbers.
+  - The starting line is computed from the data (`greatest(1000, highest number in use + 1)`) rather than hardcoded, so a document neither old counter knew about still can't cause a number to be reissued.
+  - The online down-payment conversion in `/api/paypal-capture-order` follows the same rule.
+
+### Bug Fixes
+- **Converting an already-converted estimate is now blocked** — it would have minted a second invoice for the same job, and under shared numbering asked for a number already taken. It now opens the existing invoice instead.
+- **AI bulk-create could crash on a failed write** — the rollback path in `handleGlobalAIAction` still referenced the old per-type counter, which no longer exists. It builds cleanly and throws only when a database write fails, so it would have surfaced as a mystery error during a bulk create.
+
+### Changes
+- **Migration 040** — seeds the shared counter and adds `bump_doc_num()`, an advance-only helper called after each new document is saved. Deliberately a separate function rather than an edit to `save_invoice_with_items`: that function has been redefined by seven migrations and may carry changes made directly in the SQL editor, so rewriting it wholesale to add four lines risks silently reverting one. Must be applied by hand in the Supabase SQL editor.
+- `next_num` and `next_estimate_num` are retired but left in place as the record of where the old sequences stopped. Nothing mints from them.
+
+---
+
 ## v1.3.5 — 2026-08-26
 
 ### Bug Fixes

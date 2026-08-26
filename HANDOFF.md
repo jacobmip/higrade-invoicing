@@ -301,7 +301,11 @@ These are recurring decisions baked deep into the codebase. Don't undo them by a
 Everything UI lives in `src/App.jsx`. New components are inserted in the same file at logical spots (e.g. tab components grouped together). Don't extract to new files unless asked.
 
 ### Numbering
-Invoices and estimates have **separate id sequences**: `INV0000` and `EST0000`. There are two refs: `nextNumRef` (invoice) and `nextEstimateNumRef` (estimate). When adding code that creates either, branch on `inv.type` and pick the right counter. The AI-chat creation flow at `handleGlobalAIAction` (around line 6577) does this — use it as a template.
+**One shared sequence** for both types, as of migration 040. Every new document takes the next number from `nextDocNumRef` via `mintDocId(type)`; converting an estimate reuses its number rather than taking a new one, so EST1000 becomes INV1000. The number identifies the *job*, not the document — that is what makes it collision-proof, since a number is issued once and the invoice side can never land on one the estimate side already used. Invoice numbers are therefore not contiguous, which is an accepted trade-off.
+
+Never mint from `nextNumRef` / `nextEstimateNumRef` — they are dead, kept only as a record of where the old sequences stopped. Never assign `nextDocNumRef` downwards; use `bumpDocNum()`, which only raises.
+
+Documents numbered below 1000 predate this and come from the old side-by-side sequences, where `INV0767` and `EST0767` are both real and unrelated. Conversion checks whether the paired id is free and falls back to a fresh number when it is not, so legacy pairs stay linked by the cross-link button instead of by matching numbers.
 
 ### View tokens
 Every invoice gets a random ~72-bit token in `view_token`. Anyone with the token can hit `/v/<token>` to view + pay + sign. Keep tokens unguessable and never expose them in logs or analytics.
