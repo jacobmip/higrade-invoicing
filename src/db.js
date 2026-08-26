@@ -474,6 +474,20 @@ export async function upsertInvoice(inv, isNew) {
     is_new: !!isNew,
   }
 
+  // An EST id is an estimate and an INV id is an invoice. Migration 039 puts a
+  // trigger on the table so every writer is held to this, but catch a brand-new
+  // row here too: an insert can never legitimately mismatch, and failing before
+  // the round trip gives a clearer error than the trigger's.
+  if (isNew && /^(EST|INV)/.test(payload.inv.id || '')) {
+    const idWantsEstimate = payload.inv.id.startsWith('EST')
+    if ((payload.inv.type === 'estimate') !== idWantsEstimate) {
+      const bad = new Error('ID_TYPE_MISMATCH')
+      bad.code = 'ID_TYPE_MISMATCH'
+      bad.detail = `Refusing to create ${payload.inv.id} as type "${payload.inv.type}".`
+      throw bad
+    }
+  }
+
   const { data, error } = await supabase.rpc('save_invoice_with_items', payload)
   if (error) {
     // Surface concurrent edit as a typed error the UI can handle distinctly.
@@ -482,6 +496,15 @@ export async function upsertInvoice(inv, isNew) {
       conflict.code = 'CONCURRENT_EDIT'
       conflict.detail = error.message
       throw conflict
+    }
+    // Migration 039's trigger fired: the write would have changed what an
+    // existing document is. Type it so the UI can say something useful rather
+    // than dumping a Postgres exception.
+    if ((error.message || '').includes('ID_TYPE_MISMATCH')) {
+      const bad = new Error('ID_TYPE_MISMATCH')
+      bad.code = 'ID_TYPE_MISMATCH'
+      bad.detail = error.message
+      throw bad
     }
     throw error
   }

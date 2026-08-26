@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.3.3 — 2026-08-26
+
+### Changes
+- **Migration 039 — the id/type rule is now enforced by the database** — an `EST####` row is an estimate and an `INV####` row is an invoice, held by a trigger on the `invoices` table. The v1.3.2 guards were client-side only, so the PayPal endpoints, the AI receptionist RPCs, the SQL editor and any future code path all bypassed them. A trigger is the only place that catches every writer. It blocks a write only when it would *introduce* a mismatch: rows that are already inconsistent (EST0767) stay editable, and setting one back to its correct type is always allowed. Must be applied by hand in the Supabase SQL editor.
+- **Rejected writes now explain themselves** — `db.upsertInvoice` refuses outright to create a new row whose id contradicts its type, and translates the trigger's exception into a typed `ID_TYPE_MISMATCH` error. The invoice form turns that into a plain-language message instead of a raw Postgres exception.
+
+---
+
 ## v1.3.2 — 2026-08-26
 
 ### Bug Fixes

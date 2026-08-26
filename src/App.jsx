@@ -3377,7 +3377,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       return saved;
     } catch (e) {
       console.error('Auto-save failed (kept local):', e);
-      alert('Save failed (outer): ' + (e.message || String(e)));
+      if (e?.code === 'ID_TYPE_MISMATCH') {
+        // Migration 039's trigger refused the write. This should be
+        // unreachable now, but if it ever fires again say what it means
+        // rather than showing a raw database exception.
+        alert('Not saved. This document is ' + (autoSavedId || form.id) + ', so it cannot be changed into a ' + (form.type === 'estimate' ? 'estimate' : 'invoice') + '. Use the convert button to create the other document instead.');
+      } else {
+        alert('Save failed (outer): ' + (e.message || String(e)));
+      }
       return null;
     } finally {
       setAutoSaving(false);
