@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.3.2 — 2026-08-26
+
+### Bug Fixes
+- **A new document could overwrite the one you just left** — the invoice form stays mounted for 300ms after you leave it so the slide-out animation can finish. Tapping **+** inside that window reused the previous document's state, including the id auto-save writes to, so the new document's fields were saved onto the previous document's row. Because the save RPC upserts on id with `type = excluded.type`, that rewrote what the old document *was*: EST0767 became an invoice while keeping its estimate number, and was then emailed to a customer that way. The form now resets whenever **+** asks for a new document, tracked by a counter so two new documents in a row still reset. Backing out to the list deliberately does not reset — that path would blank the form mid-animation and mint an empty document on the way out.
+- **Guard against id and type ever disagreeing again** — an `EST####` row is an estimate and an `INV####` row is an invoice. Auto-save now refuses to write anything that contradicts the id's own prefix, so no future bug can silently change what an existing document is. Rows already mismatched stay editable so they can be repaired.
+
+---
+
 ## v1.3.1 — 2026-08-25
 
 ### Changes

@@ -3073,7 +3073,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
+function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3263,21 +3263,49 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
   formRef.current = form;
   const autoSaveTimerRef = useRef(null);
   const skipFirstRef = useRef(true);
+  const lastNewSeqRef = useRef(newDocSeq);
   // When the parent swaps in a different invoice/estimate (e.g. after Convert
   // or after the AI creates a new doc), reset the form to the new record so we
   // don't keep editing the previous doc's data — which would otherwise get
   // auto-saved back into the new record's row and clobber its type/fields.
   useEffect(() => {
-    if (invoice?.id && invoice.id !== autoSavedId) {
-      setForm({ discountType: "$", ...invoice });
-      setAutoSavedId(invoice.id);
-      updatedAtRef.current = invoice.updatedAt || null;
-      skipFirstRef.current = true; // suppress the auto-save triggered by this reset
-      setEditingClient(false);
-      setClientDraft(null);
+    if (invoice?.id) {
+      if (invoice.id !== autoSavedId) {
+        setForm({ discountType: "$", ...invoice });
+        setAutoSavedId(invoice.id);
+        updatedAtRef.current = invoice.updatedAt || null;
+        skipFirstRef.current = true; // suppress the auto-save triggered by this reset
+        setEditingClient(false);
+        setClientDraft(null);
+      }
+      lastNewSeqRef.current = newDocSeq;
+      return;
     }
+    // Only reset when the + button actually asked for a new document. Backing
+    // out to the list also clears `selected`, and resetting there would blank
+    // the form while it is still sliding out -- then the unmount flush would
+    // save a form with no id, and autoSaveInvoice would mint a brand-new empty
+    // document every time you hit back.
+    if (newDocSeq === lastNewSeqRef.current) return;
+    lastNewSeqRef.current = newDocSeq;
+    // The parent asked for a brand-new document. This branch
+    // used to be missing, and it caused real data loss: the form lingers
+    // mounted for FORM_SLIDE_MS after you leave it so the slide-out can
+    // finish, so tapping + inside that window reused the previous document's
+    // state -- including its autoSavedId. Auto-save writes
+    // `id: autoSavedId || f.id` with the whole form, so the new document's
+    // fields (type included) were saved straight onto the previous
+    // document's row. That is how EST0767 ended up with type 'invoice' and
+    // got emailed to a customer under an estimate's number. newDocSeq bumps
+    // on every + tap so two new documents in a row still reset.
+    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
+    setAutoSavedId(null);
+    updatedAtRef.current = null;
+    skipFirstRef.current = true;
+    setEditingClient(false);
+    setClientDraft(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoice?.id]);
+  }, [invoice?.id, newDocSeq]);
   // If an invoice loaded without a job_address but has a billing_address,
   // copy billing into job so ETA / address display always has something to use.
   useEffect(() => {
@@ -3319,11 +3347,28 @@ function InvoiceForm({ invoice, defaultType, clients, savedItems, gcalAuthed, on
       const effJobId = f.jobAddressId || f.jobAddress?.id || null;
       const pickedJob = (effJobId && cAddrs.find(a => a.id === effJobId)) || f.jobAddress || cAddrs[0] || null;
       const billing = f.billingAddress || c?.billingAddress || null;
+      // Invariant: an EST#### row is an estimate and an INV#### row is an
+      // invoice. Nothing in the app is allowed to break that -- the save RPC
+      // upserts on id with `type = excluded.type`, so one bad write silently
+      // rewrites what an existing document *is*. Refuse rather than corrupt.
+      // A row that is already mismatched (EST0767 and anything else the old
+      // bug produced) stays editable, otherwise it could never be repaired.
+      const targetId = autoSavedId || f.id;
+      if (targetId) {
+        const idWantsEstimate = String(targetId).startsWith("EST");
+        const formIsEstimate = f.type === "estimate";
+        const rowAlreadyMismatched = invoice && invoice.id === targetId
+          && (invoice.type === "estimate") !== idWantsEstimate;
+        if (!rowAlreadyMismatched && formIsEstimate !== idWantsEstimate) {
+          console.error("Refusing auto-save: id/type mismatch", { targetId, type: f.type });
+          return null;
+        }
+      }
       const saved = await onAutoSave({
         ...f,
         jobAddress: pickedJob,
         billingAddress: billing,
-        id: autoSavedId || f.id,
+        id: targetId,
         updatedAt: updatedAtRef.current,
       });
       if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
@@ -8772,6 +8817,10 @@ export default function App() {
     return () => ro.disconnect();
   }, []);
   const [newDocType, setNewDocType] = useState("invoice");
+  // Bumped every time the + button asks for a brand-new document, so the
+  // still-mounted InvoiceForm resets even on two new documents in a row
+  // (where `selected` stays null and the id dep alone would not change).
+  const [newDocSeq, setNewDocSeq] = useState(0);
   // When the user picks Send from the long-press quick-actions menu on the
   // list, we route them into the invoice form AND tell the form to pop its
   // send-method sheet automatically. The form clears this back to null after
@@ -10031,8 +10080,8 @@ export default function App() {
       {view === "list" && (tab === "invoices" || tab === "estimates" || tab === "expenses") && (
         <button
           onClick={() => {
-            if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setView("form"); }
-            else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setView("form"); }
+            if (tab === "invoices")  { setSelected(null); setNewDocType("invoice");  setNewDocSeq(n => n + 1); setView("form"); }
+            else if (tab === "estimates") { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }
             else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
           }}
           aria-label="New"
@@ -10047,8 +10096,8 @@ export default function App() {
             {subHeader.content}
           </div>
         )}
-        {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
-        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
+        {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
+        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
@@ -10071,6 +10120,7 @@ export default function App() {
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
+            newDocSeq={newDocSeq}
             clients={data.clients}
             savedItems={data.savedItems}
             gcalAuthed={gcalAuthed}
