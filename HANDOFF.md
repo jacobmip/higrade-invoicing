@@ -305,7 +305,35 @@ Everything UI lives in `src/App.jsx`. New components are inserted in the same fi
 
 Never mint from `nextNumRef` / `nextEstimateNumRef` — they are dead, kept only as a record of where the old sequences stopped. Never assign `nextDocNumRef` downwards; use `bumpDocNum()`, which only raises.
 
+**The app is not the only minter.** `create_estimate_from_lead()` allocates a number in SQL when the AI receptionist files a lead, using `next_doc_num` and `bump_doc_num()` directly. See "Writers outside the app" below before changing anything about numbering.
+
 Documents numbered below 1000 predate this and come from the old side-by-side sequences, where `INV0767` and `EST0767` are both real and unrelated. Conversion checks whether the paired id is free and falls back to a fresh number when it is not, so legacy pairs stay linked by the cross-link button instead of by matching numbers.
+
+### Writers outside the app — the AI receptionist
+`src/App.jsx` and `src/db.js` are **not** the only things that write to `invoices`. The AI receptionist ("Lisa") inserts rows through its own `SECURITY DEFINER` RPCs, called straight from Vapi and from serverless routes. They never load App.jsx, so no guard, ref or helper in the front end applies to them.
+
+Anything that changes how documents are **numbered, identified, typed, or scheduled** has to be checked against these too:
+
+| Function | Writes | Called by |
+|---|---|---|
+| `create_estimate_from_lead()` | inserts an `invoices` row + `invoice_items`, mints a document number | Vapi `createEstimate` tool, mid-call |
+| `capture_abandoned_call()` | calls the above when a caller hangs up before Lisa files | `/api/vapi-call-ended` |
+| `set_invoice_internal_notes()` | `internal_notes` | editor save path, and the abandoned-call capture |
+| `set_invoice_gcal_event()` | `gcal_event_id` | the Google Apps Script webhook, calling back |
+| `push_invoice_to_calendar()` | reads `gcal_date`, posts to the calendar webhook | trigger on `ai_lead` insert |
+| `notify_owner_of_lead()` | inserts `notifications`, sends the lead email | trigger on `ai_lead` insert |
+
+This has already caused two production breaks:
+
+- **Migration 040** retired `next_estimate_num` and said nothing minted from it. `create_estimate_from_lead` still did. `INV0808` exists and 52 more legacy invoices sit between 808 and 999, so the next lead would have reissued a number already printed on a customer's invoice. Fixed in `041`.
+- **Vapi's Composer AI** silently detached `createEstimate` and deleted the estimate workflow from the assistant prompt, taking the receptionist down for two live calls with no error anywhere.
+
+Two rules that follow:
+
+1. **Grep `supabase/migrations/` for the column you are changing before changing it.** The receptionist logic lives in SQL, not in JS, so a front-end search will not find it.
+2. **Prefer a trigger to an app-side guard** when an invariant must hold. Migration `039` does this correctly — it catches every writer, including these RPCs and the SQL editor.
+
+To inspect the live receptionist state without a phone call, `settings.vapi_private_key` lets SQL drive the Vapi API through the `http` extension. That is how the assistant's tools and prompt are read and edited.
 
 ### View tokens
 Every invoice gets a random ~72-bit token in `view_token`. Anyone with the token can hit `/v/<token>` to view + pay + sign. Keep tokens unguessable and never expose them in logs or analytics.
