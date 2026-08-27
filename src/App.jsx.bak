@@ -9040,6 +9040,7 @@ export default function App() {
       setData(fresh);
       nextNumRef.current = fresh.nextNum || nextNumRef.current;
       nextEstimateNumRef.current = fresh.nextEstimateNum || nextEstimateNumRef.current;
+      bumpDocNum(fresh.nextDocNum);
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)); } catch {}
     } catch (e) {
       console.error('Refresh failed:', e);
@@ -9130,6 +9131,23 @@ export default function App() {
   const nextNumRef = useRef(753);
   // Estimates use their own counter (EST####). Same race-avoidance pattern.
   const nextEstimateNumRef = useRef(712);
+  // Shared document counter. Estimates and invoices draw from ONE sequence so a
+  // converted estimate keeps its number (EST1000 -> INV1000). The number
+  // identifies the job, not the document, which is what makes the pairing
+  // collision-proof: a number is issued once, so the invoice side can never
+  // land on one the estimate side already used. Legacy documents keep their old
+  // numbers -- see db.js loadAll for why this cannot be applied backwards.
+  // NEVER assign this downwards; only ever raise it, or a stale cache would
+  // reissue a number that is already on a customer's PDF.
+  const nextDocNumRef = useRef(1000);
+  const bumpDocNum = (n) => { if (typeof n === "number" && n > nextDocNumRef.current) nextDocNumRef.current = n; };
+  // Reserve the next document number synchronously. Synchronous matters: state
+  // updates are deferred, so a bulk create looping 20 times would otherwise
+  // hand the same number to every document. Returns e.g. "EST1000".
+  const mintDocId = (type) => {
+    const num = nextDocNumRef.current++;
+    return { num, id: `${type === "estimate" ? "EST" : "INV"}${String(num).padStart(4, "0")}` };
+  };
   // Keep the synchronous counter aligned with state whenever state advances
   // (e.g. after a load from Supabase or after a single-doc create updates state).
   useEffect(() => {
@@ -9142,6 +9160,7 @@ export default function App() {
       nextEstimateNumRef.current = data.nextEstimateNum;
     }
   }, [data.nextEstimateNum]);
+  useEffect(() => { bumpDocNum(data.nextDocNum); }, [data.nextDocNum]);
 
   useEffect(() => {
     // Don't fire the heavy loadAll until we know the user is signed in.
@@ -9158,6 +9177,7 @@ export default function App() {
         setData(cached);
         nextNumRef.current = cached.nextNum || 753;
         nextEstimateNumRef.current = cached.nextEstimateNum || 712;
+        bumpDocNum(cached.nextDocNum);
         hydrateTemplatesFromSettings(cached.settings);
         hasCached = true;
       }
@@ -9172,6 +9192,7 @@ export default function App() {
         setData(d);
         nextNumRef.current = d.nextNum || 753;
         nextEstimateNumRef.current = d.nextEstimateNum || 712;
+        bumpDocNum(d.nextDocNum);
         hydrateTemplatesFromSettings(d.settings);
         setDbLoading(false);
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch {}
@@ -9292,12 +9313,8 @@ export default function App() {
       const docType = parsed.action === "create_estimate" ? "estimate" : "invoice";
       const isEst = docType === "estimate";
       // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
-      // create) don't collide. Estimates and invoices use independent
-      // counters so EST and INV numbers never share a sequence.
-      const counterRef = isEst ? nextEstimateNumRef : nextNumRef;
-      const idPrefix = isEst ? "EST" : "INV";
-      const num = counterRef.current++;
-      const id = `${idPrefix}${String(num).padStart(4, "0")}`;
+      // create) don't collide. One shared sequence across both types.
+      const { num, id } = mintDocId(docType);
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
@@ -9310,8 +9327,10 @@ export default function App() {
         await db.claimInvoiceOwner(id);
       } catch (e) {
         console.error('DB write failed for', id, e);
-        // Roll back the synchronous counter so the next call reuses this number
-        if (counterRef.current === num + 1) counterRef.current = num;
+        // Roll back the synchronous counter so the next call reuses this number.
+        // Only safe when nothing else has minted since -- otherwise leave the
+        // gap, because a gap is free and a reissued number is not.
+        if (nextDocNumRef.current === num + 1) nextDocNumRef.current = num;
         throw e;
       }
       const stamped = { ...newInvoice, updatedAt: saveResult?.updatedAt || null };
@@ -9457,10 +9476,8 @@ export default function App() {
       try { await db.upsertInvoice(updated, false); }
       catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     } else {
-      // Estimates and invoices use independent counters: EST#### vs INV####.
       const isEst = form.type === "estimate";
-      const num = isEst ? nextEstimateNumRef.current++ : nextNumRef.current++;
-      const id = `${isEst ? "EST" : "INV"}${String(num).padStart(4, "0")}`;
+      const { num, id } = mintDocId(form.type);
       const newInv = { ...form, id, year };
       setData(d => ({
         ...d,
@@ -9638,10 +9655,9 @@ export default function App() {
 
   const duplicateInvoice = async (inv) => {
     const isEst = inv.type === 'estimate';
-    const idPrefix = isEst ? 'EST' : 'INV';
-    const counterRef = isEst ? nextEstimateNumRef : nextNumRef;
-    const num = counterRef.current++;
-    const newId = `${idPrefix}${String(num).padStart(4, '0')}`;
+    // A duplicate is a new job, so it always takes a fresh number -- never the
+    // source document's.
+    const { num, id: newId } = mintDocId(inv.type);
     const copy = {
       ...inv,
       id: newId,
@@ -9732,20 +9748,51 @@ export default function App() {
   // original is preserved (change-order friendly).
   const convertInvoice = async (form, targetType) => {
     const year = new Date(form.date || today()).getFullYear();
-    // Pick the right counter based on what we're minting. Belt-and-suspenders:
-    // also clamp to highest existing id of that type so we never collide.
     const isEstTarget = targetType === "estimate";
     const idPrefix = isEstTarget ? "EST" : "INV";
-    const idRegex = isEstTarget ? /^EST(\d+)$/ : /^INV(\d+)$/;
-    const highestExisting = data.invoices.reduce((mx, inv) => {
-      if (inv.type !== targetType) return mx;
-      const m = idRegex.exec(inv.id || "");
-      return m ? Math.max(mx, parseInt(m[1], 10)) : mx;
-    }, 0);
-    const counterRef = isEstTarget ? nextEstimateNumRef : nextNumRef;
-    const num = Math.max(counterRef.current, highestExisting + 1);
-    counterRef.current = num + 1;
-    const newId = `${idPrefix}${String(num).padStart(4, "0")}`;
+
+    // Converting an already-converted estimate would mint a second invoice for
+    // the same job -- and under shared numbering it would ask for a number that
+    // is already taken. Send the user to the existing document instead.
+    const alreadyConverted = !isEstTarget
+      && (form.convertedToId || data.invoices.find(d => d.type === "estimate" && d.convertedToId === form.id));
+    if (alreadyConverted) {
+      const existingId = form.convertedToId || alreadyConverted.id;
+      const existing = data.invoices.find(d => d.id === existingId);
+      if (existing) {
+        alert(`${form.id} was already converted to ${existingId}. Opening it instead.`);
+        setSelected(existing);
+        setView("form");
+        setTab(existing.type === "estimate" ? "estimates" : "invoices");
+        return;
+      }
+    }
+
+    // ── The number ────────────────────────────────────────────────────────────
+    // The number identifies the job, not the document, so a conversion keeps it:
+    // EST1000 becomes INV1000. Reusing it is safe precisely because the shared
+    // sequence issued that number once -- no independently created invoice can
+    // ever have claimed it.
+    //
+    // Legacy documents are the exception. Their numbers come from the old
+    // side-by-side sequences, where INV0767 and EST0767 are both real and
+    // unrelated. Reusing the number there would collide with a document already
+    // sent to a customer, so those fall back to a fresh one off the shared
+    // sequence and stay linked by the cross-link button instead.
+    const sourceNum = parseInt((/^(?:EST|INV)(\d+)$/.exec(form.id || "") || [])[1], 10);
+    const pairedId = Number.isFinite(sourceNum)
+      ? `${idPrefix}${String(sourceNum).padStart(4, "0")}`
+      : null;
+    const pairedIsFree = !!pairedId && !data.invoices.some(d => d.id === pairedId);
+    let num, newId;
+    if (pairedIsFree) {
+      num = sourceNum;
+      newId = pairedId;
+      bumpDocNum(sourceNum + 1);
+    } else {
+      ({ num, id: newId } = mintDocId(targetType));
+      if (pairedId) console.warn(`Cannot reuse ${pairedId} (already exists); minted ${newId} instead.`);
+    }
     // Carry payments forward (e.g. a down payment recorded on an estimate
     // becomes the opening paid balance on the new invoice). Stamp each
     // copied payment with a fresh id so the DB doesn't see a primary-key
@@ -9924,11 +9971,9 @@ export default function App() {
       if (!selected || selected.id !== id) setSelected(stamped);
       return stamped;
     }
-    // New record — mint an ID. Estimates and invoices use independent counters.
+    // New record — mint an ID from the shared sequence.
     const isEst = form.type === "estimate";
-    const counterRef = isEst ? nextEstimateNumRef : nextNumRef;
-    const num = counterRef.current++;
-    const id = `${isEst ? "EST" : "INV"}${String(num).padStart(4, "0")}`;
+    const { num, id } = mintDocId(form.type);
     const created = { ...form, id, year };
     setData(d => ({
       ...d,
