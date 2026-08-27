@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.4.2 — 2026-08-26
+
+### Bug Fixes
+- **Line item editor snapped back to the top, putting Done out of reach** — with a long description the edit sheet jumped to the top every time you tried to scroll down, so the Done button could not be reached and changes could not be saved. The description's auto-grow ran as an inline `ref={el => ...}` callback, which React re-invokes on *every* render because the arrow function is a new identity each time. Each pass set the height to `auto` before measuring, momentarily collapsing a tall textarea to a single row — the sheet's scrollable height collapsed with it and the browser clamped `scrollTop` to the new maximum. Restoring the height did not restore the scroll position. The resize now runs in a layout effect keyed on the description text, with the sheet's scroll position captured and restored around the measurement. The duplicate per-keystroke resizing in `onChange` and `onInput` is gone; one place owns it.
+
+---
+
 ## v1.4.1 — 2026-08-26
 
 ### Changes
