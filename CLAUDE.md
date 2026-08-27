@@ -31,9 +31,11 @@ Read this file first. It captures everything an AI agent needs to safely continu
     - Commit both files in the same commit as the code change (not a separate commit).
 
 ## Stack
-- **Frontend**: Vite + React (single-file `src/App.jsx`, ~8500 lines). No component split yet.
+- **Frontend**: Vite + React. `src/App.jsx` is ~10,300 lines and intentionally monolithic; a few later features live in their own files (see Source layout).
 - **DB**: Supabase Postgres, project ref `cwhgcxxszyvevjpbnnkc`.
-- **Auth**: Supabase Auth, email + password.
+- **Auth**: Supabase Auth, email + password. Multi-user: `profiles.role` is `admin` or `plumber`.
+- **Native**: Capacitor shells for iOS and Android (`ios/`, `android/`) — see `NATIVE.md` and `DEV.md`.
+- **Telephony**: Vapi (AI receptionist, "Lisa") + Twilio SMS. Outbound SMS is gated off pending A2P 10DLC.
 - **Hosting**: Vercel, project `jacobmips-projects/higrade-invoicing`. Auto-deploys on push to `main`.
 - **Live**: https://higrade-invoicing.vercel.app
 - **Test harness**: https://higrade-invoicing.vercel.app/estimator-test.html
@@ -44,51 +46,129 @@ Read this file first. It captures everything an AI agent needs to safely continu
 ## Source layout
 ```
 src/
-  App.jsx            — everything: routing, all modals, AI chat, invoice form, client list (~8500 lines)
-  apiBase.js         — API base URL helper
-  backup.js          — manual backup export
-  contacts.js        — phone contact import (iOS)
-  db.js              — Supabase queries (clients, invoices, items, payments, saved items, chat history)
-  googleCalendar.js  — gcal sync helpers
+  App.jsx            — routing, all modals, AI chat, invoice form, client list (~10,300 lines)
+  App.jsx.bak        — restore point, see hard rule 11
+  db.js              — all Supabase reads/writes (~990 lines)
   printablePdf.js    — jsPDF invoice/estimate generator
+  JobPhotos.jsx      — per-job photo gallery
+  OnMyWay.jsx        — "on my way" customer notification
+  PriceBook.jsx      — price book picker
+  billTo.js          — bill-to / job-site address resolution
+  backup.js          — manual backup export + restore
+  contacts.js        — phone contact import (iOS)
+  googleCalendar.js  — gcal sync helpers
+  apiBase.js         — API base URL helper (rewrites /api for native builds)
   supabase.js        — Supabase client init
+  version.js         — APP_VERSION + APP_BUILD_DATE, see hard rule 13
   main.jsx           — entry
+api/                 — Vercel serverless functions, all nodejs runtime
+  ai.js                    — per-invoice + global AI chat
+  ai-estimator.js          — structured estimate generation
+  ai-extract-client.js     — screenshot to client records (vision)
+  extract-receipt.js       — receipt OCR to expense
+  paypal-create-order.js / paypal-capture-order.js / paypal-webhook.js
+  send-email.js / send-estimate.js / submit-signature.js / track-open.js
+  public-invoice.js        — service-role read for /v/<token>
+  register-device.js       — APNs token upsert
+  vapi-call-ended.js       — Vapi end-of-call webhook
+  sms-inbound.js           — Twilio inbound SMS webhook
+  eta.js / geocode.js      — travel time + address lookup
+  _lib/notify.js           — APNs JWT + push fan-out
+  _lib/sms.js              — Twilio send helper
 public/
-  estimator-test.html — standalone test harness for AI estimator + screenshot extractor
-supabase/migrations/ — numbered SQL migrations, applied manually in SQL editor
+  estimator-test.html — standalone test harness for AI estimator + extractor
+supabase/migrations/ — numbered SQL, applied by hand in the SQL editor
+local-mirror/        — optional local Postgres replica, see its README
 ```
 
-## Database schema (post-migration 018)
-All tables have `owner_id uuid references auth.users(id)` with RLS scoped to `owner_id = auth.uid() OR is_admin()`.
+Other docs in the repo: **`HANDOFF.md`** is the deep reference (architecture, patterns,
+the writers-outside-the-app table). **`CHANGELOG.md`** is the release log.
+`NATIVE.md`, `DEV.md`, `PUSH_SETUP.md` cover native builds, local dev, and APNs.
+
+## Database schema (current through migration 041)
+Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
+`owner_id = auth.uid() OR is_admin()`.
 
 - `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), created_at
-- `clients` — name, email, email2, phone, address1/2/3, addresses jsonb (multi-property), notes
-- `invoices` — number, client_id, client snapshot fields, jobAddress jsonb, items, totals, status, version, photos
-- `invoice_items` — invoice_id, name, desc, qty, price, taxable
-- `invoice_versions` — full snapshots for history view
-- `invoice_events` — audit trail
-- `payments` — invoice_id, amount, method, ref, paid_at
-- `saved_items` — reusable line-item library, scoped per user
-- `ai_chat_history` — user_id PK, messages jsonb (max 200), updated_at; **RLS self-only, admins do NOT bypass** (chat is private)
+- `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes
+- `client_versions` — full client snapshots, mirrors invoice_versions
+- `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, deleted_at, updated_at
+- `invoice_items` — invoice_id, name, description, qty, price, unit, discount, taxable, sort_order
+- `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
+- `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`
+- `payments` — invoice_id, amount, surcharge, method, date, note, paypal_order_id, paypal_capture_id (unique)
+- `saved_items` — line-item library, per-user (`owner_id`, unique on `(owner_id, name)`)
+- `job_photos` — per-invoice photos
+- `expenses` — receipt OCR output
+- `notifications` / `device_tokens` — in-app bell + APNs
+- `ai_chat_history` — user_id PK, messages jsonb (max 200); **RLS self-only, admins do NOT bypass**
+- `settings` — key/value. Counters live here: `next_doc_num` is live, `next_num` and `next_estimate_num` are retired.
 
-### Helper functions
-- `is_admin()` — SECURITY DEFINER, checks current user
-- `is_admin_uid(uid uuid)` — SECURITY DEFINER, breaks RLS recursion in profiles policies
-- `set_owner_id()` — trigger, auto-stamps owner_id on insert
-- `propagate_client_to_invoices(client_id, name, addr_jsonb, contact_jsonb)` — RPC for live client edits
+### Helper functions and RPCs
+- `is_admin()` / `is_admin_uid(uid)` — SECURITY DEFINER; the second breaks RLS recursion in profiles policies
+- `set_owner_id()` — trigger, stamps owner_id on insert. **Returns NULL under the service-role key** (`auth.uid()` is null), which is how down-payment invoices ended up invisible — see migration 037.
+- `save_invoice_with_items(...)` — the main upsert. Redefined by seven migrations; rebuild it from its live definition, never from an old file.
+- `enforce_invoice_id_type()` — trigger, migration 039. An `EST` row is an estimate and an `INV` row is an invoice; blocks any write that would introduce a mismatch, grandfathers rows already mismatched.
+- `bump_doc_num(n)` — advance-only shared counter, migration 040
+- `create_estimate_from_lead(...)` / `capture_abandoned_call(...)` — AI receptionist
+- `set_invoice_internal_notes(...)`, `set_invoice_gcal_event(...)`, `push_invoice_to_calendar(...)`, `notify_owner_of_lead(...)`, `propagate_client_to_invoices(...)`, `lookup_client_by_phone(...)`, `log_client_message(...)`, `client_message_thread(...)`
+
+**`src/App.jsx` and `src/db.js` are not the only writers to `invoices`.** The AI
+receptionist inserts through SECURITY DEFINER RPCs called straight from Vapi and
+from serverless routes, so no front-end guard applies to them and a JS-only grep
+never finds them. This has already caused two production breaks. Before changing
+anything about how documents are numbered, identified, typed or scheduled, read
+**"Writers outside the app"** in `HANDOFF.md`.
+
+## Document numbering (migration 040)
+One shared sequence for both types, so a converted estimate keeps its number:
+EST1000 becomes INV1000. The number identifies the **job**, not the document —
+that is what makes it collision-proof, since a number is issued once. Invoice
+numbers are therefore not contiguous, which was an accepted trade-off.
+
+- Mint via `mintDocId(type)` in App.jsx, which draws from `nextDocNumRef`.
+- Never mint from `nextNumRef` / `nextEstimateNumRef`. They are dead.
+- Never assign `nextDocNumRef` downwards; use `bumpDocNum()`, which only raises.
+- Documents below 1000 predate this. The old scheme ran two independent
+  sequences, so `INV0767` and `EST0767` are both real and unrelated. Conversion
+  checks whether the paired id is free and falls back to a fresh number when it
+  is not; legacy pairs stay linked by the cross-link button instead.
 
 ## Migrations applied (in order)
-- 001–016: foundational schema, items, payments, saved items, photos, versions, events, RPCs
-- **017**: multi-user — profiles, owner_id everywhere, RLS scoping, admin role, View-as. Includes the `is_admin_uid` helper added later to fix profiles policy infinite recursion.
-- **018**: ai_chat_history table + self-only RLS + updated_at trigger.
+- **001–016** — foundational schema, items, payments, saved items, versions, events, PayPal, notifications, auth lockdown, estimate down payments
+- **017** — multi-user: profiles, owner_id, RLS scoping, admin role, View-as. **The file is not in the repo**; it was applied directly in the SQL editor. Reconstruct from the live schema if you need it.
+- **018–022** — ai_chat_history, client_versions, estimate counter fix, propagate fix, address unit
+- **023–036** — AI receptionist: lead capture, auto-pricing, appointments, SMS/email alerts, caller ID, calendar webhook, message log, abandoned-call capture, phone lookup
+- **037** — backfill invoices orphaned by the missing `owner_id`
+- **038** — calendar timezone fix
+- **039** — id/type trigger
+- **040** — shared document number
+- **041** — put the AI receptionist on the shared counter
+- `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-When writing the next migration, name it `019_<short_description>.sql` and paste the SQL inline in chat for Jake to run.
+Next migration is `042_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
-- **Per-invoice chat panel** (`AIChatPanel` in App.jsx) — line-item edits, mark paid, change client, set date, etc. Uses Haiku 4.5 for general chat.
-- **Global AI modal** (`GlobalAIModal`) — create invoices/estimates from scratch, bulk operations, client lookups. Same model.
-- **AI estimator** — Sonnet 4.6, takes a job description (+ optional photos), outputs structured estimate with markup logic.
-- **Screenshot-to-client extractor** — Sonnet 4.6 vision, parses screenshots of contact lists into structured client records.
+All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids
+below are the source of truth, and `ANTHROPIC_API_KEY` is the only AI key set).
+
+| Feature | Where | Model |
+|---|---|---|
+| Per-invoice chat (`AIChatPanel`) and global modal (`GlobalAIModal`) | `api/ai.js` | `claude-haiku-4-5-20251001` |
+| AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-sonnet-4-5-20250929` |
+| Screenshot-to-client extractor (vision) | `api/ai-extract-client.js` | `claude-sonnet-4-5-20250929` |
+| Receipt OCR to expense | `api/extract-receipt.js` | `claude-sonnet-4-6` |
+
+### AI receptionist ("Lisa")
+Answers the business line through **Vapi**, captures the lead, and files an
+estimate mid-call via `create_estimate_from_lead()`. `/api/vapi-call-ended`
+handles the end-of-call report; `capture_abandoned_call()` still files a lead if
+the caller hangs up first. Inbound customer SMS lands at `/api/sms-inbound`.
+
+**Outbound SMS is gated off** behind `settings.sms_outbound_enabled` pending A2P
+10DLC registration. Turning it on before that clears produces silent failures
+that look like success. Inbound (customer texts the business) is not blocked and
+works today.
 
 ### Pricing model (Option B, locked)
 For each line item: `max(materials × 0.35 markup factor, labor floor)`.
@@ -110,12 +190,23 @@ Earlier the model would reply "I've updated the description..." in plain text wi
 
 If a similar "AI claims it did something but nothing happened" bug appears for a different action, follow the same pattern: tighten the prompt with examples, add a regex guard + retry.
 
-## Connectors / external services Jake uses
+## Connectors / external services
 - **Vercel** — auto-deploy from main, project `jacobmips-projects/higrade-invoicing`
-- **GitHub** — repo above
-- **Google Drive** — daily backup destination
-- **Google Calendar** — invoice → event sync
 - **Supabase** — DB + auth + storage
+- **Anthropic** — every AI feature (`ANTHROPIC_API_KEY`)
+- **Resend** — invoice/estimate email from `invoices@higradeplumbing.com`
+- **PayPal** — live mode, Smart Buttons + Venmo on the public viewer
+- **Twilio** — SMS; inbound works, outbound gated pending A2P 10DLC
+- **Vapi** — the AI receptionist's telephony
+- **Google Calendar** — invoice → event sync, via a webhook
+- **Google Drive** — daily backup destination
+- **APNs** — iOS push, see `PUSH_SETUP.md`
+
+Vercel env vars in use: `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `PAYPAL_CLIENT_ID`,
+`PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV`, `PAYPAL_WEBHOOK_ID`, `SUPABASE_URL`,
+`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `TWILIO_ACCOUNT_SID`,
+`TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `SMS_WEBHOOK_SECRET`, `APNS_*`,
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_GOOGLE_MAPS_API_KEY`.
 
 ## Daily backup (recurring task in Perplexity Computer)
 Cron `0d900b36`, runs `0 4 * * *` UTC:
@@ -126,10 +217,11 @@ This is read-only and runs outside Claude Code. Do not duplicate it in this repo
 
 ## Locked UI specs
 - Dark navy header, orange Done button.
-- Estimate / invoice tabs: Edit · Preview · History.
-- Quick-actions row above line items: Reorder · AI · Saved · +.
-- Client search modal (quick add) lives in App.jsx around the search bar; the full edit modal is much larger.
-- Edit-client modal already has `email2`. The quick-add modal does **not** — that's a queued bug.
+- Estimate / invoice tabs: Edit · Preview · History · Photos.
+- Quick-actions row above line items: Reorder · AI · Saved · Price Book · +.
+- Both the quick-add and full client edit modals support `email2`.
+- On a converted document the convert button becomes a cross-link showing the
+  counterpart's number (`→ INV1000` / `← EST1000`).
 
 ## Queued bugs
 
@@ -190,36 +282,41 @@ contents, this is the class to investigate — not the id/type rule.
 
 The user explicitly chose to **keep `addresses` as JSON** rather than break it out into a separate `properties` table — the migration risk wasn't worth it for a system he runs his business on. Re-evaluate only if cross-property reporting becomes a real need.
 
-## Recent commits (most recent first)
-- `c3580f7` — Force update_item JSON for line edits + auto-retry guard
-- `ddafb04` — Server-side AI chat history (migration 018)
-- `8aee424` — Recover stranded chat to admin
-- `9f8ab40` — Auto-cleanup of corrupted chat
-- `d7d58f3` — Removed bad auto-migration
-- `5be45c5` — Per-user localStorage namespacing (caused the chat-leak bug, since fixed)
-- `9fac19d` — Multi-user (owner_id, admin role, View-as) — pairs with migration 017
-- `c57750e` — Mic crash fix + paperclip in global AI
-- `99e1e8d` — Photo upload + client propagation phase 1
-- `79812f6` — Auto-grow chat input
-- `53f4304` — Travel zones
-- `3a5147c` — Tighten extractor notes
-- `edd4059` — Vision + screenshot extractor
-- `09dab1d` — Tighten estimator
-- `47aa759` — AI estimator + test harness
+## Recent work (2026-08-26)
+Rather than a commit list that goes stale immediately, run `git log --oneline -20`.
+The session that produced most of the current state did the following, in order:
+
+- Cross-link button between an estimate and its invoice; fixed down-payment
+  invoices created by `/api/paypal-capture-order` with a null `owner_id`, which
+  RLS then hid entirely (migration 037 backfilled the existing ones)
+- Fixed the form bug behind `EST0767`: a new document opened within the 300ms
+  slide-out window reused the previous document's state *and* the id auto-save
+  writes to, overwriting the old row and flipping its type
+- Migration 039: moved the id/type invariant into a database trigger, since the
+  app-side guards did not cover the serverless routes or the receptionist RPCs
+- Migration 040: shared document numbering; 041 put the receptionist on it too
 
 ## Known sharp edges
-- **iOS Safari `SpeechRecognition.start()`** throws synchronously. Always wrap in try/catch — the mic button crashed the app once already.
-- **localStorage chat history is now a warm cache only.** Authoritative copy is in `ai_chat_history`. Don't reintroduce migration logic that "claims" a legacy key — that caused chat to jump accounts.
-- **Profiles table RLS recursion**: any policy on `profiles` that queries `profiles` will infinite-loop. Use `is_admin_uid(auth.uid())` (SECURITY DEFINER) instead.
-- **`form.jobAddress` is an object, not a string**, in the invoice form state. PDF renderer currently has a stale string-comparison check.
-- **App.jsx is one ~8500-line file.** Use grep, not full reads, to navigate.
+- **App.jsx is ~10,300 lines.** Use grep, not full reads, to navigate.
+- **The app is not the only writer to `invoices`.** See the schema section above and "Writers outside the app" in `HANDOFF.md`. Two production breaks have come from assuming otherwise.
+- **Prefer a trigger to an app-side guard** when an invariant must hold. Migration 039 is the model: the front end cannot police writes it never sees.
+- **`set_owner_id()` stamps null under the service-role key.** Any endpoint inserting with the service role must set `owner_id` explicitly or the row is invisible to everyone.
+- **`invoice_versions` uses `sent_at`, not `created_at`.** `invoice_events` uses `created_at`. Getting this wrong aborts the whole SQL batch.
+- **`save_invoice_with_items` has been redefined by seven migrations** and may carry edits made directly in the SQL editor. Rebuild it from `pg_get_functiondef`, never from an old migration file — migration 041 shows the pattern, with asserted replacements.
+- **Do not reset the invoice form when backing out to the list.** That path clears `selected` too, and resetting there blanks the form mid-animation; the unmount flush then saves an id-less form and `autoSaveInvoice` mints an empty document. Reset only on an explicit new-document request.
+- **Never write an auto-grow textarea as an inline `ref={el => ...}` callback.** A new arrow function each render makes React reattach the ref every render, and setting `height = "auto"` to measure collapses the element and clamps the scroll position. Use a stable ref plus a layout effect.
+- **iOS Safari `SpeechRecognition.start()`** throws synchronously. Always wrap in try/catch.
+- **localStorage chat history is a warm cache only.** The authoritative copy is `ai_chat_history`. Don't reintroduce migration logic that "claims" a legacy key — that made chat jump accounts.
+- **Profiles table RLS recursion**: any policy on `profiles` that queries `profiles` infinite-loops. Use `is_admin_uid(auth.uid())`.
+- **`form.jobAddress` is an object, not a string.**
 
 ## Workflow tips for the next agent
-- Build before pushing: `npm run build` in `higrade-invoicing/`.
-- Jake's phone is the primary device. Test on mobile widths in the browser before declaring something fixed.
-- When you write a migration, **paste the SQL in chat** — don't assume any direct DB access.
-- Don't run `vercel` deploys manually; pushing to `main` auto-deploys.
-- If you suspect a system-prompt regression in the AI chat, the prompt lives near the top of `App.jsx` (search for `update_item`, ~line 246).
-- If the AI starts claiming it did something but nothing happened, check for a new failure mode and add a guard like the one around `extractActionsJSON` in `AIChatPanel`.
+- Build before pushing: `npm run build`. It will **not** catch a reference to a variable you deleted — esbuild does not scope-check, so grep for leftovers after a refactor. That exact gap shipped a crash in the AI bulk-create path.
+- Jake's phone is the primary device. Test at mobile widths before declaring something fixed.
+- Pushing to `main` auto-deploys. Don't run `vercel` manually.
+- Jake must hard-reload on his phone to pick up a new build; the service worker caches.
+- The AI chat system prompt is near the top of `App.jsx` — search for `update_item` (~line 410).
+- If the AI claims it did something but nothing happened, add a regex guard + retry like the one around `extractActionsJSON` in `AIChatPanel`.
+- Another session may be pushing to `main` at the same time. Fetch before you start and rebase if the push is rejected.
 
 — end of handoff —

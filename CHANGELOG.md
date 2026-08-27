@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.4.3 — 2026-08-26
+
+### Changes
+- **CLAUDE.md brought current** — it had drifted to roughly migration 018 while the repo moved to 041. Corrected: App.jsx size (8,500 → 10,300 lines), the AI providers (it claimed OpenAI/gpt-4o-mini; every AI call is Anthropic, with the four model ids now listed per endpoint), the full source and API layout, the schema through 041, the migration history including that 017's file is missing from the repo, the connector and env-var list, and the UI specs. Adds sections on shared document numbering, the AI receptionist, and the fact that the app is not the only writer to `invoices`. The commit list was replaced with a short summary of the current state, since a hardcoded list goes stale the moment it is written. Hard rules and the queued bugs list were left untouched. No app changes.
+
+---
+
 ## v1.4.2 — 2026-08-26
 
 ### Bug Fixes
