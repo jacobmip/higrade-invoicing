@@ -5,6 +5,16 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.8.0 — 2026-08-27
+
+### New Features
+- **Tap a calendar event to open its document** — works on the blocks in the Day/3 Day/Week grid, on follow-up reminders in the all-day strip, and on the rows in the agenda list underneath. Scheduled jobs open their invoice or estimate; follow-up reminders open the document they belong to. Google Calendar events that aren't tied to a document stay unclickable, as there's nothing to open.
+  - The agenda rows now show the document number (`INV1004`), so it's clear at a glance which entries lead somewhere.
+  - Opening from the calendar deliberately leaves the tab alone, so backing out of the document returns you to the calendar rather than dropping you on the Invoices list.
+  - A document that has since been deleted says so instead of opening a blank form.
+
+---
+
 ## v1.7.2 — 2026-08-27
 
 ### Bug Fixes
