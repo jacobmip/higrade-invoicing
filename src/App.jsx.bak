@@ -1818,22 +1818,46 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
           await GCal.deleteEvent(old.eventId).catch(() => {});
         }
       }
-      // Only re-create events for visits that are new or actually changed —
-      // re-syncing every visit on every save would churn the calendar and
-      // hand out new event ids for appointments nobody touched.
+      // Only touch Google for visits that are new or actually changed —
+      // re-syncing everything on every save would churn the calendar and hand
+      // out new event ids for appointments nobody edited.
       for (const v of valid) {
         const before = originalRef.current.find(o => o.id === v.id);
-        const unchanged = before
-          && before.start === v.start
-          && Number(before.minutes) === Number(v.minutes)
-          && (before.label || "") === (v.label || "")
-          && before.eventId;
-        if (unchanged) continue;
+        const timeChanged = !before || before.start !== v.start || Number(before.minutes) !== Number(v.minutes);
+        const labelChanged = !before || (before.label || "") !== (v.label || "");
+        if (before && before.eventId && !timeChanged && !labelChanged) continue;
+
+        const ev = eventFor(v);
+
+        // An existing event gets MOVED, not replaced. Deleting and re-creating
+        // it was destroying everything the AI receptionist put there: its
+        // title, the lead notes in the description and the job address as the
+        // location, all replaced by this app's bare template. A PATCH sends
+        // only the times, so the rest survives a date change untouched.
+        //
+        // The description is deliberately never patched. On a receptionist
+        // booking it holds the caller's own words, which are worth more than
+        // the line-item text this app would put there.
+        if (v.eventId) {
+          const patch = { start: ev.start, end: ev.end };
+          if (labelChanged) patch.summary = ev.summary;
+          try {
+            await GCal.updateEvent(v.eventId, patch);
+            continue;
+          } catch (err) {
+            // Gone, or on a calendar this token cannot reach. Fall through and
+            // create a replacement rather than silently losing the booking.
+            console.warn(`Could not move event ${v.eventId}, creating a new one:`, err?.message || err);
+            v.eventId = null;
+          }
+        }
+
         try {
-          if (v.eventId) await GCal.deleteEvent(v.eventId).catch(() => {});
-          const resp = await GCal.createEvent(eventFor(v));
+          const resp = await GCal.createEvent(ev);
           v.eventId = resp?.id || null;
-        } catch { /* keep the visit; it just is not on Google */ }
+        } catch (err) {
+          console.warn('Could not create calendar event:', err?.message || err);
+        }
       }
     }
 
