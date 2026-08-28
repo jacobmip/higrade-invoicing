@@ -8945,6 +8945,21 @@ export default function App() {
   // (Invoices/Estimates have direct onNew handlers, so they don't need this.)
   const [expenseNewToken, setExpenseNewToken] = useState(0);
   const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
+  // Google access tokens last one hour and the implicit flow issues no refresh
+  // token, so a stored token is almost always dead by the next time the app is
+  // opened — which is what made the calendar look like it kept logging itself
+  // out. Consent is remembered by Google, though, so ask for a fresh token
+  // silently on startup. No prompt, no popup, nothing on screen; if there is no
+  // Google session it resolves to null and the Connect button stays as it was.
+  useEffect(() => {
+    if (gcalAuthed || !GCal.isConfigured()) return;
+    let cancelled = false;
+    GCal.silentRefresh()
+      .then(tok => { if (!cancelled && tok) setGcalAuthed(true); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Per-tab sub-header slot. Tab components render their KPI strip / filter
   // tabs into this so brand header + sub-header sit together inside a single
   // sticky container at App level (no offset math, no jitter on iOS Safari).
