@@ -757,6 +757,19 @@ export async function claimInvoiceOwner(id) {
   await supabase.from('invoices').update({ owner_id: user.id }).eq('id', id);
 }
 
+// Write just the visits array. Used by the calendar reconciliation, which
+// touches many invoices at once and must not go through upsertInvoice: that
+// sends the whole document and carries an optimistic-lock token, so a sweep
+// would fight any edit in progress. A narrow update also lets the
+// sync_first_visit trigger refresh gcal_date without anything else moving.
+export async function updateInvoiceVisits(id, visits) {
+  const { error } = await supabase
+    .from('invoices')
+    .update({ visits: Array.isArray(visits) && visits.length ? visits : null })
+    .eq('id', id)
+  if (error) throw error
+}
+
 // Restore a soft-deleted invoice/estimate by clearing deleted_at.
 export async function restoreInvoice(id) {
   const { error } = await supabase

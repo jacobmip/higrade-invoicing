@@ -5,6 +5,22 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.10.0 — 2026-08-27
+
+### New Features
+- **Calendar changes now flow both ways.** Move a job in Google Calendar and the app picks it up; move it in the app and Google updates immediately, as before. Reconciliation runs whenever the Calendar tab fetches events — no extra API call, it uses the events already in hand — and once on app load across a wider window (30 days back, 90 forward) so a job moved three weeks out isn't missed just because you were looking at this week.
+  - **A change made while Google was disconnected is never overwritten.** Those visits are marked pending, and the sweep pushes them to Google rather than reading Google's older time back over them. Local intent wins; Google wins everywhere else.
+  - **A visit that never reached Google is now created automatically** instead of needing you to open Edit and save. Nothing server-side would ever do it: `push_invoice_to_calendar()` is create-only and skips any invoice that already has an event id, so a second visit would have stayed missing indefinitely.
+  - A visit whose Google event has been deleted is deliberately left alone — absence from a range query isn't proof of deletion, and both guesses (recreate, or unschedule) would be wrong. A later edit self-heals it.
+
+### Changes
+- The event body is now built in one place, `buildCalendarEvent()`, shared by the schedule modal and the reconciliation. Two copies would have meant the calendar looking different depending on which one happened to write last.
+
+### Known limitation
+This is not live sync. Nothing pushes from Google to the app, so a job moved in Google won't reach anything server-side — Lisa's alert emails, the webhook — until the app has been opened. Making it live needs a Google push channel and a server endpoint to receive it.
+
+---
+
 ## v1.9.3 — 2026-08-27
 
 ### Changes

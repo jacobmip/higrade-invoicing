@@ -1725,6 +1725,120 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
   );
 }
 
+
+// ─── Calendar event body ──────────────────────────────────────────────────────
+// Built exactly the way the server does it, so an appointment looks the same
+// whoever booked it. push_invoice_to_calendar() (migration 038) is the
+// reference: title "Client - ID", location is the job address line, body is
+// contact details, the private notes, then the document number.
+//
+// Module level on purpose. The schedule modal and the calendar reconciliation
+// both create events, and if they built different bodies the calendar would
+// drift depending on which one happened to run.
+function buildCalendarEvent(invoice, v, fallbackMinutes) {
+  const startDt = new Date(`${v.start}:00`);
+  const endDt = new Date(startDt.getTime() + (Number(v.minutes) || fallbackMinutes || DEFAULT_JOB_MINUTES) * 60000);
+
+  const client = (invoice.client || "").trim();
+  const label = (v.label || "").trim();
+  // Google strips newlines from a title, so only the first line goes there.
+  const firstLine = label.split("\n")[0].trim();
+  const loc = (invoice.jobAddress?.line1 || "").trim();
+  const phone = (invoice.clientInfo?.phone || "").trim();
+  const notes = (invoice.internalNotes || "").trim();
+  const kind = invoice.type === "estimate" ? "Estimate" : "Invoice";
+
+  return {
+    summary: `${client || "Job"} - ${invoice.id || ""}`.trim() + (firstLine ? ` - ${firstLine}` : ""),
+    description: [
+      [client, phone, loc].filter(Boolean).join("\n"),
+      label,
+      notes || "(no notes)",
+      `${kind}: ${invoice.id || ""}`,
+    ].filter(Boolean).join("\n\n"),
+    location: loc || undefined,
+    start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
+    end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
+  };
+}
+
+
+// ─── Calendar reconciliation ──────────────────────────────────────────────────
+// Brings stored visits and Google Calendar back into agreement. Runs when the
+// calendar fetches events and once on app load over a wider window.
+//
+// The rule, in order:
+//   1. A visit marked `pending` never got its change to Google — the push
+//      failed, or Google was disconnected when it was saved. Push it now.
+//      Local intent wins; reading Google's older time back would silently undo
+//      an edit that was already made.
+//   2. A visit with no eventId has never been on the calendar. Create it.
+//      Nothing server-side will: push_invoice_to_calendar is create-only and
+//      skips any invoice that already carries an event id, so a second visit
+//      would stay missing forever.
+//   3. Otherwise Google wins on timing. Appointments get dragged around in
+//      Google Calendar, and the app should follow.
+//
+// A visit whose event has been deleted in Google is deliberately left alone.
+// Absence from a range query does not prove deletion, and re-creating or
+// unscheduling on that guess would both be wrong. A later edit self-heals: the
+// PATCH 404s and falls back to creating a replacement.
+//
+// Returns [{ id, visits }] for the invoices that actually changed.
+async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackMinutes }) {
+  const byId = new Map((events || []).filter(e => e?.id).map(e => [e.id, e]));
+  const out = [];
+
+  for (const inv of (invoices || [])) {
+    const visits = Array.isArray(inv.visits) ? inv.visits : [];
+    if (!visits.length) continue;
+
+    let changed = false;
+    const next = [];
+
+    for (const v of visits) {
+      const nv = { ...v };
+
+      if (canWrite && (nv.pending || !nv.eventId)) {
+        const body = buildCalendarEvent(inv, nv, fallbackMinutes);
+        try {
+          if (nv.eventId) {
+            await GCal.updateEvent(nv.eventId, { start: body.start, end: body.end, summary: body.summary });
+          } else {
+            const resp = await GCal.createEvent(body);
+            nv.eventId = resp?.id || null;
+          }
+          delete nv.pending;
+          changed = true;
+        } catch (err) {
+          console.warn(`[sync] could not push visit on ${inv.id}:`, err?.message || err);
+        }
+        next.push(nv);
+        continue;
+      }
+
+      const ev = nv.eventId ? byId.get(nv.eventId) : null;
+      const gs = ev?.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
+      const ge = ev?.end?.dateTime ? calZonedParts(ev.end.dateTime) : null;
+      if (gs) {
+        const start = `${gs.date}T${String(Math.floor(gs.minutes / 60)).padStart(2, "0")}:${String(gs.minutes % 60).padStart(2, "0")}`;
+        const minutes = ge && ge.date === gs.date
+          ? Math.max(15, ge.minutes - gs.minutes)
+          : (Number(nv.minutes) || fallbackMinutes);
+        if (start !== nv.start || Number(minutes) !== Number(nv.minutes)) {
+          nv.start = start;
+          nv.minutes = minutes;
+          changed = true;
+        }
+      }
+      next.push(nv);
+    }
+
+    if (changed) out.push({ id: inv.id, visits: next });
+  }
+  return out;
+}
+
 // ─── Schedule Job Modal ───────────────────────────────────────────────────────
 // Duration choices in minutes. Minutes rather than whole hours because the
 // shared default (settings.gcal_default_minutes) is 90, which whole hours
@@ -1787,47 +1901,23 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
   });
   const removeVisit = (id) => setVisits(vs => vs.filter(v => v.id !== id));
 
-  // Build the event exactly the way the server does, so an appointment looks
-  // the same whoever booked it. push_invoice_to_calendar() (migration 038) is
-  // the reference: title is "Client - ID", location is the job address line,
-  // and the body is contact details, the private notes, then the document
-  // number. The app used to build a different shape entirely — "Client - Job
-  // Title", the line-item text, and no location at all — which is why a job
-  // Lisa booked and one scheduled here never matched.
-  const eventFor = (v) => {
-    const startDt = new Date(`${v.start}:00`);
-    const endDt = new Date(startDt.getTime() + (Number(v.minutes) || fallback) * 60000);
-
-    const client = (invoice.client || "").trim();
-    const label = (v.label || "").trim();
-    // Google strips newlines from a title, so only the first line goes there.
-    const firstLine = label.split("\n")[0].trim();
-    const loc = (invoice.jobAddress?.line1 || "").trim();
-    const phone = (invoice.clientInfo?.phone || "").trim();
-    const notes = (invoice.internalNotes || "").trim();
-    const kind = invoice.type === "estimate" ? "Estimate" : "Invoice";
-
-    const summary = `${client || "Job"} - ${invoice.id || ""}`.trim() + (firstLine ? ` - ${firstLine}` : "");
-    const description = [
-      [client, phone, loc].filter(Boolean).join("\n"),
-      label,
-      notes || "(no notes)",
-      `${kind}: ${invoice.id || ""}`,
-    ].filter(Boolean).join("\n\n");
-
-    return {
-      summary,
-      description,
-      location: loc || undefined,
-      start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
-      end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
-    };
-  };
+  const eventFor = (v) => buildCalendarEvent(invoice, v, fallback);
 
   const handleSave = async () => {
     setSaving(true);
     const valid = visits.filter(v => v.start && v.start.length >= 16);
     const canSync = gcalAuthed && GCal.isConfigured();
+    if (!canSync) {
+      // Nothing reached Google. Flag anything that moved so the reconciliation
+      // pushes it later rather than treating Google's older time as the truth.
+      valid.forEach(v => {
+        const before = originalRef.current.find(o => o.id === v.id);
+        const moved = !before || before.start !== v.start
+          || Number(before.minutes) !== Number(v.minutes)
+          || (before.label || "") !== (v.label || "");
+        if (moved) v.pending = true;
+      });
+    }
 
     if (canSync) {
       // Visits removed in this session take their Google event with them.
@@ -1862,6 +1952,7 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
           if (labelChanged) patch.summary = ev.summary;
           try {
             await GCal.updateEvent(v.eventId, patch);
+            delete v.pending;
             continue;
           } catch (err) {
             // Gone, or on a calendar this token cannot reach. Fall through and
@@ -1874,8 +1965,12 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
         try {
           const resp = await GCal.createEvent(ev);
           v.eventId = resp?.id || null;
+          delete v.pending;
         } catch (err) {
+          // Mark it so the sweep pushes this change to Google later instead of
+          // reading Google's stale time back over it.
           console.warn('Could not create calendar event:', err?.message || err);
+          v.pending = true;
         }
       }
     }
@@ -4698,8 +4793,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                             push_invoice_to_calendar skips any invoice that
                             already has an event id — so say so rather than
                             leave it quietly missing from the calendar. */}
-                        {gcalAuthed && GCal.isConfigured() && v.id !== "legacy" && !v.eventId && (
-                          <div style={{ fontSize: 10, color: "#cc7722", marginTop: 1 }}>Not on Google Calendar — open Edit and save to add it</div>
+                        {v.id !== "legacy" && (!v.eventId || v.pending) && (
+                          <div style={{ fontSize: 10, color: "#cc7722", marginTop: 1 }}>
+                            {gcalAuthed && GCal.isConfigured()
+                              ? "Syncing to Google Calendar…"
+                              : "Waiting on Google Calendar — connect it and this will sync"}
+                          </div>
                         )}
                         {(v.label || "").trim() && (
                           <div style={{ fontSize: 11, color: "#777", whiteSpace: "pre-wrap", marginTop: 1 }}>{v.label.trim()}</div>
@@ -6912,7 +7011,7 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
   );
 }
 
-function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed }) {
+function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed, onEventsFetched }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
   });
@@ -6959,7 +7058,13 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
     let cancelled = false;
     setLoadingEvents(true);
     GCal.listEvents(rangeStart, rangeEnd)
-      .then(evs => { if (!cancelled) { setGcalEvents(evs); setLoadingEvents(false); } })
+      .then(evs => {
+        if (cancelled) return;
+        setGcalEvents(evs);
+        setLoadingEvents(false);
+        // Same events, no extra call: bring stored visits back in step.
+        onEventsFetched?.(evs);
+      })
       .catch(() => { if (!cancelled) setLoadingEvents(false); });
     return () => { cancelled = true; };
   }, [gcalAuthed, rangeStart.getTime(), rangeEnd.getTime()]);
@@ -10385,6 +10490,68 @@ export default function App() {
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
   };
 
+  // Write reconciliation results and mirror the earliest visit into the legacy
+  // fields locally, the same rule sync_first_visit() applies in the database.
+  const applyVisitUpdates = async (updates) => {
+    if (!updates?.length) return;
+    for (const u of updates) {
+      try { await db.updateInvoiceVisits(u.id, u.visits); }
+      catch (e) { console.warn(`[sync] could not save visits for ${u.id}:`, e?.message || e); }
+    }
+    setData(d => ({
+      ...d,
+      invoices: d.invoices.map(inv => {
+        const u = updates.find(x => x.id === inv.id);
+        if (!u) return inv;
+        const first = u.visits.filter(v => v.start).sort((a, b) => a.start.localeCompare(b.start))[0] || null;
+        return {
+          ...inv,
+          visits: u.visits,
+          gcalDate: first ? first.start : null,
+          gcalEventId: first ? (first.eventId || null) : null,
+          gcalDurationMinutes: first ? (Number(first.minutes) || null) : null,
+        };
+      }),
+    }));
+  };
+
+  const defaultJobMins = parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES;
+
+  // Reconcile whatever the calendar just fetched. Cheap: the events are
+  // already in hand, so this adds no API call of its own.
+  const reconcileFromEvents = async (events) => {
+    try {
+      const updates = await reconcileVisitsWithGoogle({
+        invoices: data.invoices, events, canWrite: true, fallbackMinutes: defaultJobMins,
+      });
+      await applyVisitUpdates(updates);
+    } catch (e) { console.warn('[sync] reconcile failed:', e?.message || e); }
+  };
+
+  // One sweep per session, over a wider window than whatever week happens to be
+  // on screen. Without it a job moved in Google three weeks out would not be
+  // noticed until the calendar was scrolled to that week.
+  const sweptRef = useRef(false);
+  useEffect(() => {
+    if (sweptRef.current) return;
+    if (!gcalAuthed || !GCal.isConfigured()) return;
+    if (!(data.invoices || []).length) return;
+    sweptRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const evs = await GCal.listEvents(calAddDays(new Date(), -30), calAddDays(new Date(), 90));
+        if (cancelled) return;
+        const updates = await reconcileVisitsWithGoogle({
+          invoices: data.invoices, events: evs, canWrite: true, fallbackMinutes: defaultJobMins,
+        });
+        if (!cancelled) await applyVisitUpdates(updates);
+      } catch (e) { console.warn('[sync] startup calendar sweep failed:', e?.message || e); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gcalAuthed, data.invoices.length]);
+
   // Jump from a document's schedule card to that day on the calendar. Leaving
   // the form unmounts it, which flushes any pending auto-save first.
   const [calendarFocus, setCalendarFocus] = useState(null);
@@ -10846,7 +11013,7 @@ export default function App() {
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
-        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} />}
+        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
