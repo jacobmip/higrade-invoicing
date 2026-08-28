@@ -1739,65 +1739,157 @@ const JOB_DURATIONS = [
 ];
 
 function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave }) {
-  const [date, setDate] = useState(invoice.gcalDate?.slice(0, 10) || today());
-  const [time, setTime] = useState(invoice.gcalDate?.slice(11, 16) || "09:00");
-  // Whatever this job was last saved as, else the shared default.
-  const [duration, setDuration] = useState(() => {
-    const m = invoice.gcalDurationMinutes ?? defaultMinutes ?? 90;
-    return String(JOB_DURATIONS.some(d => d.v === m) ? m : 120);
+  const fallback = defaultMinutes || DEFAULT_JOB_MINUTES;
+  const newVisit = (start) => ({
+    id: "v_" + Math.random().toString(36).slice(2, 10),
+    start: start || `${today()}T09:00`,
+    minutes: JOB_DURATIONS.some(d => d.v === fallback) ? fallback : 120,
+    label: "",
+    eventId: null,
   });
+
+  // Existing visits, or one seeded from the legacy single-appointment fields
+  // for a job scheduled before migration 044 and not yet migrated.
+  const [visits, setVisits] = useState(() => {
+    if (Array.isArray(invoice.visits) && invoice.visits.length) {
+      return invoice.visits.map(v => ({ ...v }));
+    }
+    if (invoice.gcalDate) {
+      return [{
+        id: "v_" + Math.random().toString(36).slice(2, 10),
+        start: invoice.gcalDate.slice(0, 16),
+        minutes: invoice.gcalDurationMinutes || fallback,
+        label: "",
+        eventId: invoice.gcalEventId || null,
+      }];
+    }
+    return [newVisit()];
+  });
+  // Snapshot so save only touches Google for visits that actually changed.
+  const originalRef = useRef(
+    (Array.isArray(invoice.visits) && invoice.visits.length ? invoice.visits : []).map(v => ({ ...v }))
+  );
   const [saving, setSaving] = useState(false);
   const jobTitle = invoice.items?.[0]?.name || "Plumbing Service";
   const desc = invoice.items?.[0]?.desc || "";
 
+  const setVisit = (id, patch) => setVisits(vs => vs.map(v => v.id === id ? { ...v, ...patch } : v));
+  const addVisit = () => setVisits(vs => {
+    // Default the next visit to the morning after the last one, which is
+    // nearly always what a multi-day job wants.
+    const last = [...vs].sort((a, b) => a.start.localeCompare(b.start)).pop();
+    let next = `${today()}T09:00`;
+    if (last?.start) {
+      const d = calAddDays(calParseYmd(last.start.slice(0, 10)), 1);
+      next = `${calYmd(d)}T09:00`;
+    }
+    return [...vs, newVisit(next)];
+  });
+  const removeVisit = (id) => setVisits(vs => vs.filter(v => v.id !== id));
+
+  const eventFor = (v) => {
+    const startDt = new Date(`${v.start}:00`);
+    const endDt = new Date(startDt.getTime() + (Number(v.minutes) || fallback) * 60000);
+    const suffix = v.label?.trim() ? ` – ${v.label.trim()}` : "";
+    return {
+      summary: `${invoice.client || "Client"} – ${jobTitle}${suffix}`,
+      description: desc,
+      start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
+      end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
+    };
+  };
+
   const handleSave = async () => {
     setSaving(true);
-    let gcalEventId = invoice.gcalEventId || null;
-    if (gcalAuthed && GCal.isConfigured()) {
-      const startDt = new Date(`${date}T${time}:00`);
-      const endDt = new Date(startDt.getTime() + parseInt(duration, 10) * 60000);
-      const event = {
-        summary: `${invoice.client || "Client"} – ${jobTitle}`,
-        description: desc,
-        start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
-        end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
-      };
-      try {
-        if (gcalEventId) await GCal.deleteEvent(gcalEventId).catch(() => {});
-        const resp = await GCal.createEvent(event);
-        gcalEventId = resp?.id || gcalEventId;
-      } catch {}
+    const valid = visits.filter(v => v.start && v.start.length >= 16);
+    const canSync = gcalAuthed && GCal.isConfigured();
+
+    if (canSync) {
+      // Visits removed in this session take their Google event with them.
+      const keptIds = new Set(valid.map(v => v.id));
+      for (const old of originalRef.current) {
+        if (!keptIds.has(old.id) && old.eventId) {
+          await GCal.deleteEvent(old.eventId).catch(() => {});
+        }
+      }
+      // Only re-create events for visits that are new or actually changed —
+      // re-syncing every visit on every save would churn the calendar and
+      // hand out new event ids for appointments nobody touched.
+      for (const v of valid) {
+        const before = originalRef.current.find(o => o.id === v.id);
+        const unchanged = before
+          && before.start === v.start
+          && Number(before.minutes) === Number(v.minutes)
+          && (before.label || "") === (v.label || "")
+          && before.eventId;
+        if (unchanged) continue;
+        try {
+          if (v.eventId) await GCal.deleteEvent(v.eventId).catch(() => {});
+          const resp = await GCal.createEvent(eventFor(v));
+          v.eventId = resp?.id || null;
+        } catch { /* keep the visit; it just is not on Google */ }
+      }
     }
-    // Save the duration too. It used to exist only inside the Google event,
-    // so a job booked while disconnected had no length recorded anywhere.
-    onSave({ gcalDate: `${date}T${time}`, gcalEventId, gcalDurationMinutes: parseInt(duration, 10) });
+
+    onSave({ visits: valid.map(v => ({ ...v })) });
     setSaving(false);
     onClose();
   };
 
-  const handleRemove = async () => {
-    if (invoice.gcalEventId && gcalAuthed) await GCal.deleteEvent(invoice.gcalEventId).catch(() => {});
-    onSave({ gcalDate: null, gcalEventId: null, gcalDurationMinutes: null });
+  const handleRemoveAll = async () => {
+    if (!confirm("Remove every visit from this job?")) return;
+    if (gcalAuthed && GCal.isConfigured()) {
+      for (const v of [...originalRef.current, ...visits]) {
+        if (v.eventId) await GCal.deleteEvent(v.eventId).catch(() => {});
+      }
+    }
+    onSave({ visits: [], gcalDate: null, gcalEventId: null, gcalDurationMinutes: null });
     onClose();
   };
 
+  const ordered = [...visits].sort((a, b) => a.start.localeCompare(b.start));
+
   return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: 24, maxWidth: 480, margin: "0 auto", boxSizing: "border-box" }}>
+      <div style={{ background: "#fff", width: "100%", borderRadius: "16px 16px 0 0", padding: "22px 20px 28px", maxWidth: 480, margin: "0 auto", boxSizing: "border-box", maxHeight: "88vh", overflowY: "auto", overscrollBehavior: "contain" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4, color: NAVY }}>Schedule Job</div>
-        <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>{invoice.client || "No client"} · {jobTitle}</div>
-        <div style={{ marginBottom: 12 }}><label style={S.label}>Date</label><input type="date" style={S.input} value={date} onChange={e => setDate(e.target.value)} /></div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-          <div style={{ minWidth: 0 }}><label style={S.label}>Start Time</label><input type="time" style={S.input} value={time} onChange={e => setTime(e.target.value)} /></div>
-          <div style={{ minWidth: 0 }}><label style={S.label}>Duration</label>
-            <select style={S.input} value={duration} onChange={e => setDuration(e.target.value)}>
-              {JOB_DURATIONS.map(d => <option key={d.v} value={d.v}>{d.label}</option>)}
-            </select>
-          </div>
+        <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>
+          {invoice.client || "No client"} · {jobTitle}
+          {ordered.length > 1 && <span style={{ color: ORANGE, fontWeight: 600 }}> · {ordered.length} visits</span>}
         </div>
-        {!gcalAuthed && GCal.isConfigured() && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12, background: "#f8f9fc", borderRadius: 6, padding: "7px 10px" }}>Connect Google Calendar in the Calendar tab to sync this event.</div>}
+
+        {ordered.map((v, i) => (
+          <div key={v.id} style={{ border: "1.5px solid #eef1f7", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: ORANGE, letterSpacing: 1, textTransform: "uppercase" }}>Visit {i + 1}</span>
+              {ordered.length > 1 && (
+                <button onClick={() => removeVisit(v.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#cc4444", fontSize: 18, lineHeight: 1, padding: "0 4px" }}>×</button>
+              )}
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <input style={S.input} value={v.label || ""} onChange={e => setVisit(v.id, { label: e.target.value })} placeholder="Label — e.g. Rough-in, Fixtures, Final" />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <input type="date" style={S.input} value={v.start.slice(0, 10)} onChange={e => setVisit(v.id, { start: `${e.target.value}T${v.start.slice(11, 16)}` })} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <input type="time" style={S.input} value={v.start.slice(11, 16)} onChange={e => setVisit(v.id, { start: `${v.start.slice(0, 10)}T${e.target.value}` })} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <select style={S.input} value={String(v.minutes)} onChange={e => setVisit(v.id, { minutes: parseInt(e.target.value, 10) })}>
+                  {JOB_DURATIONS.map(d => <option key={d.v} value={d.v}>{d.label}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        <button onClick={addVisit} style={{ ...S.btn("ghost"), width: "100%", marginBottom: 14, fontSize: 13, padding: "10px 0" }}>+ Add another visit</button>
+
+        {!gcalAuthed && GCal.isConfigured() && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12, background: "#f8f9fc", borderRadius: 6, padding: "7px 10px" }}>Connect Google Calendar in the Calendar tab to sync these visits.</div>}
         <div style={{ display: "flex", gap: 8 }}>
-          {invoice.gcalDate && <button onClick={handleRemove} style={{ ...S.btn("ghost"), fontSize: 12, padding: "10px 12px", color: "#cc4444" }}>Remove</button>}
+          {(invoice.gcalDate || (invoice.visits || []).length > 0) && <button onClick={handleRemoveAll} style={{ ...S.btn("ghost"), fontSize: 12, padding: "10px 12px", color: "#cc4444" }}>Remove</button>}
           <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
           <button onClick={handleSave} disabled={saving} style={{ ...S.btn("primary"), flex: 2 }}>{saving ? "Saving…" : "Schedule"}</button>
         </div>
@@ -4511,7 +4603,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   <Icon name="calendar" size={16} color={form.gcalDate ? ORANGE : "#ccc"} />
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 500, color: "#333" }}>Schedule Job</div>
-                    {form.gcalDate && <div style={{ fontSize: 12, color: ORANGE, marginTop: 1 }}>{fmtDate(form.gcalDate.slice(0, 10))} {form.gcalDate.slice(11, 16)}</div>}
+                    {form.gcalDate && (
+                      <div style={{ fontSize: 12, color: ORANGE, marginTop: 1 }}>
+                        {fmtDate(form.gcalDate.slice(0, 10))} {form.gcalDate.slice(11, 16)}
+                        {(form.visits || []).length > 1 && <span> · +{form.visits.length - 1} more visit{form.visits.length > 2 ? "s" : ""}</span>}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <button onClick={() => setShowScheduleJob(true)} style={{ ...S.btn(form.gcalDate ? "primary" : "ghost"), fontSize: 12, padding: "6px 12px" }}>{form.gcalDate ? "Edit" : "Set Date"}</button>
@@ -6787,12 +6884,21 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
     const fallbackMins = defaultJobMinutes || DEFAULT_JOB_MINUTES;
 
     invoices.forEach(inv => {
-      if (inv.gcalDate) {
-        const linked = inv.gcalEventId ? gcalById.get(inv.gcalEventId) : null;
+      // A job can have several visits (migration 044). Fall back to the legacy
+      // single-appointment fields for a row that predates it, so nothing
+      // disappears from the calendar before the backfill runs.
+      const visits = Array.isArray(inv.visits) && inv.visits.length
+        ? inv.visits
+        : (inv.gcalDate
+            ? [{ start: inv.gcalDate.slice(0, 16), minutes: inv.gcalDurationMinutes, label: "", eventId: inv.gcalEventId }]
+            : []);
+
+      visits.forEach((visit, vi) => {
+        if (!visit?.start) return;
+        const linked = visit.eventId ? gcalById.get(visit.eventId) : null;
         const s = linked?.start?.dateTime ? calZonedParts(linked.start.dateTime) : null;
         const e = linked?.end?.dateTime ? calZonedParts(linked.end.dateTime) : null;
-        const stored = typeof inv.gcalDurationMinutes === "number" && inv.gcalDurationMinutes > 0
-          ? inv.gcalDurationMinutes : null;
+        const stored = Number(visit.minutes) > 0 ? Number(visit.minutes) : null;
         let date, startMin, endMin;
         if (s) {
           merged.add(linked.id);
@@ -6801,12 +6907,18 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
           const fromGoogle = e && e.date === s.date ? e.minutes - s.minutes : null;
           endMin = Math.min(24 * 60, s.minutes + (stored || fromGoogle || fallbackMins));
         } else {
-          date = inv.gcalDate.slice(0, 10);
-          startMin = (parseInt(inv.gcalDate.slice(11, 13), 10) || 0) * 60 + (parseInt(inv.gcalDate.slice(14, 16), 10) || 0);
+          date = visit.start.slice(0, 10);
+          startMin = (parseInt(visit.start.slice(11, 13), 10) || 0) * 60 + (parseInt(visit.start.slice(14, 16), 10) || 0);
           endMin = Math.min(24 * 60, startMin + (stored || fallbackMins));
         }
-        push({ date, startMin, endMin, label: inv.client || inv.id, invoiceId: inv.id, color: ORANGE, type: "job" });
-      }
+        // Label the block with the visit's own name when it has one, so three
+        // appointments on the same job do not read as three identical entries.
+        const who = inv.client || inv.id;
+        const suffix = visit.label?.trim()
+          ? ` · ${visit.label.trim()}`
+          : (visits.length > 1 ? ` · Visit ${vi + 1}` : "");
+        push({ date, startMin, endMin, label: who + suffix, invoiceId: inv.id, color: ORANGE, type: "job" });
+      });
       if (inv.followUpDate) {
         push({ date: inv.followUpDate, allDay: true, label: `Follow-up: ${inv.id}`, invoiceId: inv.id, color: "#2980b9", type: "followup" });
       }
@@ -10080,6 +10192,15 @@ export default function App() {
       viewToken: undefined,
       signature: undefined,
       signatureDate: undefined,
+      // A duplicate starts unscheduled. Carrying the schedule over also carried
+      // the Google event ids, so both documents pointed at the same events and
+      // unscheduling either one deleted the other's appointments.
+      visits: [],
+      gcalDate: null,
+      gcalEventId: null,
+      gcalDurationMinutes: null,
+      followUpDate: null,
+      followUpEventId: null,
       status: isEst ? 'outstanding' : 'outstanding',
     };
     setData(d => ({
@@ -10247,6 +10368,10 @@ export default function App() {
       status: initialStatus,
       gcalEventId: null,
       gcalDate: null,
+      // Same reasoning as the singular fields above: the new document must not
+      // inherit Google event ids that belong to the one it came from.
+      visits: [],
+      gcalDurationMinutes: null,
       followUpEventId: null,
       followUpDate: null,
       // Don't carry the convertedToId or viewToken from the source — the copy
