@@ -166,6 +166,18 @@ export async function createEvent(event) {
   return apiFetch('/calendars/primary/events', { method: 'POST', body: JSON.stringify(event) });
 }
 
+// Partial update. Google merges what you send and leaves the rest alone, which
+// is the whole point here: an event created by the AI receptionist's Apps
+// Script carries a title, the lead notes and the job address, and moving its
+// date must not take those with it. Deleting and re-creating the event -- the
+// old behaviour -- replaced all of it with the app's own bare template.
+export async function updateEvent(id, patch) {
+  return apiFetch(`/calendars/primary/events/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function deleteEvent(id) {
   await apiFetch(`/calendars/primary/events/${id}`, { method: 'DELETE' });
 }

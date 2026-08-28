@@ -5,6 +5,16 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.9.2 — 2026-08-27
+
+### Bug Fixes
+- **Rescheduling a job Lisa booked destroyed its calendar event** — changing the date in the app didn't move the Google Calendar event, it deleted it and created a new one. Events booked by the AI receptionist come from the Apps Script webhook with a proper title, the caller's own notes in the description and the job address as the location; recreating them threw all of that away and replaced it with the app's bare template, which is why the title changed and the details vanished. The app now sends a partial update that moves the times and leaves everything else alone.
+  - The title is only rewritten if you actually edited the visit's label.
+  - The description is never overwritten on an existing event — on a receptionist booking it holds the caller's own words, which are worth more than the line-item text the app would put there.
+  - If the event has since been deleted in Google, or lives on a calendar the app can't reach, it falls back to creating a replacement rather than losing the booking silently. Both failure paths now log instead of being swallowed.
+
+---
+
 ## v1.9.1 — 2026-08-27
 
 ### Bug Fixes
