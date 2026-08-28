@@ -14,6 +14,7 @@ const SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 export const TZ = 'Pacific/Honolulu';
 
 let _tokenClient = null;
+let _scriptPromise = null;
 
 export const isConfigured = () => Boolean(CLIENT_ID);
 
@@ -33,17 +34,31 @@ function storeToken(resp) {
   }));
 }
 
+function clearToken() {
+  try { localStorage.removeItem('gcal_token'); } catch {}
+}
+
+// Load Google Identity Services once. The old version set only `onload`, so a
+// blocked or failed script left the promise pending forever and the Connect
+// button did nothing at all, with no error anywhere.
+function loadScript() {
+  if (window.google?.accounts) return Promise.resolve();
+  if (_scriptPromise) return _scriptPromise;
+  _scriptPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => { _scriptPromise = null; reject(new Error('Could not load Google sign-in. Check your connection.')); };
+    document.head.appendChild(s);
+  });
+  return _scriptPromise;
+}
+
 export async function initAuth() {
   if (_tokenClient) return;
-  if (!window.google?.accounts) {
-    await new Promise(resolve => {
-      const s = document.createElement('script');
-      s.src = 'https://accounts.google.com/gsi/client';
-      s.async = true;
-      s.onload = resolve;
-      document.head.appendChild(s);
-    });
-  }
+  await loadScript();
+  if (!window.google?.accounts?.oauth2) throw new Error('Google sign-in unavailable');
   _tokenClient = window.google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPE,
@@ -51,32 +66,87 @@ export async function initAuth() {
   });
 }
 
-export function requestToken(prompt = '') {
-  return new Promise(async (resolve, reject) => {
-    const stored = getStoredToken();
-    if (stored) { resolve(stored); return; }
-    try { await initAuth(); } catch (e) { reject(e); return; }
+// Ask the already-initialised client for a token. Kept separate so the
+// interactive path can call it with no `await` in front of it.
+function askForToken(prompt) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
     _tokenClient.callback = resp => {
-      if (resp.error) { reject(new Error(resp.error)); return; }
+      if (settled) return;
+      settled = true;
+      if (resp.error || !resp.access_token) { reject(new Error(resp.error || 'No token returned')); return; }
       storeToken(resp);
       resolve(resp.access_token);
     };
+    _tokenClient.error_callback = err => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(err?.type === 'popup_closed' ? 'Sign-in was cancelled.' : (err?.message || 'Google sign-in failed')));
+    };
     _tokenClient.requestAccessToken({ prompt });
+  });
+}
+
+export function requestToken(prompt = '') {
+  const stored = getStoredToken();
+  if (stored) return Promise.resolve(stored);
+  // If the client is already warm, call straight through with no await in
+  // between. `requestAccessToken` opens a popup, and iOS Safari only allows
+  // that inside the user gesture that triggered it — awaiting a script load
+  // first breaks the chain and the popup is silently blocked.
+  if (_tokenClient) return askForToken(prompt);
+  return initAuth().then(() => askForToken(prompt));
+}
+
+// Google's implicit flow hands back an access token that expires in one hour
+// and no refresh token, which is why the app appeared to log itself out
+// overnight or on reopen. Consent, though, is remembered by Google — so as
+// long as the browser still has a Google session we can get a fresh token
+// with no prompt and no UI at all.
+//
+// Resolves to a token, or null if a real sign-in is needed. Never throws and
+// never shows anything, so it is safe to call on startup.
+export async function silentRefresh() {
+  if (!isConfigured()) return null;
+  const stored = getStoredToken();
+  if (stored) return stored;
+  try { await initAuth(); } catch { return null; }
+  return new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    _tokenClient.callback = resp => {
+      if (resp.error || !resp.access_token) { done(null); return; }
+      storeToken(resp);
+      done(resp.access_token);
+    };
+    _tokenClient.error_callback = () => done(null);
+    // With no Google session, GIS can neither succeed nor fire an error — it
+    // just never calls back. Without this the caller would await forever.
+    setTimeout(() => done(null), 8000);
+    try { _tokenClient.requestAccessToken({ prompt: 'none' }); } catch { done(null); }
   });
 }
 
 export function signOut() {
   const d = getStored();
   if (d?.token) window.google?.accounts.oauth2.revoke(d.token);
-  localStorage.removeItem('gcal_token');
+  clearToken();
 }
 
-async function apiFetch(path, opts = {}) {
+async function apiFetch(path, opts = {}, _retried = false) {
   const token = await requestToken();
   const res = await fetch('https://www.googleapis.com/calendar/v3' + path, {
     ...opts,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
   });
+  // Google rejected the token before our own expiry check would have. Drop it
+  // and try one silent refresh — a revoked or clock-skewed token would
+  // otherwise surface as a bare "Invalid Credentials" with no way back.
+  if (res.status === 401 && !_retried) {
+    clearToken();
+    const fresh = await silentRefresh();
+    if (fresh) return apiFetch(path, opts, true);
+  }
   if (res.status === 204) return null;
   const json = await res.json();
   if (!res.ok) throw new Error(json.error?.message || 'Google Calendar error');

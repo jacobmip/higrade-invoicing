@@ -5,6 +5,17 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.5.0 — 2026-08-27
+
+### Bug Fixes
+- **Google Calendar stopped logging itself out** — the connection dropped after about an hour, or whenever the app was closed and reopened, and had to be reconnected by hand. Google's implicit OAuth flow returns an access token that expires in one hour and no refresh token, and `gcalAuthed` was initialised straight from that stored token, so an expired one put the Connect button back. Consent is remembered by Google, so the app now asks for a fresh token silently on startup — no prompt, no popup, nothing on screen. If there is no Google session it falls back to the Connect button exactly as before.
+- **The Connect button could do nothing, forever** — Google's sign-in script was loaded with an `onload` handler and no `onerror`, so a blocked or failed script left the promise pending with no error anywhere and the button simply did not respond.
+- **Sign-in popup was blocked on iOS** — `requestToken` awaited the script load before calling `requestAccessToken`, which breaks the user-gesture chain that Safari requires to allow a popup. When the client is already warm the request now goes straight through with nothing awaited in front of it.
+- **A rejected token had no way back** — a revoked or clock-skewed token surfaced as a bare "Invalid Credentials" until the browser's storage was cleared. A 401 from Google now clears the stored token and retries once through the silent refresh.
+- Sign-in failures now report something useful (cancelled, unreachable, unavailable) instead of a raw error object.
+
+---
+
 ## v1.4.4 — 2026-08-27
 
 ### Changes
