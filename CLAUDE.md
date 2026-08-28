@@ -116,7 +116,7 @@ Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 - `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
 - `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`
 - `payments` — invoice_id, amount, surcharge, method, date, note, paypal_order_id, paypal_capture_id (unique)
-- `saved_items` — line-item library, per-user (`owner_id`, unique on `(owner_id, name)`)
+- `saved_items` — line-item library. Reads are shared (migration 043): every plumber sees admin-owned items plus their own. Writes stay owner-scoped, so only the owner can change an item. Unique on `(owner_id, name)`.
 - `job_photos` — per-invoice photos
 - `expenses` — receipt OCR output
 - `notifications` / `device_tokens` — in-app bell + APNs
@@ -125,6 +125,7 @@ Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 
 ### Helper functions and RPCs
 - `is_admin()` / `is_admin_uid(uid)` — SECURITY DEFINER; the second breaks RLS recursion in profiles policies
+- `admin_owner_ids()` — SECURITY DEFINER, migration 043. Admin user ids, used by the shared price book policy. Reading `profiles` under RLS from another table's policy can silently return nothing, hence the definer.
 - `set_owner_id()` — trigger, stamps owner_id on insert. **Returns NULL under the service-role key** (`auth.uid()` is null), which is how down-payment invoices ended up invisible — see migration 037.
 - `save_invoice_with_items(...)` — the main upsert. Redefined by seven migrations; rebuild it from its live definition, never from an old file.
 - `enforce_invoice_id_type()` — trigger, migration 039. An `EST` row is an estimate and an `INV` row is an invoice; blocks any write that would introduce a mismatch, grandfathers rows already mismatched.
@@ -164,9 +165,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **040** — shared document number
 - **041** — put the AI receptionist on the shared counter
 - **042** — `gcal_duration_minutes` on invoices, so a scheduled job's length survives without Google
+- **043** — shared price book: `admin_owner_ids()` plus a widening SELECT policy on `saved_items`
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `043_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `044_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids
@@ -251,13 +253,7 @@ were already done and were sending agents chasing work that did not exist.
 
 ### Open
 
-1. **Saved items model for plumbers** — `saved_items` is scoped per-user
-   (`owner_id`, unique index on `(owner_id, name)`, price book seeded only to
-   Jake's uuid), so a journeyman starts with an empty library. This is a
-   product decision, not a defect: decide whether admin's saved items should
-   be readable by all plumbers, copied on account creation, or stay private.
-   Nothing is broken until a second plumber actually uses the app.
-2. **iPhone customer-info text-selection drags the page** — needs checking on a
+1. **iPhone customer-info text-selection drags the page** — needs checking on a
    real device before anyone writes code. `index.html` already sets
    `touch-action: pan-y` globally and the list cards set
    `userSelect/WebkitUserSelect/WebkitTouchCallout: none`, so some of this was
@@ -299,6 +295,10 @@ contents, this is the class to investigate — not the id/type rule.
 - Notes on client and per-property — admin-gated, in `ClientEditFields`.
 - Version history UI — the History tab, with snapshots and a manual snapshot
   button.
+- Saved items sharing model — settled in migration 043. One price book, read by
+  every plumber, editable only by its owner. The AI receptionist already priced
+  every lead from the admin's book (`c_owner` is hardcoded in
+  `create_estimate_from_lead`), so this made the app agree with the business.
 
 The user explicitly chose to **keep `addresses` as JSON** rather than break it out into a separate `properties` table — the migration risk wasn't worth it for a system he runs his business on. Re-evaluate only if cross-property reporting becomes a real need.
 

@@ -5,6 +5,21 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.7.0 — 2026-08-27
+
+### New Features
+- **One shared price book** — every plumber now reads the admin's saved items, and only the owner of an item can change or delete it. Previously `saved_items` was scoped per user and the price book was seeded to Jake's uuid alone, so a journeyman signing in got an empty Saved Items tab and an empty Price Book picker, and would have typed prices by hand. Requires migration 043.
+  - The AI receptionist already worked this way: `create_estimate_from_lead` hardcodes the admin's uuid and prices every lead from his book whoever is on shift. This makes the app agree with what the business already does.
+  - Plumbers can still save their own personal items. Those carry their own `owner_id` and stay private.
+  - Reads widen, writes do not. The migration adds a SELECT policy alongside the existing ones rather than replacing anything — migration 017 set up the current policies and its file is not in the repo, so nothing here drops a policy it cannot see.
+
+### Bug Fixes
+- **The Saved Items tab offered a delete button on items you cannot delete** — every row had a ×, with no ownership check. With a shared book that would have let a journeyman try to delete the price book, failing silently against RLS. The button now appears only on your own items, and shared ones are labelled as such.
+- **The AI "save item" action could try to edit somebody else's item** — it matched purely on name, so a shared admin item with the same name would have been updated, which the owner-scoped write policy rejects. It now only ever updates an item you own.
+- **View-as showed an empty price book** — the filter narrowed saved items to the viewed user alone, which no longer reflects what that plumber actually sees. It now shows their own items plus the shared book.
+
+---
+
 ## v1.6.1 — 2026-08-27
 
 ### Bug Fixes
