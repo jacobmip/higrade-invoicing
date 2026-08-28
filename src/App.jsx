@@ -1790,10 +1790,16 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
   const eventFor = (v) => {
     const startDt = new Date(`${v.start}:00`);
     const endDt = new Date(startDt.getTime() + (Number(v.minutes) || fallback) * 60000);
-    const suffix = v.label?.trim() ? ` – ${v.label.trim()}` : "";
+    // A label can run to several lines now. Only the first goes in the event
+    // title — Google strips newlines from a summary — and the whole thing goes
+    // in the body where it stays readable.
+    const label = (v.label || "").trim();
+    const firstLine = label.split("\n")[0].trim();
+    const suffix = firstLine ? ` – ${firstLine}` : "";
+    const body = [label, desc].filter(Boolean).join("\n\n");
     return {
       summary: `${invoice.client || "Client"} – ${jobTitle}${suffix}`,
-      description: desc,
+      description: body,
       start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
       end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
     };
@@ -1831,7 +1837,16 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
       }
     }
 
-    onSave({ visits: valid.map(v => ({ ...v })) });
+    // The database trigger mirrors the earliest visit into gcal_date and
+    // friends, but only once the write lands. Apply the same rule locally so
+    // the schedule card is right immediately instead of after a reload.
+    const first = [...valid].sort((a, b) => a.start.localeCompare(b.start))[0] || null;
+    onSave({
+      visits: valid.map(v => ({ ...v })),
+      gcalDate: first ? first.start : null,
+      gcalEventId: first ? (first.eventId || null) : null,
+      gcalDurationMinutes: first ? (Number(first.minutes) || fallback) : null,
+    });
     setSaving(false);
     onClose();
   };
@@ -1867,7 +1882,16 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
               )}
             </div>
             <div style={{ marginBottom: 8 }}>
-              <input style={S.input} value={v.label || ""} onChange={e => setVisit(v.id, { label: e.target.value })} placeholder="Label — e.g. Rough-in, Fixtures, Final" />
+              {/* Grows on input rather than through a ref callback. An inline
+                  ref runs on every render and collapses the element to measure
+                  it, which is what made the line-item editor jump to the top. */}
+              <textarea
+                style={{ ...S.input, minHeight: 44, resize: "none", overflow: "hidden", lineHeight: 1.35 }}
+                value={v.label || ""}
+                onChange={e => setVisit(v.id, { label: e.target.value })}
+                onInput={e => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                placeholder="Label — e.g. Rough-in, or a few lines of what this visit covers"
+              />
             </div>
             <div style={{ marginBottom: 8 }}>
               <input type="date" style={S.input} value={v.start.slice(0, 10)} onChange={e => setVisit(v.id, { start: `${e.target.value}T${v.start.slice(11, 16)}` })} />
@@ -3241,7 +3265,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
+function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3601,6 +3625,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     document.addEventListener('visibilitychange', flush);
     return () => document.removeEventListener('visibilitychange', flush);
   }, []);
+
+  // Visits drive the schedule card. Fall back to the legacy single-appointment
+  // fields for a row that predates migration 044.
+  const scheduledVisits = (Array.isArray(form.visits) && form.visits.length
+    ? form.visits
+    : (form.gcalDate ? [{ id: "legacy", start: form.gcalDate.slice(0, 16), label: "" }] : [])
+  ).filter(v => v?.start).sort((a, b) => a.start.localeCompare(b.start));
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -4600,18 +4631,33 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             <div style={{ background: "#fff", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #f0f2f8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Icon name="calendar" size={16} color={form.gcalDate ? ORANGE : "#ccc"} />
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: "#333" }}>Schedule Job</div>
-                    {form.gcalDate && (
-                      <div style={{ fontSize: 12, color: ORANGE, marginTop: 1 }}>
-                        {fmtDate(form.gcalDate.slice(0, 10))} {form.gcalDate.slice(11, 16)}
-                        {(form.visits || []).length > 1 && <span> · +{form.visits.length - 1} more visit{form.visits.length > 2 ? "s" : ""}</span>}
+                  <Icon name="calendar" size={16} color={scheduledVisits.length ? ORANGE : "#ccc"} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, color: "#333" }}>Schedule Job</div>
+                    {scheduledVisits.length === 0 && <div style={{ fontSize: 12, color: "#aaa", marginTop: 1 }}>Not scheduled</div>}
+                    {/* Every visit, each one a link into the calendar on its
+                        own day. This used to read form.gcalDate, which the
+                        database fills in from the visits only after the write
+                        lands — so the card sat blank until a reload. */}
+                    {scheduledVisits.map((v, i) => (
+                      <div
+                        key={v.id || i}
+                        onClick={() => onOpenCalendar?.(v.start.slice(0, 10))}
+                        style={{ marginTop: 3, cursor: onOpenCalendar ? "pointer" : "default" }}
+                      >
+                        <div style={{ fontSize: 12, color: ORANGE, fontWeight: 600 }}>
+                          {scheduledVisits.length > 1 && <span style={{ color: "#8899bb" }}>{i + 1}. </span>}
+                          {fmtDate(v.start.slice(0, 10))} {v.start.slice(11, 16)}
+                          {onOpenCalendar && <span style={{ color: "#8899bb", fontWeight: 400 }}> ›</span>}
+                        </div>
+                        {(v.label || "").trim() && (
+                          <div style={{ fontSize: 11, color: "#777", whiteSpace: "pre-wrap", marginTop: 1 }}>{v.label.trim()}</div>
+                        )}
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
-                <button onClick={() => setShowScheduleJob(true)} style={{ ...S.btn(form.gcalDate ? "primary" : "ghost"), fontSize: 12, padding: "6px 12px" }}>{form.gcalDate ? "Edit" : "Set Date"}</button>
+                <button onClick={() => setShowScheduleJob(true)} style={{ ...S.btn(scheduledVisits.length ? "primary" : "ghost"), fontSize: 12, padding: "6px 12px" }}>{scheduledVisits.length ? "Edit" : "Set Date"}</button>
               </div>
               <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -6815,17 +6861,25 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
   );
 }
 
-function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, onOpenInvoice }) {
+function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
   });
   const setViewPersist = (v) => { setView(v); try { localStorage.setItem("higrade_cal_view", v); } catch {} };
 
-  const [anchor, setAnchor] = useState(() => new Date());
-  const [selectedDay, setSelectedDay] = useState(today());
+  const [anchor, setAnchor] = useState(() => (focusDate ? calParseYmd(focusDate) : new Date()));
+  const [selectedDay, setSelectedDay] = useState(focusDate || today());
   const [gcalEvents, setGcalEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    if (!focusDate) return;
+    setAnchor(calParseYmd(focusDate));
+    setSelectedDay(focusDate);
+    onFocusConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusDate]);
 
   const year = anchor.getFullYear();
   const month = anchor.getMonth();
@@ -6914,8 +6968,10 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
         // Label the block with the visit's own name when it has one, so three
         // appointments on the same job do not read as three identical entries.
         const who = inv.client || inv.id;
-        const suffix = visit.label?.trim()
-          ? ` · ${visit.label.trim()}`
+        // Labels can run to several lines; a block only has room for the first.
+        const firstLine = (visit.label || "").trim().split("\n")[0].trim();
+        const suffix = firstLine
+          ? ` · ${firstLine}`
           : (visits.length > 1 ? ` · Visit ${vi + 1}` : "");
         push({ date, startMin, endMin, label: who + suffix, invoiceId: inv.id, color: ORANGE, type: "job" });
       });
@@ -10278,6 +10334,17 @@ export default function App() {
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
   };
 
+  // Jump from a document's schedule card to that day on the calendar. Leaving
+  // the form unmounts it, which flushes any pending auto-save first.
+  const [calendarFocus, setCalendarFocus] = useState(null);
+  const openCalendarAt = (dateStr) => {
+    if (!dateStr) return;
+    setCalendarFocus(dateStr);
+    setSelected(null);
+    setView("list");
+    setTab("calendar");
+  };
+
   // Open a document from elsewhere in the app (currently the calendar). The tab
   // is deliberately left alone: the form renders outside the tab switch, so
   // backing out returns you to wherever you came from rather than dumping you
@@ -10728,7 +10795,7 @@ export default function App() {
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
-        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onOpenInvoice={openInvoiceById} />}
+        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
@@ -10746,6 +10813,7 @@ export default function App() {
             invoice={selected}
             defaultType={newDocType}
             newDocSeq={newDocSeq}
+            onOpenCalendar={openCalendarAt}
             clients={data.clients}
             savedItems={data.savedItems}
             gcalAuthed={gcalAuthed}

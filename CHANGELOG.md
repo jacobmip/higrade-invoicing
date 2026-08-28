@@ -5,6 +5,18 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.9.1 — 2026-08-27
+
+### Bug Fixes
+- **The schedule card went blank after saving visits** — introduced in v1.9.0. The card read `form.gcalDate`, but the modal only sends `visits` now; the database trigger fills `gcal_date` in from those, so the form didn't learn about it until a reload and the job looked unscheduled. The card is built from `visits` directly, and the modal also mirrors the earliest visit locally using the same rule the trigger uses, so the two agree straight away.
+
+### New Features
+- **Every visit is listed on the invoice**, numbered, with its label underneath — so you can see how many trips a job takes with the invoice open, without going to the calendar.
+- **Tap a visit to jump to that day on the calendar.** It opens the Calendar tab focused on that date with the day selected.
+- **Visit labels can run to several lines.** The first line becomes the Google Calendar event title (Google strips newlines from a title) and the whole label goes into the event description, where it stays readable. Calendar blocks show the first line.
+
+---
+
 ## v1.9.0 — 2026-08-27
 
 ### New Features
