@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.5.1 — 2026-08-27
+
+### Changes
+- **Calendar moved into the bottom bar, Expenses moved into More** — the bottom row is now Invoices · Estimates · Calendar · Clients. Expenses keeps everything it had, including the floating **+** to add a receipt; it is now reached through More rather than the bottom bar.
+
+---
+
 ## v1.5.0 — 2026-08-27
 
 ### Bug Fixes

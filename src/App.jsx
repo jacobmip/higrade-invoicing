@@ -10093,14 +10093,14 @@ export default function App() {
   const mainNavItems = [
     { id: "invoices",  label: "Invoices",  icon: "invoice"   },
     { id: "estimates", label: "Estimates", icon: "estimates" },
-    { id: "expenses",  label: "Expenses",  icon: "receipt"   },
+    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
     { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
     { id: "payments",  label: "Payments",   icon: "dollar"   },
     { id: "pricebook", label: "Price Book", icon: "items"    },
     { id: "reports",   label: "Reports",    icon: "chart"    },
-    { id: "calendar", label: "Calendar", icon: "calendar" },
+    { id: "expenses",  label: "Expenses",   icon: "receipt"  },
     { id: "settings", label: "Settings", icon: "settings" },
     { id: "recently-deleted", label: "Recently Deleted", icon: "trash" },
   ];
