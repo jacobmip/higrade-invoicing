@@ -5,6 +5,25 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.6.0 — 2026-08-27
+
+### New Features
+- **Calendar time-slot views: Day, 3 Day, Week, Month** — a Google-style grid with hour rows down the side and one column per day. Events are drawn as blocks positioned and sized by their real start and end rather than listed as text. The chosen view is remembered between sessions, there's a Today button, and the arrows step by the length of the view rather than always by a month.
+  - Overlapping events sit side by side, and the split is worked out per cluster of overlapping events — a lone 4pm job stays full width even if two others collide at 9am.
+  - A red line marks the current time, on today's column only.
+  - Follow-up reminders and Google all-day events get their own strip above the grid instead of being forced to a time.
+  - The grid opens scrolled to the working day, and the visible hours stretch to fit anything scheduled early or late.
+  - Google events are now fetched for the range on screen rather than always a whole month.
+
+### Bug Fixes
+- **A scheduled job appeared twice** — once from the invoice and again from the Google Calendar event it created. As dots on a month grid that was invisible; as blocks it would have drawn two bars on top of each other. The two are now matched on `gcalEventId` and merged, keeping the invoice's label and taking the real start and end from the Google copy.
+- **Google event times are read in Hawaii time** rather than the device's timezone, so an event can't land on the wrong day or hour when the phone is travelling.
+
+### Known limitation
+A job that never synced to Google has no stored duration — `ScheduleJobModal` asks for one but only uses it to build the Google event, then discards it. Those blocks are drawn as 2 hours, matching that modal's own default. Jobs that did sync show their true length. Storing the duration on the invoice would need a new column.
+
+---
+
 ## v1.5.1 — 2026-08-27
 
 ### Changes
