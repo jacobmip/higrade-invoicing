@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.7.2 — 2026-08-27
+
+### Bug Fixes
+- **The calendar grid now covers the full 24 hours** — it was cropping to roughly 7am–7pm. The window was sized to fit whatever was already booked, with a 7am–7pm floor, which meant any hour with nothing in it was simply not drawn: you could not scroll to 5am to look at it, because 5am did not exist on the grid. Emergency call-outs don't keep office hours. It runs midnight to midnight now.
+- The grid still opens scrolled to the working day rather than to midnight, and if something is booked earlier than that it opens there instead so it isn't off-screen.
+
+---
+
 ## v1.7.1 — 2026-08-27
 
 ### Bug Fixes
