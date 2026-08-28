@@ -2295,6 +2295,30 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
   const [saveToItems, setSaveToItems] = useState(false);
   const [improving, setImproving] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const sheetRef = useRef(null);
+  const descRef = useRef(null);
+  // Auto-grow the description box.
+  //
+  // This deliberately is NOT an inline `ref={el => ...}` callback. A new arrow
+  // function every render makes React detach and reattach the ref on EVERY
+  // render, and each pass sets height to "auto" before measuring. With a long
+  // description that momentarily collapses the textarea from hundreds of pixels
+  // to a single row; the sheet's scrollable height collapses with it, and the
+  // browser clamps scrollTop to the new maximum. Restoring the height does not
+  // restore the scroll position, so the sheet snapped back to the top on every
+  // render and the Done button could not be reached.
+  //
+  // Keyed on form.desc so it runs when the text actually changes, and the
+  // sheet's scroll position is captured and restored around the measurement.
+  useLayoutEffect(() => {
+    const el = descRef.current;
+    if (!el) return;
+    const sheet = sheetRef.current;
+    const keepTop = sheet ? sheet.scrollTop : null;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+    if (sheet && keepTop !== null && sheet.scrollTop !== keepTop) sheet.scrollTop = keepTop;
+  }, [form.desc]);
 
   const aiImprove = async () => {
     const target = form.name || form.desc;
@@ -2319,7 +2343,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
 
   return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: "#fff", width: "100%", borderRadius: "18px 18px 0 0", padding: "22px 20px 32px", maxWidth: 480, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
+      <div ref={sheetRef} style={{ background: "#fff", width: "100%", borderRadius: "18px 18px 0 0", padding: "22px 20px 32px", maxWidth: 480, margin: "0 auto", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, color: NAVY }}>Edit Item</span>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 28, lineHeight: 1, padding: "0 4px" }}>×</button>
@@ -2342,16 +2366,8 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
           <textarea
             style={{ ...S.input, minHeight: 100, resize: "none", color: "#555", overflow: "hidden" }}
             value={form.desc}
-            onChange={e => {
-              set("desc", e.target.value);
-              e.target.style.height = "auto";
-              e.target.style.height = e.target.scrollHeight + "px";
-            }}
-            onInput={e => {
-              e.target.style.height = "auto";
-              e.target.style.height = e.target.scrollHeight + "px";
-            }}
-            ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+            onChange={e => set("desc", e.target.value)}
+            ref={descRef}
             placeholder="Notes about the work done…"
           />
         </div>
