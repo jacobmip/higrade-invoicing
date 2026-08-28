@@ -23,6 +23,10 @@ function toInvoice(row, items = [], payments = []) {
     // Minutes. null means never recorded — see migration 042; readers fall
     // back to settings.gcal_default_minutes rather than guessing.
     gcalDurationMinutes: row.gcal_duration_minutes ?? null,
+    // Every scheduled visit on this job (migration 044). The three singular
+    // gcal_* fields above mirror the earliest entry and are maintained by a
+    // trigger — read them, never write them once visits exist.
+    visits: Array.isArray(row.visits) ? row.visits : [],
     followUpDate: row.follow_up_date || null,
     followUpEventId: row.follow_up_event_id || null,
     signatureData: row.signature_data || null,
@@ -557,6 +561,28 @@ export async function upsertInvoice(inv, isNew) {
   // AI receptionist's lead capture when the app saves an estimate built from
   // a call. Persist it only when the caller actually carried the field, so a
   // code path that builds an invoice object without it can't blank the notes.
+  // Visits ride their own write too (migration 044). Same reason: the RPC does
+  // not name the column, so it cannot round-trip through it — and a full save
+  // therefore cannot wipe a job's schedule. The trigger mirrors the earliest
+  // visit back into gcal_date, so that field needs no separate handling.
+  if (Array.isArray(inv.visits)) {
+    const clean = inv.visits
+      .filter(v => v && typeof v.start === 'string' && v.start.trim())
+      .map(v => ({
+        id: v.id || ('v_' + Math.random().toString(36).slice(2, 10)),
+        start: v.start,
+        minutes: Number(v.minutes) > 0 ? Number(v.minutes) : 90,
+        label: typeof v.label === 'string' ? v.label : '',
+        eventId: v.eventId || null,
+      }))
+      .sort((a, b) => a.start.localeCompare(b.start))
+    const { error: visitErr } = await supabase
+      .from('invoices')
+      .update({ visits: clean.length ? clean : null })
+      .eq('id', savedId)
+    if (visitErr) console.error('[db] visits not saved:', visitErr.message || visitErr)
+  }
+
   // Job duration rides its own write for the same reason internal_notes does:
   // save_invoice_with_items does not name the column (migration 042), so it
   // cannot round-trip through the RPC — and by the same token a full save can

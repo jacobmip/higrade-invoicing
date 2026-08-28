@@ -5,6 +5,20 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.9.0 — 2026-08-27
+
+### New Features
+- **A job can be scheduled across several visits** — for work that takes more than one trip. Schedule Job is now a list: add as many visits as the job needs, each with its own date, time, duration and label ("Rough-in", "Fixtures", "Final"). Each visit becomes its own Google Calendar event titled with its label, and each appears separately on the calendar. Removing a visit removes its Google event. Requires migration 044.
+  - Adding a visit defaults to 9am the day after the last one, which is usually what a multi-day job wants.
+  - Saving only touches Google for visits that actually changed, so re-saving doesn't churn the calendar or reissue event ids for appointments nobody edited.
+  - Existing scheduled jobs are backfilled as one-visit jobs, so nothing looks unscheduled after the migration.
+  - `visits` is the source of truth; `gcal_date`, `gcal_event_id` and `gcal_duration_minutes` are now *derived* from the earliest visit by a trigger. They stay because `push_invoice_to_calendar()`, the webhook trigger and `create_estimate_from_lead` all read `gcal_date` — every existing reader keeps working and sees the first appointment.
+
+### Bug Fixes
+- **Duplicating an invoice cloned its Google Calendar event** — the copy carried the original's `gcal_event_id`, so two documents pointed at the same appointment and unscheduling either one deleted the other's event. This existed before visits and would have got worse with them. A duplicate now starts unscheduled, as does a converted document.
+
+---
+
 ## v1.8.0 — 2026-08-27
 
 ### New Features
