@@ -17,6 +17,12 @@ import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
+// Last-resort length for a scheduled job with no stored duration and no Google
+// event to read one from. Since migration 042 the real value lives on the
+// invoice and the fallback comes from settings.gcal_default_minutes — the same
+// key the AI receptionist reads, so the two paths agree. This applies only if
+// that setting is missing too.
+const DEFAULT_JOB_MINUTES = 90;
 const NAVY2 = "#0f2040";
 const CACHE_KEY = "higrade_v6";
 const LIGHT = "#f4f6fa";
@@ -1684,10 +1690,26 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
 }
 
 // ─── Schedule Job Modal ───────────────────────────────────────────────────────
-function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
+// Duration choices in minutes. Minutes rather than whole hours because the
+// shared default (settings.gcal_default_minutes) is 90, which whole hours
+// could not express — which is exactly why the app and the AI receptionist
+// used to disagree about how long a job runs.
+const JOB_DURATIONS = [
+  { v: 30,  label: "30 min" }, { v: 45,  label: "45 min" },
+  { v: 60,  label: "1 hr" },   { v: 90,  label: "1.5 hr" },
+  { v: 120, label: "2 hr" },   { v: 180, label: "3 hr" },
+  { v: 240, label: "4 hr" },   { v: 360, label: "6 hr" },
+  { v: 480, label: "8 hr" },
+];
+
+function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave }) {
   const [date, setDate] = useState(invoice.gcalDate?.slice(0, 10) || today());
   const [time, setTime] = useState(invoice.gcalDate?.slice(11, 16) || "09:00");
-  const [duration, setDuration] = useState("2");
+  // Whatever this job was last saved as, else the shared default.
+  const [duration, setDuration] = useState(() => {
+    const m = invoice.gcalDurationMinutes ?? defaultMinutes ?? 90;
+    return String(JOB_DURATIONS.some(d => d.v === m) ? m : 120);
+  });
   const [saving, setSaving] = useState(false);
   const jobTitle = invoice.items?.[0]?.name || "Plumbing Service";
   const desc = invoice.items?.[0]?.desc || "";
@@ -1697,7 +1719,7 @@ function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
     let gcalEventId = invoice.gcalEventId || null;
     if (gcalAuthed && GCal.isConfigured()) {
       const startDt = new Date(`${date}T${time}:00`);
-      const endDt = new Date(startDt.getTime() + parseInt(duration) * 3600000);
+      const endDt = new Date(startDt.getTime() + parseInt(duration, 10) * 60000);
       const event = {
         summary: `${invoice.client || "Client"} – ${jobTitle}`,
         description: desc,
@@ -1710,14 +1732,16 @@ function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
         gcalEventId = resp?.id || gcalEventId;
       } catch {}
     }
-    onSave({ gcalDate: `${date}T${time}`, gcalEventId });
+    // Save the duration too. It used to exist only inside the Google event,
+    // so a job booked while disconnected had no length recorded anywhere.
+    onSave({ gcalDate: `${date}T${time}`, gcalEventId, gcalDurationMinutes: parseInt(duration, 10) });
     setSaving(false);
     onClose();
   };
 
   const handleRemove = async () => {
     if (invoice.gcalEventId && gcalAuthed) await GCal.deleteEvent(invoice.gcalEventId).catch(() => {});
-    onSave({ gcalDate: null, gcalEventId: null });
+    onSave({ gcalDate: null, gcalEventId: null, gcalDurationMinutes: null });
     onClose();
   };
 
@@ -1731,7 +1755,7 @@ function ScheduleJobModal({ invoice, gcalAuthed, onClose, onSave }) {
           <div style={{ minWidth: 0 }}><label style={S.label}>Start Time</label><input type="time" style={S.input} value={time} onChange={e => setTime(e.target.value)} /></div>
           <div style={{ minWidth: 0 }}><label style={S.label}>Duration</label>
             <select style={S.input} value={duration} onChange={e => setDuration(e.target.value)}>
-              {["1","2","3","4","6","8"].map(h => <option key={h} value={h}>{h} hr{h !== "1" ? "s" : ""}</option>)}
+              {JOB_DURATIONS.map(d => <option key={d.v} value={d.v}>{d.label}</option>)}
             </select>
           </div>
         </div>
@@ -3985,7 +4009,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         onPickText={() => sendViaText(sendMethodFor)}
       />}
       {confirmSend && <ConfirmSendModal kind={confirmSend} invoice={form} client={{ ...(selectedClient || {}), ...(effectiveClientInfo || {}) }} sending={sending} onClose={() => !sending && setConfirmSend(null)} onConfirm={handleConfirmedSend} />}
-      {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
+      {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} defaultMinutes={parseInt(data?.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { const updated = { ...form, signatureData: sigData, signedAt: new Date().toISOString(), status: "approved" }; setForm(updated); setShowSignature(false); onPartialSave?.(updated); }} />}
       {editingItem !== null && (
@@ -6455,11 +6479,6 @@ const CAL_VIEWS = [
   { id: "week",  label: "Week",  days: 7 },
   { id: "month", label: "Month", days: 0 },
 ];
-// A job with no Google event has no stored duration — ScheduleJobModal asks for
-// one but only uses it to build the Google event, then discards it. Two hours
-// matches that modal's own default. Jobs that did sync take their real length
-// from the Google copy instead.
-const DEFAULT_JOB_MINUTES = 120;
 const CAL_HOUR_PX = 52;
 
 const calYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -6643,7 +6662,7 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
   );
 }
 
-function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
+function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
   });
@@ -6707,21 +6726,28 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
     gcalEvents.forEach(ev => { if (ev.id) gcalById.set(ev.id, ev); });
     const merged = new Set();
 
+    // How long this job runs, best source first: what was saved on the invoice,
+    // then the length of its Google event, then the shared default.
+    const fallbackMins = defaultJobMinutes || DEFAULT_JOB_MINUTES;
+
     invoices.forEach(inv => {
       if (inv.gcalDate) {
         const linked = inv.gcalEventId ? gcalById.get(inv.gcalEventId) : null;
         const s = linked?.start?.dateTime ? calZonedParts(linked.start.dateTime) : null;
         const e = linked?.end?.dateTime ? calZonedParts(linked.end.dateTime) : null;
+        const stored = typeof inv.gcalDurationMinutes === "number" && inv.gcalDurationMinutes > 0
+          ? inv.gcalDurationMinutes : null;
         let date, startMin, endMin;
         if (s) {
           merged.add(linked.id);
           date = s.date;
           startMin = s.minutes;
-          endMin = e && e.date === s.date ? e.minutes : Math.min(24 * 60, s.minutes + DEFAULT_JOB_MINUTES);
+          const fromGoogle = e && e.date === s.date ? e.minutes - s.minutes : null;
+          endMin = Math.min(24 * 60, s.minutes + (stored || fromGoogle || fallbackMins));
         } else {
           date = inv.gcalDate.slice(0, 10);
           startMin = (parseInt(inv.gcalDate.slice(11, 13), 10) || 0) * 60 + (parseInt(inv.gcalDate.slice(14, 16), 10) || 0);
-          endMin = Math.min(24 * 60, startMin + DEFAULT_JOB_MINUTES);
+          endMin = Math.min(24 * 60, startMin + (stored || fallbackMins));
         }
         push({ date, startMin, endMin, label: inv.client || inv.id, invoiceId: inv.id, color: ORANGE, type: "job" });
       }
@@ -6743,7 +6769,7 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
       });
     });
     return out;
-  }, [invoices, gcalEvents]);
+  }, [invoices, gcalEvents, defaultJobMinutes]);
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   const step = (dir) => setAnchor(a => {
@@ -10492,7 +10518,7 @@ export default function App() {
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
-        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} />}
+        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
