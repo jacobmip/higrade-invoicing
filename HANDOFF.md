@@ -61,7 +61,7 @@ HI Grade Invoicing is a single-operator invoicing + estimating + client-manageme
 ```
 higrade-invoicing/
 ├── src/
-│   ├── App.jsx            # Single-file React app, ~7,500 lines. Everything UI-side lives here.
+│   ├── App.jsx            # Single-file React app, ~10,300 lines. Everything UI-side lives here.
 │   ├── db.js              # Supabase data-layer helpers (loadAll, upsertInvoice, listNotifications, …)
 │   ├── supabase.js        # Supabase client init (with localStorage fallback if env missing)
 │   ├── apiBase.js         # Resolves "/api" vs absolute URL for Capacitor builds
@@ -72,7 +72,7 @@ higrade-invoicing/
 │   └── main.jsx
 ├── api/                   # Vercel serverless functions (all Node runtime unless noted)
 │   ├── _lib/notify.js     # APNs JWT + push fan-out + insertNotification
-│   ├── ai.js              # AI chat → OpenAI proxy
+│   ├── ai.js              # AI chat → Anthropic proxy
 │   ├── extract-receipt.js # Receipt OCR
 │   ├── paypal-create-order.js
 │   ├── paypal-capture-order.js
@@ -99,7 +99,7 @@ higrade-invoicing/
 ```
 
 ### File-size note
-`src/App.jsx` is ~7,500 lines and intentionally monolithic. Don't refactor without explicit ask — the user prefers grep-able single-file code over splitting into many small files. Use `grep -n "function FooBar"` to locate components.
+`src/App.jsx` is ~10,300 lines and intentionally monolithic. Don't refactor without explicit ask — the user prefers grep-able single-file code over splitting into many small files. Use `grep -n "function FooBar"` to locate components.
 
 ---
 
@@ -127,7 +127,7 @@ higrade-invoicing/
 ### Vercel
 - **Project:** `jacobmips-projects/higrade-invoicing` (Hobby plan)
 - **Auto-deploys** from `main` on every push. No preview env separate from prod for this project.
-- **Env vars currently set:** `OPENAI_API_KEY`, `RESEND_API_KEY`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV` (`live`), `PAYPAL_WEBHOOK_ID`, `SUPABASE_SERVICE_ROLE_KEY`. Push notifications need `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_KEY_P8`, `APNS_ENV` — see `PUSH_SETUP.md`.
+- **Env vars currently set:** `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV` (`live`), `PAYPAL_WEBHOOK_ID`, `SUPABASE_SERVICE_ROLE_KEY`. Push notifications need `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_KEY_P8`, `APNS_ENV` — see `PUSH_SETUP.md`.
 
 ### PayPal
 - Live mode (not sandbox).
@@ -140,9 +140,10 @@ higrade-invoicing/
 - Used by `send-email`, `send-estimate`, `submit-signature`.
 - The user wants to keep emails to a minimum going forward. New events should push, not email.
 
-### OpenAI
-- Used by `api/ai.js` for the global AI chat (model is gpt-4o-mini at the time of writing).
-- Used by `api/extract-receipt.js` for receipt OCR.
+### Anthropic
+Every AI feature calls the Anthropic API directly from `api/*`. There is no
+OpenAI usage anywhere in this repo and no `OPENAI_API_KEY`; `ANTHROPIC_API_KEY`
+is the only AI key set. Model ids per endpoint are listed in `CLAUDE.md`.
 
 ### APNs (Apple Push Notifications service)
 - Bundle ID: `com.higradeplumbing.invoicing`
@@ -178,35 +179,43 @@ If the user ever forgets the password: Supabase dashboard → Authentication →
 
 ## 6. Database Schema (Supabase)
 
-All tables are in the `public` schema. RLS is enabled on most tables. The anon role can read/write the user's own data because this is single-tenant.
+**The schema lives in `CLAUDE.md`, not here.** That file is loaded automatically
+at the start of every session, so it is the one that gets read and the one that
+gets corrected; keeping a second copy here is how this section ended up
+describing the pre-multi-user database for two months after migration 017
+landed. Go there for tables, columns, helper functions and the migration list.
 
-### Core tables
-- **`invoices`** — id (text, e.g. `INV0123`), type (`invoice`|`estimate`), client_id, client_name, client_info (jsonb snapshot), date, due_date, status (`outstanding`|`paid`|`partial`|`net30`|`open`|`closed`|`approved`|`expired`), tax, discount, discount_type, notes, year, gcal_date, gcal_event_id, follow_up_date, follow_up_event_id, signature_data, signed_at, converted_to_id, view_token, job_address (jsonb), billing_address (jsonb), updated_at.
-- **`invoice_items`** — invoice_id FK, name, desc, qty, price, sort_order.
-- **`payments`** — invoice_id FK, amount, method (`Cash|Check|Venmo|Zelle|Credit Card|PayPal|Bank Transfer|Other`), date, note, paypal_order_id, paypal_capture_id (unique).
-- **`clients`** — id, name, email, phone, addresses (jsonb array), notes, created_at.
-- **`saved_items`** — id, name, desc, price (the user's item library).
-- **`invoice_events`** — id, invoice_id, kind (`opened`|`sent`|…), recipient, meta (jsonb), created_at. Activity log.
-- **`invoice_versions`** — id, invoice_id, snapshot (jsonb), sent_to, note, created_at. Versioned history of every send.
-- **`settings`** — singleton-ish key/value store for app preferences.
-
-### Notifications (added in migration `011_notifications.sql`, May 2026)
-- **`device_tokens`** — id, token (unique), platform (`ios`|`android`|`web`), bundle_id, app_version, created_at, last_seen_at. RLS locks out anon — only service role writes.
-- **`notifications`** — id, type (`payment`|`invoice_open`|`estimate_signed`|…), title, body, invoice_id (loose ref), data (jsonb), created_at, read_at. Anon can read + mark read; only service role inserts.
+What follows is only the material that is not in CLAUDE.md.
 
 ### Optimistic locking
-`invoices.updated_at` is bumped server-side on every `upsertInvoice` and used as a version token to prevent stale-write races. The client passes its `updatedAt` and the RPC rejects if the row in the DB has moved on.
+`invoices.updated_at` is bumped server-side on every `upsertInvoice` and used as
+a version token. The client passes the `updatedAt` it loaded and
+`save_invoice_with_items` raises `CONCURRENT_EDIT` if the row has moved on.
+`partialSaveInvoice` self-heals by re-fetching the token and retrying once —
+without that retry, signing on an iPhone almost always tripped the warning,
+because the signature save raced the auto-save fired by the status change.
 
 ### Important indexes
 - `device_tokens.token` UNIQUE
-- `payments.paypal_capture_id` UNIQUE (dedupe key for PayPal flow)
+- `payments.paypal_capture_id` UNIQUE — the dedupe key that stops the PayPal
+  inline capture and the webhook both recording the same payment
 - `invoices.view_token` UNIQUE
+- `saved_items (owner_id, name)` UNIQUE
 - `notifications(created_at desc)` and `notifications(read_at) WHERE read_at IS NULL`
 
 ### Realtime
-The `notifications` table needs to be added to the `supabase_realtime` publication for the bell-icon badge to update live — done via Database → Replication in the Supabase dashboard.
+The `notifications` table must be in the `supabase_realtime` publication for the
+bell badge to update live — Database → Replication in the dashboard. This is
+dashboard state, not a migration, so a database rebuilt from `supabase/migrations/`
+alone will not have it.
 
----
+### Migrations are applied by hand
+There is no `supabase db push` and no CI. Every migration is pasted into the SQL
+editor. That means the files in `supabase/migrations/` are a record of intent,
+not proof of what is live — `017` is not even in the repo. When a function's
+current definition matters, read it with `pg_get_functiondef`, never from a
+migration file. Migration 041 shows the safe pattern: assert the exact text you
+expect before replacing it, and abort rather than guess.
 
 ## 7. iOS App (Capacitor + Xcode)
 
@@ -442,59 +451,47 @@ ls supabase/migrations/
 
 ## 15. Outstanding Work / Roadmap
 
-(Update this section as features ship.)
+Live work-in-progress is tracked in **`CLAUDE.md` → Queued bugs**, verified
+against the code rather than remembered. This section is for direction, not
+task tracking.
 
-### Recently shipped (May 2026)
-- ✅ iOS-style quick-actions menu (long-press on invoices and estimates)
-- ✅ Payment-method picker when marking paid from quick actions
-- ✅ AI chat estimate-prefix bug fix (was creating `INV` instead of `EST`)
-- ✅ Invoice form bottom-gap trim
-- ✅ In-app notifications + APNs push for payments, invoice opens, estimate signs
+### Shipped since this file was first written
+Multi-user with `profiles` and `owner_id` scoping, the AI receptionist on Vapi
+with lead capture and auto-pricing, inbound SMS, job photos, the price book,
+client version history, soft delete with a Recently Deleted tab, shared
+estimate/invoice numbering, and the id/type database invariant. Migration 011
+and Realtime on `notifications` are long applied — the bell works.
 
-### Pending setup (user must do)
-- Apply migration `011_notifications.sql` in Supabase SQL editor
-- Enable Realtime on `notifications` table (Database → Replication)
-- Generate APNs `.p8` key from Apple Developer
-- Add `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_KEY_P8`, `APNS_ENV` to Vercel env
-- Add Push Notifications capability in Xcode → Signing & Capabilities
-- (Optional) Background Modes → Remote notifications
+The APNs items that used to be listed here (the `.p8` key, the Vercel `APNS_*`
+vars, the Xcode capability) are **not verified either way from the repo**. Push
+either works on Jake's phone or it doesn't; ask rather than assume. `PUSH_SETUP.md`
+has the checklist.
 
 ### Possible future features
-- Stripe / Square integration for credit-card payments (currently CC is a manual method)
-- Multi-user / team support
-- TestFlight + App Store submission pipeline
-- PDF rendering improvements (currently uses `printablePdf.js` + html2canvas)
-- Better mobile-keyboard handling on the AI chat input
-- Per-platform review request automation (already started, see commit `2975dd8`)
+- Stripe / Square for credit cards (currently a manual payment method)
+- TestFlight / App Store submission
+- PDF rendering improvements (`printablePdf.js` + html2canvas)
+- Turning outbound SMS on once A2P 10DLC registration clears
 
----
+## 16. Finding things in `App.jsx`
 
-## 16. Where Things Live in `App.jsx` (line numbers, ~May 2026)
+This section used to be a table of line numbers. Every one of them was wrong
+within weeks — the file has grown by about 2,800 lines since. Grep instead:
 
-These shift as the file grows — re-grep if exact lines look off.
+```bash
+grep -n "^function ComponentName" src/App.jsx   # a component
+grep -n "supabase\.from" src/App.jsx src/db.js  # data access
+grep -n "update_item" src/App.jsx               # the AI chat system prompt
+```
 
-| Symbol | Line |
-|---|---|
-| `useLongPress` hook | 436 |
-| `Icon` component | 378 |
-| `PaymentModal` | 685 |
-| `GlobalAIModal` | 1199 |
-| `InvoiceQuickActionsMenu` | ~3071 |
-| `InvoiceListCard` | 3119 |
-| `InvoiceList` | ~3179 |
-| `EstimateListCard` | ~3157 |
-| `EstimatesTab` | ~3368 |
-| `NotificationsBell` | ~4262 |
-| `PaymentsTab` | ~4383 |
-| `PayPalCheckout` | ~4541 |
-| `SettingsTab` | ~6121 |
-| `subHeader` state hook | 6324 |
-| `handleGlobalAIAction` (AI command dispatcher) | ~6577 |
-| App-level invoice handlers (toggleInvoicePaid, recordPayment, duplicateInvoice, …) | ~6866–6920 |
-| `convertInvoice` | ~6938 |
-| Header render (with bell + AI buttons) | ~7264 |
-| `<InvoiceList>` render with all props | ~7327 |
-
----
+The components, in rough file order: `SearchBar`, `AIChatPanel`, `PaymentModal`,
+`SendMethodSheet`, `ConfirmSendModal`, `ScheduleJobModal`, `FollowUpModal`,
+`GlobalAIModal`, `ItemModal`, `PDFPreview`, `ClientPickerModal`, `LineItemRow`,
+`RecentlyDeletedTab`, `InvoiceForm`, `InvoiceQuickActionsMenu`, `InvoiceListCard`,
+`EstimateListCard`, `InvoiceList`, `EstimatesTab`, `ClientEditFields`,
+`ImportClientsModal`, `ClientsTab`, `ItemsTab`, `NotificationsBell`, `PaymentsTab`,
+`CalendarTab`, `InPersonSignatureModal`, `PayPalCheckout`, `PublicViewerPage`,
+`SignaturePage`, `ExpenseModal`, `ExpensesTab`, `ReportsTab`, `SettingsTab`,
+`LoginScreen`.
 
 **End of handoff.** If anything important is missing, the assistant should add it here on the way out so the next pickup is easier.

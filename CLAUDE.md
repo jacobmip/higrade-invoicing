@@ -29,6 +29,18 @@ Read this file first. It captures everything an AI agent needs to safely continu
     - Bump the version: patch (+0.0.1) for bug fixes / small changes, minor (+0.1.0) for new features, major (+1.0.0) for big architectural changes. Also update `APP_BUILD_DATE` to today's date (YYYY-MM-DD).
     - Prepend a new `## vX.Y.Z — YYYY-MM-DD` section to `CHANGELOG.md` describing every change in that push.
     - Commit both files in the same commit as the code change (not a separate commit).
+14. **Update the docs in the same commit as the change.** `CLAUDE.md` is the
+    single source of truth for the schema, migrations, document numbering, the
+    invariants and the sharp edges; `HANDOFF.md` covers architecture patterns,
+    the writers outside the app, and service/native setup. Nothing is documented
+    in both — a fact in two places drifts into two different facts.
+    A change to any of the following is not finished until the doc is updated
+    alongside it: the database schema, a new migration, how documents are
+    numbered or identified, an invariant or trigger, a new API endpoint or
+    source file, or an AI model id. This rule exists because CLAUDE.md described
+    the schema as of migration 018 for two months while the database went to
+    041 — `version.js` and `CHANGELOG.md` stayed current the whole time because
+    rule 13 forced them, and nothing forced this.
 
 ## Stack
 - **Frontend**: Vite + React. `src/App.jsx` is ~10,300 lines and intentionally monolithic; a few later features live in their own files (see Source layout).
@@ -81,9 +93,16 @@ supabase/migrations/ — numbered SQL, applied by hand in the SQL editor
 local-mirror/        — optional local Postgres replica, see its README
 ```
 
-Other docs in the repo: **`HANDOFF.md`** is the deep reference (architecture, patterns,
-the writers-outside-the-app table). **`CHANGELOG.md`** is the release log.
-`NATIVE.md`, `DEV.md`, `PUSH_SETUP.md` cover native builds, local dev, and APNs.
+### Where the other docs fit
+Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
+
+- **`HANDOFF.md`** — architecture patterns to preserve, the writers-outside-the-app
+  table, optimistic locking, PayPal and notification flows, service credentials
+  and setup, iOS/Capacitor, brand and styling. Also portable: it is written to be
+  dropped into a tool that does not auto-load this file.
+- **`CHANGELOG.md`** — the release log, one entry per version.
+- **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
+- **`local-mirror/README.md`** — optional local Postgres replica.
 
 ## Database schema (current through migration 041)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to

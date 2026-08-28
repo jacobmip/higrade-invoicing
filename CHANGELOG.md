@@ -5,6 +5,16 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.4.4 — 2026-08-27
+
+### Changes
+- **Split the two handoff docs so nothing is documented twice, and added hard rule 14 to keep them current.** `CLAUDE.md` now owns the schema, migrations, numbering, invariants and sharp edges; `HANDOFF.md` owns architecture patterns, the writers-outside-the-app table, and service/native setup. Neither repeats the other.
+- **Corrected HANDOFF.md, which was worse off than CLAUDE.md.** Its schema section still described the single-tenant database from before migration 017 — no `owner_id`, no `profiles`, no `job_photos` or `client_versions` — so it has been replaced with a pointer plus the material that lives nowhere else (optimistic locking, the unique indexes, the Realtime publication, and why a migration file is not proof of what is live). Also fixed: the claim that AI runs on OpenAI, `OPENAI_API_KEY` in the env list, and App.jsx at 7,500 lines.
+- **Replaced two sections that were guaranteed to rot** — the App.jsx line-number table (every entry stale after ~2,800 lines of growth) is now a grep recipe and a component list, and the roadmap's "pending setup" list no longer asserts things the repo cannot verify.
+- **Hard rule 14**: a change to the schema, a migration, numbering, an invariant, an endpoint or an AI model id is not finished until the doc is updated in the same commit. This is the rule that was missing — `version.js` and `CHANGELOG.md` never drifted because rule 13 forces them.
+
+---
+
 ## v1.4.3 — 2026-08-26
 
 ### Changes
