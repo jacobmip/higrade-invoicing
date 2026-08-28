@@ -5,6 +5,17 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.6.1 — 2026-08-27
+
+### Bug Fixes
+- **A scheduled job's duration is now saved** — `ScheduleJobModal` asked how long a job would take, used it to build the Google Calendar event, then discarded it. `invoices` had `gcal_date` and `gcal_event_id` and nowhere to record a length, so the only copy lived inside Google. Any job booked while disconnected — including during the hour-long token gap fixed in v1.5.0 — had no duration recorded anywhere. Requires migration 042.
+- **The app and the AI receptionist no longer disagree about job length** — the modal defaulted to 2 hours while the receptionist's `gcal_default_minutes` was 90, so the same unrecorded job was drawn at two different lengths depending on who booked it. Both now read the same setting. Duration options are in minutes rather than whole hours, since 90 could not be expressed before.
+
+### Changes
+- The calendar picks a job's length in this order: what was saved on the invoice, then the length of its Google event, then `settings.gcal_default_minutes`. Jobs booked before this migration have no stored value and fall back, exactly as they did.
+
+---
+
 ## v1.6.0 — 2026-08-27
 
 ### New Features

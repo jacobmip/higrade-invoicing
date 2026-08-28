@@ -111,7 +111,7 @@ Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 - `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), created_at
 - `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes
 - `client_versions` — full client snapshots, mirrors invoice_versions
-- `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, deleted_at, updated_at
+- `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, deleted_at, updated_at
 - `invoice_items` — invoice_id, name, description, qty, price, unit, discount, taxable, sort_order
 - `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
 - `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`
@@ -163,9 +163,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **039** — id/type trigger
 - **040** — shared document number
 - **041** — put the AI receptionist on the shared counter
+- **042** — `gcal_duration_minutes` on invoices, so a scheduled job's length survives without Google
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `042_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `043_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids
@@ -320,6 +321,7 @@ The session that produced most of the current state did the following, in order:
 - **The app is not the only writer to `invoices`.** See the schema section above and "Writers outside the app" in `HANDOFF.md`. Two production breaks have come from assuming otherwise.
 - **Prefer a trigger to an app-side guard** when an invariant must hold. Migration 039 is the model: the front end cannot police writes it never sees.
 - **`set_owner_id()` stamps null under the service-role key.** Any endpoint inserting with the service role must set `owner_id` explicitly or the row is invisible to everyone.
+- **`internal_notes` and `gcal_duration_minutes` do not round-trip through `save_invoice_with_items`.** Both are written separately in `db.js` after the main save, deliberately — the RPC never names them, so a full save cannot clobber either. Add a column the same way rather than rewriting that function.
 - **`invoice_versions` uses `sent_at`, not `created_at`.** `invoice_events` uses `created_at`. Getting this wrong aborts the whole SQL batch.
 - **`save_invoice_with_items` has been redefined by seven migrations** and may carry edits made directly in the SQL editor. Rebuild it from `pg_get_functiondef`, never from an old migration file — migration 041 shows the pattern, with asserted replacements.
 - **Do not reset the invoice form when backing out to the list.** That path clears `selected` too, and resetting there blanks the form mid-animation; the unmount flush then saves an id-less form and `autoSaveInvoice` mints an empty document. Reset only on an explicit new-document request.

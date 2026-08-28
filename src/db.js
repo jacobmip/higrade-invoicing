@@ -20,6 +20,9 @@ function toInvoice(row, items = [], payments = []) {
     year: row.year,
     gcalDate: row.gcal_date || null,
     gcalEventId: row.gcal_event_id || null,
+    // Minutes. null means never recorded — see migration 042; readers fall
+    // back to settings.gcal_default_minutes rather than guessing.
+    gcalDurationMinutes: row.gcal_duration_minutes ?? null,
     followUpDate: row.follow_up_date || null,
     followUpEventId: row.follow_up_event_id || null,
     signatureData: row.signature_data || null,
@@ -554,6 +557,22 @@ export async function upsertInvoice(inv, isNew) {
   // AI receptionist's lead capture when the app saves an estimate built from
   // a call. Persist it only when the caller actually carried the field, so a
   // code path that builds an invoice object without it can't blank the notes.
+  // Job duration rides its own write for the same reason internal_notes does:
+  // save_invoice_with_items does not name the column (migration 042), so it
+  // cannot round-trip through the RPC — and by the same token a full save can
+  // never blank it. Only written when the caller actually carried the field.
+  // Only when there is something to record, or when a schedule was just
+  // removed. Every loaded invoice carries this field, so writing on every save
+  // would mean an extra UPDATE against every row that has no duration at all.
+  const clearingSchedule = inv.gcalDurationMinutes == null && !inv.gcalDate
+  if (typeof inv.gcalDurationMinutes === 'number' || clearingSchedule) {
+    const { error: durErr } = await supabase
+      .from('invoices')
+      .update({ gcal_duration_minutes: inv.gcalDurationMinutes ?? null })
+      .eq('id', savedId)
+    if (durErr) console.error('[db] job duration not saved:', durErr.message || durErr)
+  }
+
   if (typeof inv.internalNotes === 'string') {
     const { error: noteErr } = await supabase.rpc('set_invoice_internal_notes', {
       p_id: savedId,
