@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.9.3 — 2026-08-27
+
+### Changes
+- **Appointments booked in the app now look identical to ones Lisa books** — same title (`Client - EST1004`), the job address as the event location, and contact details plus internal notes in the body. The app previously used a different template entirely: `Client – Job Title`, the line-item text, and no location at all, which is why the two never matched. `eventFor()` now mirrors `push_invoice_to_calendar()`. Instant confirmation is unchanged — this is all still done directly from the app.
+- **A visit that never reached Google Calendar now says so** on the invoice's schedule card, with what to do about it. This happens when a visit is added while Google is disconnected, and nothing fixes it on its own: the server-side function is create-only and skips any invoice that already has an event id, so it will never repair a missed visit. Opening Edit and saving adds it.
+
+---
+
 ## v1.9.2 — 2026-08-27
 
 ### Bug Fixes

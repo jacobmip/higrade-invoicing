@@ -1787,19 +1787,38 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
   });
   const removeVisit = (id) => setVisits(vs => vs.filter(v => v.id !== id));
 
+  // Build the event exactly the way the server does, so an appointment looks
+  // the same whoever booked it. push_invoice_to_calendar() (migration 038) is
+  // the reference: title is "Client - ID", location is the job address line,
+  // and the body is contact details, the private notes, then the document
+  // number. The app used to build a different shape entirely — "Client - Job
+  // Title", the line-item text, and no location at all — which is why a job
+  // Lisa booked and one scheduled here never matched.
   const eventFor = (v) => {
     const startDt = new Date(`${v.start}:00`);
     const endDt = new Date(startDt.getTime() + (Number(v.minutes) || fallback) * 60000);
-    // A label can run to several lines now. Only the first goes in the event
-    // title — Google strips newlines from a summary — and the whole thing goes
-    // in the body where it stays readable.
+
+    const client = (invoice.client || "").trim();
     const label = (v.label || "").trim();
+    // Google strips newlines from a title, so only the first line goes there.
     const firstLine = label.split("\n")[0].trim();
-    const suffix = firstLine ? ` – ${firstLine}` : "";
-    const body = [label, desc].filter(Boolean).join("\n\n");
+    const loc = (invoice.jobAddress?.line1 || "").trim();
+    const phone = (invoice.clientInfo?.phone || "").trim();
+    const notes = (invoice.internalNotes || "").trim();
+    const kind = invoice.type === "estimate" ? "Estimate" : "Invoice";
+
+    const summary = `${client || "Job"} - ${invoice.id || ""}`.trim() + (firstLine ? ` - ${firstLine}` : "");
+    const description = [
+      [client, phone, loc].filter(Boolean).join("\n"),
+      label,
+      notes || "(no notes)",
+      `${kind}: ${invoice.id || ""}`,
+    ].filter(Boolean).join("\n\n");
+
     return {
-      summary: `${invoice.client || "Client"} – ${jobTitle}${suffix}`,
-      description: body,
+      summary,
+      description,
+      location: loc || undefined,
       start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
       end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
     };
@@ -4674,6 +4693,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                           {fmtDate(v.start.slice(0, 10))} {v.start.slice(11, 16)}
                           {onOpenCalendar && <span style={{ color: "#8899bb", fontWeight: 400 }}> ›</span>}
                         </div>
+                        {/* A visit booked while Google was disconnected has no
+                            event. Nothing server-side will create it later —
+                            push_invoice_to_calendar skips any invoice that
+                            already has an event id — so say so rather than
+                            leave it quietly missing from the calendar. */}
+                        {gcalAuthed && GCal.isConfigured() && v.id !== "legacy" && !v.eventId && (
+                          <div style={{ fontSize: 10, color: "#cc7722", marginTop: 1 }}>Not on Google Calendar — open Edit and save to add it</div>
+                        )}
                         {(v.label || "").trim() && (
                           <div style={{ fontSize: 11, color: "#777", whiteSpace: "pre-wrap", marginTop: 1 }}>{v.label.trim()}</div>
                         )}
