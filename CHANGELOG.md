@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.10.1 — 2026-08-27
+
+### Bug Fixes
+- **Connecting Google Calendar after scheduling created every event twice** — introduced in v1.10.0. Connecting flips `gcalAuthed`, which fires both reconciliation callers at once: the startup sweep and the Calendar tab's own fetch. Both read the same visit with no event id, and both created before either had saved a result. Three guards, because one alone wasn't enough: only one reconciliation runs at a time, invoices are read from a ref rather than a stale closure, and each visit's key is claimed *before* the create is awaited so the loser of a race skips instead of duplicating. A failed push releases its claim so a later sweep can retry.
+
+---
+
 ## v1.10.0 — 2026-08-27
 
 ### New Features

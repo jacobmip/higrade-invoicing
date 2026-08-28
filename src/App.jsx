@@ -1785,7 +1785,7 @@ function buildCalendarEvent(invoice, v, fallbackMinutes) {
 // PATCH 404s and falls back to creating a replacement.
 //
 // Returns [{ id, visits }] for the invoices that actually changed.
-async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackMinutes }) {
+async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackMinutes, pushed }) {
   const byId = new Map((events || []).filter(e => e?.id).map(e => [e.id, e]));
   const out = [];
 
@@ -1800,6 +1800,17 @@ async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackM
       const nv = { ...v };
 
       if (canWrite && (nv.pending || !nv.eventId)) {
+        // Creating an event is the one step that cannot be undone by repeating
+        // it — a second pass would add a duplicate rather than overwrite. Two
+        // reconciliations racing on the same still-unsynced visit is exactly
+        // what happened when Google was connected mid-session: the startup
+        // sweep and the calendar's own fetch both fired on the auth change and
+        // both created. This key is claimed before the await, so the loser of
+        // that race skips instead of duplicating.
+        const key = `${inv.id}:${nv.id || nv.start}`;
+        if (pushed && pushed.has(key)) { next.push(nv); continue; }
+        pushed?.add(key);
+
         const body = buildCalendarEvent(inv, nv, fallbackMinutes);
         try {
           if (nv.eventId) {
@@ -1812,6 +1823,8 @@ async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackM
           changed = true;
         } catch (err) {
           console.warn(`[sync] could not push visit on ${inv.id}:`, err?.message || err);
+          // Let a later sweep try again rather than leaving it claimed.
+          pushed?.delete(key);
         }
         next.push(nv);
         continue;
@@ -10517,16 +10530,39 @@ export default function App() {
 
   const defaultJobMins = parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES;
 
-  // Reconcile whatever the calendar just fetched. Cheap: the events are
-  // already in hand, so this adds no API call of its own.
-  const reconcileFromEvents = async (events) => {
+  // Always reconcile against the freshest invoices, not whatever a closure
+  // captured when the handler was created. A sweep that started before an
+  // earlier one saved would otherwise still see eventId: null and create again.
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  // One reconciliation at a time, and a record of every visit already pushed
+  // this session. Two callers exist — the startup sweep and the calendar's own
+  // fetch — and both fire on the same auth change.
+  const reconcilingRef = useRef(false);
+  const pushedVisitsRef = useRef(new Set());
+
+  const runReconcile = async (events) => {
+    if (reconcilingRef.current) return;
+    reconcilingRef.current = true;
     try {
       const updates = await reconcileVisitsWithGoogle({
-        invoices: data.invoices, events, canWrite: true, fallbackMinutes: defaultJobMins,
+        invoices: dataRef.current.invoices,
+        events,
+        canWrite: true,
+        fallbackMinutes: defaultJobMins,
+        pushed: pushedVisitsRef.current,
       });
       await applyVisitUpdates(updates);
-    } catch (e) { console.warn('[sync] reconcile failed:', e?.message || e); }
+    } catch (e) {
+      console.warn('[sync] reconcile failed:', e?.message || e);
+    } finally {
+      reconcilingRef.current = false;
+    }
   };
+
+  // Reconcile whatever the calendar just fetched. Cheap: the events are
+  // already in hand, so this adds no API call of its own.
+  const reconcileFromEvents = (events) => runReconcile(events);
 
   // One sweep per session, over a wider window than whatever week happens to be
   // on screen. Without it a job moved in Google three weeks out would not be
@@ -10542,10 +10578,7 @@ export default function App() {
       try {
         const evs = await GCal.listEvents(calAddDays(new Date(), -30), calAddDays(new Date(), 90));
         if (cancelled) return;
-        const updates = await reconcileVisitsWithGoogle({
-          invoices: data.invoices, events: evs, canWrite: true, fallbackMinutes: defaultJobMins,
-        });
-        if (!cancelled) await applyVisitUpdates(updates);
+        await runReconcile(evs);
       } catch (e) { console.warn('[sync] startup calendar sweep failed:', e?.message || e); }
     })();
     return () => { cancelled = true; };
