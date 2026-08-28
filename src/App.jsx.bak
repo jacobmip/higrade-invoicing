@@ -6260,7 +6260,11 @@ function FloatingSearchPill({ value, onChange, placeholder }) {
 }
 
 // ─── Items Tab ────────────────────────────────────────────────────────────────
-function ItemsTab({ savedItems, onDelete }) {
+// Since migration 043 the price book is shared: every plumber reads the admin's
+// items, only the owner can change them. myId decides which rows get a delete
+// button — an item you cannot delete is somebody else's, and saying so is
+// kinder than a × that fails against RLS.
+function ItemsTab({ savedItems, onDelete, myId }) {
   const categories = [...new Set(savedItems.map(i => i.category))];
   return (
     <div style={{ padding: 12 }}>
@@ -6272,10 +6276,15 @@ function ItemsTab({ savedItems, onDelete }) {
           <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: ORANGE, letterSpacing: 1.5, textTransform: "uppercase", padding: "0 4px", marginBottom: 6 }}>{cat}</div>
           {savedItems.filter(i => i.category === cat).map(item => (
             <div key={item.id} style={{ ...S.card, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14 }}>{item.name}</span>
+              <span style={{ fontSize: 14 }}>
+                {item.name}
+                {myId && item.ownerId && item.ownerId !== myId && (
+                  <span style={{ fontSize: 10, color: "#8899bb", marginLeft: 6, letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Shared</span>
+                )}
+              </span>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: ORANGE }}>{fmt(item.price)}</span>
-                {onDelete && <button onClick={() => { if (confirm(`Remove "${item.name}"?`)) onDelete(item.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", color: "#cc4444", fontSize: 16, lineHeight: 1 }}>×</button>}
+                {onDelete && (!myId || !item.ownerId || item.ownerId === myId) && <button onClick={() => { if (confirm(`Remove "${item.name}"?`)) onDelete(item.id); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", color: "#cc4444", fontSize: 16, lineHeight: 1 }}>×</button>}
               </div>
             </div>
           ))}
@@ -9081,14 +9090,20 @@ export default function App() {
   const filteredData = useMemo(() => {
     if (!effectiveOwnerId) return data;
     const match = (r) => r?.ownerId === effectiveOwnerId;
+    // Saved items are the exception. The price book is shared (migration 043),
+    // so what this plumber actually sees is their own items plus the admin's —
+    // and the admin is whoever is doing the viewing. Filtering to the viewed
+    // user alone would show an empty book that does not match their reality.
+    const myId = session?.user?.id;
+    const matchItem = (r) => r?.ownerId === effectiveOwnerId || (myId && r?.ownerId === myId);
     return {
       ...data,
       invoices:   (data.invoices   || []).filter(match),
       clients:    (data.clients    || []).filter(match),
-      savedItems: (data.savedItems || []).filter(match),
+      savedItems: (data.savedItems || []).filter(matchItem),
       expenses:   (data.expenses   || []).filter(match),
     };
-  }, [data, effectiveOwnerId]);
+  }, [data, effectiveOwnerId, session?.user?.id]);
   const [tab, setTabRaw] = useState(() => { try { return localStorage.getItem('higrade_nav_tab') || "invoices"; } catch { return "invoices"; } });
   const setTab = (newTab) => {
     try { localStorage.setItem('higrade_nav_tab', newTab); } catch {}
@@ -9691,7 +9706,11 @@ export default function App() {
     }
     if (parsed.action === "save_item") {
       const item = parsed.item || {};
-      const existing = data.savedItems.find(i => i.name.toLowerCase() === item.name.toLowerCase());
+      // Only ever update an item this user owns. A shared admin item matched by
+      // name would fail the owner-scoped write policy, and silently at that.
+      const myId = session?.user?.id;
+      const existing = data.savedItems.find(i =>
+        i.name.toLowerCase() === item.name.toLowerCase() && (!myId || !i.ownerId || i.ownerId === myId));
       if (existing) {
         const updated = { ...existing, price: item.price, category: item.category || existing.category };
         setData(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
@@ -10514,7 +10533,7 @@ export default function App() {
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
-        {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} />}
+        {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
