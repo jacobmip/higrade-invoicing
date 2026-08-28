@@ -6594,7 +6594,7 @@ function calAssignLanes(evs) {
 // ─── Time-slot grid (Day / 3 Day / Week) ──────────────────────────────────────
 // Google-Calendar-style: hour rows down the side, one column per day, events
 // drawn as blocks positioned and sized by their real start and end.
-function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
+function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpenInvoice }) {
   const scrollRef = useRef(null);
   const todayStr = today();
 
@@ -6656,7 +6656,9 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
           {days.map((d, i) => (
             <div key={d} style={{ flex: 1, minWidth: 0, padding: "4px 2px", borderLeft: "1px solid #f2f4f9" }}>
               {allDayRows[i].map((ev, j) => (
-                <div key={j} title={ev.label} style={{ background: ev.color, color: "#fff", borderRadius: 4, fontSize: 10, padding: "2px 4px", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.label}</div>
+                <div key={j} title={ev.label}
+                  onClick={ev.invoiceId ? () => onOpenInvoice?.(ev.invoiceId) : undefined}
+                  style={{ background: ev.color, color: "#fff", borderRadius: 4, fontSize: 10, padding: "2px 4px", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: ev.invoiceId ? "pointer" : "default" }}>{ev.label}</div>
               ))}
             </div>
           ))}
@@ -6687,12 +6689,15 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
                   const height = Math.max(18, (ev.endMin - ev.startMin) * pxPerMin - 2);
                   const w = 100 / ev._lanes;
                   return (
-                    <div key={j} title={`${calFmtTime(ev.startMin)} ${ev.label}`} style={{
+                    <div key={j} title={`${calFmtTime(ev.startMin)} ${ev.label}`}
+                      onClick={ev.invoiceId ? () => onOpenInvoice?.(ev.invoiceId) : undefined}
+                      style={{
                       position: "absolute", top, height,
                       left: `calc(${ev._lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
                       background: ev.color, borderRadius: 5, padding: "2px 4px",
                       color: "#fff", overflow: "hidden", boxSizing: "border-box",
                       fontSize: 10, lineHeight: 1.25,
+                      cursor: ev.invoiceId ? "pointer" : "default",
                     }}>
                       <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.label}</div>
                       {height > 30 && <div style={{ opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{calFmtTime(ev.startMin)}</div>}
@@ -6713,7 +6718,7 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
   );
 }
 
-function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes }) {
+function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, onOpenInvoice }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
   });
@@ -6885,7 +6890,7 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes }) 
       </div>
 
       {view !== "month" ? (
-        <CalendarTimeGrid days={viewDays} eventsByDate={eventsByDate} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+        <CalendarTimeGrid days={viewDays} eventsByDate={eventsByDate} selectedDay={selectedDay} onSelectDay={setSelectedDay} onOpenInvoice={onOpenInvoice} />
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "6px 8px 0" }}>
@@ -6919,13 +6924,16 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes }) 
             {loadingEvents ? <div style={{ fontSize: 12, color: "#aaa" }}>Loading events…</div> : <div style={{ fontSize: 13, color: "#bbb" }}>No events</div>}
           </div>
         ) : selectedEvents.map((ev, i) => (
-          <div key={i} style={{ background: "#fff", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: `3px solid ${ev.color}` }}>
+          <div key={i}
+            onClick={ev.invoiceId ? () => onOpenInvoice?.(ev.invoiceId) : undefined}
+            style={{ background: "#fff", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: `3px solid ${ev.color}`, cursor: ev.invoiceId ? "pointer" : "default" }}>
             <Icon name={ev.type === "job" ? "calendar" : ev.type === "followup" ? "bell" : "clock"} size={15} color={ev.color} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>{ev.label}</div>
               <div style={{ fontSize: 11, color: "#aaa", marginTop: 1 }}>
                 {!ev.allDay && <span>{calFmtTime(ev.startMin)}–{calFmtTime(ev.endMin)} · </span>}
                 {ev.type === "job" ? "Scheduled Job" : ev.type === "followup" ? "Follow-Up Reminder" : "Google Calendar"}
+                {ev.invoiceId && <span style={{ color: ORANGE, fontWeight: 600 }}> · {ev.invoiceId}</span>}
               </div>
             </div>
           </div>
@@ -10149,6 +10157,17 @@ export default function App() {
     setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: "Custom", name: item.name, price: item.price }] }));
   };
 
+  // Open a document from elsewhere in the app (currently the calendar). The tab
+  // is deliberately left alone: the form renders outside the tab switch, so
+  // backing out returns you to wherever you came from rather than dumping you
+  // on the Invoices list.
+  const openInvoiceById = (id) => {
+    const inv = (data.invoices || []).find(i => i.id === id);
+    if (!inv) { alert(`${id} could not be found. It may have been deleted.`); return; }
+    setSelected(inv);
+    setView("form");
+  };
+
   // Convert estimate ↔ invoice. Creates a NEW document (separate ID) so the
   // original is preserved (change-order friendly).
   const convertInvoice = async (form, targetType) => {
@@ -10584,7 +10603,7 @@ export default function App() {
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
-        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} />}
+        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={parseInt(data.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onOpenInvoice={openInvoiceById} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
