@@ -6448,26 +6448,244 @@ function PaymentsTab({ invoices }) {
 }
 
 // ─── Calendar Tab ─────────────────────────────────────────────────────────────
+// ─── Calendar date helpers ────────────────────────────────────────────────────
+const CAL_VIEWS = [
+  { id: "day",   label: "Day",   days: 1 },
+  { id: "3day",  label: "3 Day", days: 3 },
+  { id: "week",  label: "Week",  days: 7 },
+  { id: "month", label: "Month", days: 0 },
+];
+// A job with no Google event has no stored duration — ScheduleJobModal asks for
+// one but only uses it to build the Google event, then discards it. Two hours
+// matches that modal's own default. Jobs that did sync take their real length
+// from the Google copy instead.
+const DEFAULT_JOB_MINUTES = 120;
+const CAL_HOUR_PX = 52;
+
+const calYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const calParseYmd = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const calAddDays = (d, n) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
+const calStartOfWeek = (d) => calAddDays(d, -d.getDay());
+
+// Google returns instants with an offset. Read them back in Hawaii time rather
+// than the device's zone, so an event never lands on the wrong day or hour for
+// someone whose phone is travelling.
+function calZonedParts(iso) {
+  const dt = new Date(iso);
+  if (isNaN(dt)) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: GCal.TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(dt).reduce((a, p) => (p.type !== "literal" ? { ...a, [p.type]: p.value } : a), {});
+  const hour = parseInt(parts.hour, 10) % 24; // hour12:false renders midnight as 24
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, minutes: hour * 60 + parseInt(parts.minute, 10) };
+}
+
+const calFmtTime = (mins) => {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  const ampm = h >= 12 ? "pm" : "am";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, "0")}${ampm}`;
+};
+
+// Side-by-side lanes for events that overlap in time.
+//
+// Width is decided per cluster of mutually overlapping events, not per day. A
+// day with two events colliding at 9am and one on its own at 4pm should render
+// the 4pm block full width — using the day's maximum lane count everywhere
+// would squeeze it to half for no reason.
+//
+// Returns new objects; the source events live inside a useMemo and must not be
+// mutated, or lane numbers from one view would leak into another.
+function calAssignLanes(evs) {
+  const sorted = [...evs].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const out = [];
+  let cluster = [];
+  let clusterEnd = -1;
+
+  const flush = () => {
+    if (!cluster.length) return;
+    const laneEnds = [];
+    const placed = cluster.map(ev => {
+      let lane = laneEnds.findIndex(end => end <= ev.startMin);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+      laneEnds[lane] = ev.endMin;
+      return { ...ev, _lane: lane };
+    });
+    const lanes = Math.max(1, laneEnds.length);
+    placed.forEach(ev => out.push({ ...ev, _lanes: lanes }));
+    cluster = [];
+    clusterEnd = -1;
+  };
+
+  sorted.forEach(ev => {
+    if (cluster.length && ev.startMin >= clusterEnd) flush();
+    cluster.push(ev);
+    clusterEnd = Math.max(clusterEnd, ev.endMin);
+  });
+  flush();
+  return out;
+}
+
+// ─── Time-slot grid (Day / 3 Day / Week) ──────────────────────────────────────
+// Google-Calendar-style: hour rows down the side, one column per day, events
+// drawn as blocks positioned and sized by their real start and end.
+function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
+  const scrollRef = useRef(null);
+  const todayStr = today();
+
+  const timed = days.flatMap(d => (eventsByDate[d] || []).filter(e => !e.allDay));
+  // Fit the visible hours to the day's work, but never show less than 7am–7pm
+  // or the grid feels claustrophobic on a quiet day.
+  const earliest = timed.length ? Math.min(...timed.map(e => e.startMin)) : 8 * 60;
+  const latest   = timed.length ? Math.max(...timed.map(e => e.endMin))   : 18 * 60;
+  const startHour = Math.max(0,  Math.min(7,  Math.floor(earliest / 60)));
+  const endHour   = Math.min(24, Math.max(19, Math.ceil(latest / 60)));
+  const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
+  const pxPerMin = CAL_HOUR_PX / 60;
+  const bodyHeight = (endHour - startHour) * CAL_HOUR_PX;
+
+  // Scroll to the working day rather than to midnight on first paint.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (8 - startHour) * CAL_HOUR_PX - 12);
+  }, [startHour, days[0]]);
+
+  // Red "now" line, only when today is one of the visible columns.
+  const [nowMin, setNowMin] = useState(() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); });
+  useEffect(() => {
+    const t = setInterval(() => { const n = new Date(); setNowMin(n.getHours() * 60 + n.getMinutes()); }, 60000);
+    return () => clearInterval(t);
+  }, []);
+  const showNow = days.includes(todayStr) && nowMin >= startHour * 60 && nowMin <= endHour * 60;
+
+  const allDayRows = days.map(d => (eventsByDate[d] || []).filter(e => e.allDay));
+  const hasAllDay = allDayRows.some(r => r.length);
+  const GUTTER = 44;
+  const DAYNAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 12, margin: "10px 10px 0", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+      {/* Day headers */}
+      <div style={{ display: "flex", borderBottom: "1px solid #eef1f7" }}>
+        <div style={{ width: GUTTER, flexShrink: 0 }} />
+        {days.map(d => {
+          const dt = calParseYmd(d);
+          const isToday = d === todayStr;
+          const isSel = d === selectedDay;
+          return (
+            <div key={d} onClick={() => onSelectDay?.(d)} style={{ flex: 1, minWidth: 0, textAlign: "center", padding: "7px 2px", cursor: "pointer", background: isSel ? "#fff6f2" : "transparent" }}>
+              <div style={{ fontSize: 10, color: "#8899bb", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>{DAYNAMES[dt.getDay()]}</div>
+              <div style={{ fontSize: 15, fontWeight: isToday ? 700 : 500, color: isToday ? "#fff" : "#333", background: isToday ? ORANGE : "transparent", borderRadius: "50%", width: 26, height: 26, lineHeight: "26px", margin: "2px auto 0" }}>{dt.getDate()}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* All-day strip — follow-up reminders and Google all-day events */}
+      {hasAllDay && (
+        <div style={{ display: "flex", borderBottom: "1px solid #eef1f7", background: "#fafbfd" }}>
+          <div style={{ width: GUTTER, flexShrink: 0, fontSize: 9, color: "#aab", textAlign: "right", paddingRight: 6, paddingTop: 6, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 0.5 }}>ALL DAY</div>
+          {days.map((d, i) => (
+            <div key={d} style={{ flex: 1, minWidth: 0, padding: "4px 2px", borderLeft: "1px solid #f2f4f9" }}>
+              {allDayRows[i].map((ev, j) => (
+                <div key={j} title={ev.label} style={{ background: ev.color, color: "#fff", borderRadius: 4, fontSize: 10, padding: "2px 4px", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.label}</div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Hour grid */}
+      <div ref={scrollRef} style={{ maxHeight: 460, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ display: "flex", position: "relative", height: bodyHeight }}>
+          {/* Hour labels */}
+          <div style={{ width: GUTTER, flexShrink: 0, position: "relative" }}>
+            {hours.map((h, i) => (
+              <div key={h} style={{ position: "absolute", top: i * CAL_HOUR_PX - 6, right: 6, fontSize: 10, color: "#aab" }}>{calFmtTime(h * 60)}</div>
+            ))}
+          </div>
+          {/* Day columns */}
+          {days.map(d => {
+            const evs = calAssignLanes((eventsByDate[d] || []).filter(e => !e.allDay));
+            return (
+              <div key={d} style={{ flex: 1, minWidth: 0, position: "relative", borderLeft: "1px solid #f2f4f9" }}>
+                {hours.map((h, i) => (
+                  <div key={h} style={{ position: "absolute", top: i * CAL_HOUR_PX, left: 0, right: 0, height: CAL_HOUR_PX, borderTop: "1px solid #f2f4f9" }} />
+                ))}
+                {evs.map((ev, j) => {
+                  const top = (ev.startMin - startHour * 60) * pxPerMin;
+                  const height = Math.max(18, (ev.endMin - ev.startMin) * pxPerMin - 2);
+                  const w = 100 / ev._lanes;
+                  return (
+                    <div key={j} title={`${calFmtTime(ev.startMin)} ${ev.label}`} style={{
+                      position: "absolute", top, height,
+                      left: `calc(${ev._lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
+                      background: ev.color, borderRadius: 5, padding: "2px 4px",
+                      color: "#fff", overflow: "hidden", boxSizing: "border-box",
+                      fontSize: 10, lineHeight: 1.25,
+                    }}>
+                      <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.label}</div>
+                      {height > 30 && <div style={{ opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{calFmtTime(ev.startMin)}</div>}
+                    </div>
+                  );
+                })}
+                {showNow && d === todayStr && (
+                  <div style={{ position: "absolute", top: (nowMin - startHour * 60) * pxPerMin, left: 0, right: 0, height: 2, background: "#e53935", zIndex: 3 }}>
+                    <div style={{ position: "absolute", left: -3, top: -3, width: 8, height: 8, borderRadius: "50%", background: "#e53935" }} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
-  const [currentDate, setCurrentDate] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
+  });
+  const setViewPersist = (v) => { setView(v); try { localStorage.setItem("higrade_cal_view", v); } catch {} };
+
+  const [anchor, setAnchor] = useState(() => new Date());
   const [selectedDay, setSelectedDay] = useState(today());
   const [gcalEvents, setGcalEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [authError, setAuthError] = useState("");
 
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+
+  // The dates this view covers. Empty for month, which uses its own grid.
+  const viewDays = useMemo(() => {
+    if (view === "month") return [];
+    const n = view === "day" ? 1 : view === "3day" ? 3 : 7;
+    const start = view === "week" ? calStartOfWeek(anchor) : anchor;
+    return Array.from({ length: n }, (_, i) => calYmd(calAddDays(start, i)));
+  }, [view, anchor]);
+
+  // Fetch window follows the view rather than always pulling a whole month.
+  const [rangeStart, rangeEnd] = useMemo(() => {
+    if (view === "month" || !viewDays.length) {
+      return [new Date(year, month, 1), new Date(year, month + 1, 0, 23, 59, 59)];
+    }
+    const s = calParseYmd(viewDays[0]);
+    const e = calParseYmd(viewDays[viewDays.length - 1]);
+    e.setHours(23, 59, 59);
+    return [s, e];
+  }, [view, viewDays, year, month]);
 
   useEffect(() => {
     if (!gcalAuthed || !GCal.isConfigured()) return;
+    let cancelled = false;
     setLoadingEvents(true);
-    const start = new Date(year, month, 1);
-    const end = new Date(year, month + 1, 0, 23, 59, 59);
-    GCal.listEvents(start, end)
-      .then(evs => { setGcalEvents(evs); setLoadingEvents(false); })
-      .catch(() => setLoadingEvents(false));
-  }, [gcalAuthed, year, month]);
+    GCal.listEvents(rangeStart, rangeEnd)
+      .then(evs => { if (!cancelled) { setGcalEvents(evs); setLoadingEvents(false); } })
+      .catch(() => { if (!cancelled) setLoadingEvents(false); });
+    return () => { cancelled = true; };
+  }, [gcalAuthed, rangeStart.getTime(), rangeEnd.getTime()]);
 
   const handleSignIn = async () => {
     setAuthError("");
@@ -6476,47 +6694,93 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
   };
   const handleSignOut = () => { GCal.signOut(); onAuthChange(false); setGcalEvents([]); };
 
-  // Build event map by date
-  const dayEvents = {};
-  invoices.forEach(inv => {
-    if (inv.gcalDate) {
-      const d = inv.gcalDate.slice(0, 10);
-      if (!dayEvents[d]) dayEvents[d] = [];
-      dayEvents[d].push({ type: "job", label: inv.client || inv.id, invoiceId: inv.id, time: inv.gcalDate.slice(11, 16), color: ORANGE });
-    }
-    if (inv.followUpDate) {
-      if (!dayEvents[inv.followUpDate]) dayEvents[inv.followUpDate] = [];
-      dayEvents[inv.followUpDate].push({ type: "followup", label: `Follow-up: ${inv.id}`, invoiceId: inv.id, color: "#2980b9" });
-    }
-  });
-  gcalEvents.forEach(ev => {
-    const d = (ev.start?.dateTime || ev.start?.date || "").slice(0, 10);
-    if (d) {
-      if (!dayEvents[d]) dayEvents[d] = [];
-      dayEvents[d].push({ type: "gcal", label: ev.summary || "Event", color: "#27ae60", time: ev.start?.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: GCal.TZ }) : "" });
-    }
-  });
+  // ── One list of events, with the duplicate scheduled jobs merged ────────────
+  // A job that synced to Google exists twice: once as invoice.gcalDate and
+  // again as the Google event it created. As dots that was invisible; as blocks
+  // it would draw two overlapping bars. Match them on gcalEventId, keep the
+  // invoice's label, and take the real start and end from the Google copy —
+  // which is also the only place a job's duration is recorded.
+  const eventsByDate = useMemo(() => {
+    const out = {};
+    const push = (ev) => { (out[ev.date] = out[ev.date] || []).push(ev); };
+    const gcalById = new Map();
+    gcalEvents.forEach(ev => { if (ev.id) gcalById.set(ev.id, ev); });
+    const merged = new Set();
 
+    invoices.forEach(inv => {
+      if (inv.gcalDate) {
+        const linked = inv.gcalEventId ? gcalById.get(inv.gcalEventId) : null;
+        const s = linked?.start?.dateTime ? calZonedParts(linked.start.dateTime) : null;
+        const e = linked?.end?.dateTime ? calZonedParts(linked.end.dateTime) : null;
+        let date, startMin, endMin;
+        if (s) {
+          merged.add(linked.id);
+          date = s.date;
+          startMin = s.minutes;
+          endMin = e && e.date === s.date ? e.minutes : Math.min(24 * 60, s.minutes + DEFAULT_JOB_MINUTES);
+        } else {
+          date = inv.gcalDate.slice(0, 10);
+          startMin = (parseInt(inv.gcalDate.slice(11, 13), 10) || 0) * 60 + (parseInt(inv.gcalDate.slice(14, 16), 10) || 0);
+          endMin = Math.min(24 * 60, startMin + DEFAULT_JOB_MINUTES);
+        }
+        push({ date, startMin, endMin, label: inv.client || inv.id, invoiceId: inv.id, color: ORANGE, type: "job" });
+      }
+      if (inv.followUpDate) {
+        push({ date: inv.followUpDate, allDay: true, label: `Follow-up: ${inv.id}`, invoiceId: inv.id, color: "#2980b9", type: "followup" });
+      }
+    });
+
+    gcalEvents.forEach(ev => {
+      if (merged.has(ev.id)) return;
+      if (ev.start?.date) { push({ date: ev.start.date, allDay: true, label: ev.summary || "Event", color: "#27ae60", type: "gcal" }); return; }
+      const s = ev.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
+      if (!s) return;
+      const e = ev.end?.dateTime ? calZonedParts(ev.end.dateTime) : null;
+      push({
+        date: s.date, startMin: s.minutes,
+        endMin: e && e.date === s.date ? Math.max(e.minutes, s.minutes + 15) : Math.min(24 * 60, s.minutes + 60),
+        label: ev.summary || "Event", color: "#27ae60", type: "gcal",
+      });
+    });
+    return out;
+  }, [invoices, gcalEvents]);
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
+  const step = (dir) => setAnchor(a => {
+    if (view === "month") { const n = new Date(a); n.setMonth(a.getMonth() + dir); return n; }
+    return calAddDays(a, dir * (view === "day" ? 1 : view === "3day" ? 3 : 7));
+  });
+  const goToday = () => { const n = new Date(); setAnchor(n); setSelectedDay(today()); };
+
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const rangeLabel = (() => {
+    if (view === "month") return `${MONTHS[month]} ${year}`;
+    const a = calParseYmd(viewDays[0]);
+    const b = calParseYmd(viewDays[viewDays.length - 1]);
+    if (view === "day") return `${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][a.getDay()]}, ${MON_SHORT[a.getMonth()]} ${a.getDate()}`;
+    return a.getMonth() === b.getMonth()
+      ? `${MON_SHORT[a.getMonth()]} ${a.getDate()} – ${b.getDate()}`
+      : `${MON_SHORT[a.getMonth()]} ${a.getDate()} – ${MON_SHORT[b.getMonth()]} ${b.getDate()}`;
+  })();
+
+  // ── Month grid ─────────────────────────────────────────────────────────────
+  const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const firstDayOfMonth = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
   const cells = [];
   for (let i = 0; i < firstDayOfMonth; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const prevMonth = () => setCurrentDate(d => { const n = new Date(d); n.setMonth(d.getMonth() - 1); return n; });
-  const nextMonth = () => setCurrentDate(d => { const n = new Date(d); n.setMonth(d.getMonth() + 1); return n; });
-
-  const selectedEvents = dayEvents[selectedDay] || [];
+  const selectedEvents = (eventsByDate[selectedDay] || [])
+    .slice()
+    .sort((a, b) => (a.allDay ? -1 : b.allDay ? 1 : a.startMin - b.startMin));
 
   return (
     <div style={{ paddingBottom: 20 }}>
       <div style={{ background: NAVY2, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Calendar</div>
-          <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{MONTHS[month]} {year}</div>
+          <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20 }}>{rangeLabel}</div>
         </div>
         {GCal.isConfigured() && (gcalAuthed ? (
           <button onClick={handleSignOut} style={{ ...S.btn("ghost"), fontSize: 11, padding: "6px 10px" }}>Disconnect</button>
@@ -6526,33 +6790,51 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
       </div>
       {authError && <div style={{ background: "#fff0ee", padding: "8px 16px", fontSize: 12, color: "#cc4444" }}>{authError}</div>}
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 6px" }}>
-        <button onClick={prevMonth} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}><Icon name="back" size={18} /></button>
-        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color: NAVY }}>{MONTHS[month]} {year}</span>
-        <button onClick={nextMonth} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, transform: "rotate(180deg)" }}><Icon name="back" size={18} /></button>
+      {/* View switcher */}
+      <div style={{ display: "flex", gap: 4, padding: "10px 12px 2px" }}>
+        {CAL_VIEWS.map(v => (
+          <button key={v.id} onClick={() => setViewPersist(v.id)} style={{
+            flex: 1, padding: "7px 0", borderRadius: 8, border: "none", cursor: "pointer",
+            fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 0.5,
+            background: view === v.id ? NAVY : "#eef1f7", color: view === v.id ? "#fff" : "#667",
+          }}>{v.label}</button>
+        ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "0 8px" }}>
-        {DAYS.map(d => <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", padding: "4px 0", textTransform: "uppercase" }}>{d}</div>)}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, padding: "0 8px" }}>
-        {cells.map((day, i) => {
-          if (!day) return <div key={i} />;
-          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-          const evs = dayEvents[dateStr] || [];
-          const isToday = dateStr === today();
-          const isSel = dateStr === selectedDay;
-          return (
-            <div key={i} onClick={() => setSelectedDay(dateStr)} style={{ background: isSel ? NAVY : isToday ? "#fff3ee" : "#fff", borderRadius: 8, padding: "5px 3px", minHeight: 46, cursor: "pointer", border: isToday && !isSel ? `1.5px solid ${ORANGE}` : "1.5px solid transparent", display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <div style={{ fontSize: 13, fontWeight: isToday ? 700 : 400, color: isSel ? "#fff" : isToday ? ORANGE : "#333", marginBottom: 2 }}>{day}</div>
-              <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "center" }}>
-                {evs.slice(0, 3).map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? "#fff" : ev.color }} />)}
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 16px 2px" }}>
+        <button onClick={() => step(-1)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}><Icon name="back" size={18} /></button>
+        <button onClick={goToday} style={{ ...S.btn("ghost"), fontSize: 12, padding: "5px 14px" }}>Today</button>
+        <button onClick={() => step(1)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, transform: "rotate(180deg)" }}><Icon name="back" size={18} /></button>
       </div>
 
+      {view !== "month" ? (
+        <CalendarTimeGrid days={viewDays} eventsByDate={eventsByDate} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "6px 8px 0" }}>
+            {DAYS.map(d => <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: "#8899bb", letterSpacing: 0.5, fontFamily: "'Barlow Condensed', sans-serif", padding: "4px 0", textTransform: "uppercase" }}>{d}</div>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, padding: "0 8px" }}>
+            {cells.map((day, i) => {
+              if (!day) return <div key={i} />;
+              const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const evs = eventsByDate[dateStr] || [];
+              const isToday = dateStr === today();
+              const isSel = dateStr === selectedDay;
+              return (
+                <div key={i} onClick={() => setSelectedDay(dateStr)} style={{ background: isSel ? NAVY : isToday ? "#fff3ee" : "#fff", borderRadius: 8, padding: "5px 3px", minHeight: 46, cursor: "pointer", border: isToday && !isSel ? `1.5px solid ${ORANGE}` : "1.5px solid transparent", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div style={{ fontSize: 13, fontWeight: isToday ? 700 : 400, color: isSel ? "#fff" : isToday ? ORANGE : "#333", marginBottom: 2 }}>{day}</div>
+                  <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "center" }}>
+                    {evs.slice(0, 3).map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? "#fff" : ev.color }} />)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Agenda for the selected day — kept in every view */}
       <div style={{ margin: "12px 12px 0" }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 8, padding: "0 4px" }}>{fmtDate(selectedDay)}</div>
         {selectedEvents.length === 0 ? (
@@ -6565,7 +6847,7 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange }) {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>{ev.label}</div>
               <div style={{ fontSize: 11, color: "#aaa", marginTop: 1 }}>
-                {ev.time && <span>{ev.time} · </span>}
+                {!ev.allDay && <span>{calFmtTime(ev.startMin)}–{calFmtTime(ev.endMin)} · </span>}
                 {ev.type === "job" ? "Scheduled Job" : ev.type === "followup" ? "Follow-Up Reminder" : "Google Calendar"}
               </div>
             </div>
