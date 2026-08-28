@@ -23,6 +23,42 @@ const ORANGE = "#E8622A";
 // key the AI receptionist reads, so the two paths agree. This applies only if
 // that setting is missing too.
 const DEFAULT_JOB_MINUTES = 90;
+
+// ─── Gesture guards ───────────────────────────────────────────────────────────
+// Both document-level gesture handlers below call preventDefault(), which does
+// not merely suppress the browser's own gesture — it cancels the scroll the
+// finger was about to perform. So each has to stand down whenever the touch
+// belongs to something else.
+//
+// This is what made scrolling feel broken across the app. Pull-to-refresh only
+// checked that the PAGE was at scroll-top, and on a screen whose content fits
+// (the calendar) window.scrollY is permanently 0. Scrolling a nested area down
+// and then dragging back up read as a pull-to-refresh, and the inner scroll was
+// cancelled every time — scroll down, cannot scroll back up.
+
+// Modals render through a portal into document.body, so anything outside the
+// app root is an overlay and no page-level gesture should apply to it.
+function touchInOverlay(target, rootEl) {
+  if (!(target instanceof Element)) return false;
+  return !!rootEl && !rootEl.contains(target);
+}
+
+// Walk up looking for an ancestor that scrolls vertically under its own steam.
+// The page itself does not count: the app root sets no overflow, so its
+// computed overflow-y is `visible` and pull-to-refresh still works on the lists.
+function touchInScroller(target) {
+  if (!(target instanceof Element)) return false;
+  let el = target;
+  while (el && el !== document.body) {
+    if (el.scrollHeight > el.clientHeight + 1) {
+      const oy = getComputedStyle(el).overflowY;
+      if (oy === "auto" || oy === "scroll") return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
 const NAVY2 = "#0f2040";
 const CACHE_KEY = "higrade_v6";
 const LIGHT = "#f4f6fa";
@@ -6624,7 +6660,9 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
       )}
 
       {/* Hour grid */}
-      <div ref={scrollRef} style={{ maxHeight: 460, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+      {/* overscrollBehavior contain stops a flick that reaches the end of the
+          grid from continuing into the page behind it. */}
+      <div ref={scrollRef} style={{ maxHeight: 460, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
         <div style={{ display: "flex", position: "relative", height: bodyHeight }}>
           {/* Hour labels */}
           <div style={{ width: GUTTER, flexShrink: 0, position: "relative" }}>
@@ -9327,6 +9365,8 @@ export default function App() {
     const onStart = (e) => {
       // Only single-finger swipes from the left edge.
       if (e.touches.length !== 1) { active = false; return; }
+      // A swipe inside a modal should not navigate the app backwards.
+      if (touchInOverlay(e.target, rootRef.current)) { active = false; return; }
       const t = e.touches[0];
       if (t.clientX > EDGE_PX) { active = false; return; }
       startX = t.clientX;
@@ -9419,6 +9459,9 @@ export default function App() {
       if (ptrViewRef.current !== 'list') { active = false; return; }
       if ((window.scrollY || document.documentElement.scrollTop || 0) > TOP_TOLERANCE) { active = false; return; }
       if (e.touches.length !== 1) { active = false; return; }
+      // The page being at the top says nothing about what the finger is on. A
+      // modal, or any area with its own scrollbar, owns this gesture.
+      if (touchInOverlay(e.target, rootRef.current) || touchInScroller(e.target)) { active = false; return; }
       const t = e.touches[0];
       startX = t.clientX;
       startY = t.clientY;
