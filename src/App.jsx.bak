@@ -6599,20 +6599,24 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay }) {
   const todayStr = today();
 
   const timed = days.flatMap(d => (eventsByDate[d] || []).filter(e => !e.allDay));
-  // Fit the visible hours to the day's work, but never show less than 7am–7pm
-  // or the grid feels claustrophobic on a quiet day.
-  const earliest = timed.length ? Math.min(...timed.map(e => e.startMin)) : 8 * 60;
-  const latest   = timed.length ? Math.max(...timed.map(e => e.endMin))   : 18 * 60;
-  const startHour = Math.max(0,  Math.min(7,  Math.floor(earliest / 60)));
-  const endHour   = Math.min(24, Math.max(19, Math.ceil(latest / 60)));
+  // The full day, midnight to midnight. An earlier version cropped the grid to
+  // fit the events on screen, which quietly hid any hour nothing was booked in
+  // — you could not scroll to 5am to schedule something there, because 5am was
+  // not drawn. Emergency call-outs do not keep office hours.
+  const startHour = 0;
+  const endHour = 24;
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const pxPerMin = CAL_HOUR_PX / 60;
   const bodyHeight = (endHour - startHour) * CAL_HOUR_PX;
 
-  // Scroll to the working day rather than to midnight on first paint.
+  // Open on the working day rather than at midnight — but if something is
+  // booked earlier than that, start there instead so it is not off-screen.
+  const earliestMin = timed.length ? Math.min(...timed.map(e => e.startMin)) : 8 * 60;
+  const openAtHour = Math.max(0, Math.min(8, Math.floor(earliestMin / 60) - 1));
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, (8 - startHour) * CAL_HOUR_PX - 12);
-  }, [startHour, days[0]]);
+    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, openAtHour * CAL_HOUR_PX - 12);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openAtHour, days[0]]);
 
   // Red "now" line, only when today is one of the visible columns.
   const [nowMin, setNowMin] = useState(() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); });
