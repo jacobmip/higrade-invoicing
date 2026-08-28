@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.7.1 — 2026-08-27
+
+### Bug Fixes
+- **Scroll down, then unable to scroll back up** — in the calendar and in modals. Pull-to-refresh listens on `document` and called `preventDefault()` on any downward drag, which cancels the scroll the finger was about to perform rather than merely suppressing the browser's own gesture. Its only guard was that the *page* sat at scroll-top — but on a screen whose content fits, such as the calendar, `window.scrollY` is permanently 0, so the guard was always satisfied. Scrolling a nested area down and dragging back up read as a pull-to-refresh every time. It now stands down when the touch begins inside a modal or anything with its own scrollbar. This was not a calendar bug; it affected every modal with a scrollable sheet.
+- **Edge-swipe-back could fire from inside a modal**, navigating the app backwards while a sheet was open.
+- A flick that reaches the end of the calendar grid no longer continues into the page behind it.
+
+---
+
 ## v1.7.0 — 2026-08-27
 
 ### New Features
