@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, callId, callSeconds, callUrl, matchedClient } = await req.json();
     // ccAddresses is the new multi-recipient field (array). cc is the legacy
     // single-string field. Merge them and deduplicate.
     const ccList = [...new Set([
@@ -138,6 +138,61 @@ export default async function handler(req) {
     // button. Triggered by template: 'lead' from notify_owner_of_lead().
     const isLead = template === 'lead';
 
+    // ─── Call archive ────────────────────────────────────────────────────────
+    // Sent after every AI receptionist call. The transcript lives in the body
+    // as plain text on purpose: it is readable on a phone, searchable in
+    // Gmail, and reachable by the AIOS assistant through the Gmail connection,
+    // none of which is true of a row in the database.
+    //
+    // The audio link points at the Vapi dashboard, NOT at the raw recording
+    // URL. Vapi stores recordings on Cloudflare R2 behind authentication —
+    // fetching the recordingUrl directly returns
+    // <Error><Code>InvalidArgument</Code><Message>Authorization</Message></Error>
+    // so emailing it would ship a dead link.
+    const isCall = template === 'call';
+
+    const mmss = (s) => {
+      const n = parseInt(s, 10);
+      if (!Number.isFinite(n) || n <= 0) return '';
+      return `${Math.floor(n / 60)}m ${String(n % 60).padStart(2, '0')}s`;
+    };
+
+    const factRow = (label, value) => value
+      ? `<tr>
+           <td style="padding:3px 12px 3px 0;color:#8894a8;font-size:12px;white-space:nowrap;vertical-align:top;">${escapeHtml(label)}</td>
+           <td style="padding:3px 0;color:#243040;font-size:13px;">${value}</td>
+         </tr>`
+      : '';
+
+    const callHtml = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e3e8f0;border-radius:10px;overflow:hidden;">
+        <div style="background:#0a1628;padding:14px 20px;">
+          <p style="color:#7fd1a3;font-size:11px;font-weight:bold;letter-spacing:2px;margin:0;">CALL RECORD &middot; LISA</p>
+        </div>
+        <div style="padding:20px;">
+          <table style="border-collapse:collapse;margin-bottom:16px;">
+            ${factRow('Caller', escapeHtml(clientName || 'Unknown'))}
+            ${factRow('Number', leadPhone
+                ? `<a href="tel:${escapeHtml(String(leadPhone).replace(/[^\d+]/g, ''))}" style="color:#0070ba;text-decoration:none;font-weight:bold;">${escapeHtml(leadPhone)}</a>`
+                : '')}
+            ${factRow('Known client', matchedClient ? escapeHtml(matchedClient) : '')}
+            ${factRow('Estimate', invoiceId ? escapeHtml(invoiceId) : '')}
+            ${factRow('Length', escapeHtml(mmss(callSeconds)))}
+          </table>
+
+          ${callUrl ? `<a href="${escapeHtml(callUrl)}" style="display:inline-block;background:#0070ba;color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;">Listen to the recording</a>
+          <p style="color:#8894a8;font-size:11px;margin:8px 0 0;">Opens the call in your Vapi dashboard. Recordings are stored by Vapi, not by us.</p>` : ''}
+
+          ${transcript ? `<div style="margin-top:18px;">
+            <p style="color:#66748c;font-size:11px;font-weight:bold;letter-spacing:1px;margin:0 0 8px;">TRANSCRIPT</p>
+            <div style="background:#f5f7fa;border:1px solid #e8ecf4;border-radius:8px;padding:14px;color:#333;font-size:13px;line-height:1.65;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(transcript)}</div>
+          </div>` : `<p style="color:#8894a8;font-size:13px;margin-top:18px;">No transcript captured for this call.</p>`}
+
+          ${callId ? `<p style="color:#b3bccb;font-size:11px;margin:16px 0 0;">Vapi call id: ${escapeHtml(callId)}</p>` : ''}
+        </div>
+      </div>
+    `;
+
     const digits = String(leadPhone || '').replace(/\D/g, '');
     const telHref = digits ? `tel:${digits.length === 10 ? '+1' : ''}${digits}` : '';
     const prettyPhone = digits.length === 10
@@ -204,7 +259,7 @@ export default async function handler(req) {
           : (isPaidInFull
               ? `Mahalo \u2014 ${invoiceId} paid in full`
               : `Invoice ${invoiceId} from HI Grade Plumbing`),
-        html: isLead ? leadHtml : emailBody,
+        html: isCall ? callHtml : (isLead ? leadHtml : emailBody),
       }),
     });
 

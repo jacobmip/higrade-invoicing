@@ -25,6 +25,11 @@ import {
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
+// Same origin this route is served from. Hardcoded rather than derived from
+// the request so a Vapi retry hitting a preview deployment still mails through
+// production.
+const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
+
 const KICKOFF =
   'Mahalo for contacting High Grade Plumbing. Please reply with your service ' +
   'address, best email address, and any helpful photos of the plumbing issue ' +
@@ -67,6 +72,18 @@ function extractTranscript(p) {
 function extractSummary(p) {
   const m = p?.message || p || {};
   return m?.analysis?.summary || m?.summary || null;
+}
+
+function extractSeconds(p) {
+  const m = p?.message || p || {};
+  const started = m?.startedAt || m?.call?.startedAt;
+  const ended   = m?.endedAt   || m?.call?.endedAt;
+  if (started && ended) {
+    const s = Math.round((new Date(ended) - new Date(started)) / 1000);
+    if (Number.isFinite(s) && s > 0) return s;
+  }
+  const d = m?.durationSeconds ?? m?.call?.durationSeconds;
+  return Number.isFinite(d) ? Math.round(d) : null;
 }
 
 export default async function handler(req, res) {
@@ -130,6 +147,47 @@ export default async function handler(req, res) {
     }
   } catch (e) {
     console.error('[vapi-call-ended] abandoned-call capture failed:', e.message || e);
+  }
+
+  // ─── Call archive email ──────────────────────────────────────────────────
+  // Vapi keeps the recording and transcript on its own servers and nothing
+  // linked them to the business. This mails the transcript after every call so
+  // it is searchable in Gmail, readable on a phone, and reachable by the AIOS
+  // assistant through the Gmail connection.
+  //
+  // The audio link goes to the Vapi dashboard rather than the raw recordingUrl:
+  // recordings sit on Cloudflare R2 behind authentication, and fetching that
+  // URL directly returns an Authorization error, so mailing it would ship a
+  // dead link.
+  try {
+    const transcript = extractTranscript(params);
+    const secs = extractSeconds(params);
+    const recipients = String(await getSetting('lead_notify_to') || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+
+    if (recipients.length) {
+      const len = secs ? ` (${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s)` : '';
+      await fetch(`${APP_URL}/api/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: recipients,
+          bccAdmin: false,
+          template: 'call',
+          subject: `Call record: ${to}${len}`,
+          clientName: 'Caller',
+          leadPhone: to,
+          invoiceId: rescued?.estimate_id || null,
+          transcript,
+          callId,
+          callSeconds: secs,
+          callUrl: callId ? `https://dashboard.vapi.ai/calls/${callId}` : null,
+        }),
+      });
+    }
+  } catch (e) {
+    // Never let the archive email affect the call outcome.
+    console.error('[vapi-call-ended] call archive email failed:', e.message || e);
   }
 
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
