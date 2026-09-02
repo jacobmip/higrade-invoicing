@@ -179,6 +179,7 @@ export default async function handler(req, res) {
           leadPhone: to,
           invoiceId: rescued?.estimate_id || null,
           transcript,
+          summary: extractSummary(params),
           callId,
           callSeconds: secs,
           callUrl: callId ? `https://dashboard.vapi.ai/calls/${callId}` : null,

@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, callId, callSeconds, callUrl, matchedClient } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, summary, callId, callSeconds, callUrl, matchedClient } = await req.json();
     // ccAddresses is the new multi-recipient field (array). cc is the legacy
     // single-string field. Merge them and deduplicate.
     const ccList = [...new Set([
@@ -179,6 +179,11 @@ export default async function handler(req) {
             ${factRow('Estimate', invoiceId ? escapeHtml(invoiceId) : '')}
             ${factRow('Length', escapeHtml(mmss(callSeconds)))}
           </table>
+
+          ${summary ? `<div style="margin:0 0 16px;padding:14px;background:#eaf7f0;border:1px solid #b9e3cd;border-radius:8px;">
+            <p style="color:#1f6b4a;font-size:11px;font-weight:bold;letter-spacing:1px;margin:0 0 6px;">WHAT THIS CALL WAS ABOUT</p>
+            <div style="color:#20302a;font-size:14px;line-height:1.6;">${escapeHtml(summary).replace(/\n/g, '<br>')}</div>
+          </div>` : ''}
 
           ${callUrl ? `<a href="${escapeHtml(callUrl)}" style="display:inline-block;background:#0070ba;color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;">Listen to the recording</a>
           <p style="color:#8894a8;font-size:11px;margin:8px 0 0;">Opens the call in your Vapi dashboard. Recordings are stored by Vapi, not by us.</p>` : ''}
