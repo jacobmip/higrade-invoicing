@@ -127,7 +127,7 @@ higrade-invoicing/
 ### Vercel
 - **Project:** `jacobmips-projects/higrade-invoicing` (Hobby plan)
 - **Auto-deploys** from `main` on every push. No preview env separate from prod for this project.
-- **Env vars currently set:** `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV` (`live`), `PAYPAL_WEBHOOK_ID`, `SUPABASE_SERVICE_ROLE_KEY`. Push notifications need `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_KEY_P8`, `APNS_ENV` — see `PUSH_SETUP.md`.
+- **Env vars currently set:** `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV` (`live`), `PAYPAL_WEBHOOK_ID`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (added Jun 4, unused until the Sept 2026 calendar OAuth work), `VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_MAPS_API_KEY`. Push notifications need `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_KEY_P8`, `APNS_ENV` — see `PUSH_SETUP.md`.
 
 ### PayPal
 - Live mode (not sandbox).
@@ -157,7 +157,7 @@ is the only AI key set. Model ids per endpoint are listed in `CLAUDE.md`.
 - Flow: `POST /api/gcal-auth` (Supabase bearer required) returns a signed consent URL → popup → Google redirects to `GET /api/gcal-auth` → code exchanged for a **refresh token** → stored in `public.google_credentials`.
 - All calendar traffic goes through `POST /api/gcal` with six named ops (`status`, `list`, `create`, `update`, `delete`, `disconnect`). Never a pass-through proxy: forwarding an arbitrary path would give any signed-in user, including the `test` plumber account, full reach into Jake's Google account.
 - `google_credentials` has RLS **on with zero policies**, so only the service-role key can read it. It is deliberately not in `settings`, because `db.loadAll()` does `select('*')` on that table and ships every row to the browser.
-- Requires `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` in Vercel. `{ op: 'status' }` names any that are missing, and the Calendar tab prints them.
+- Requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` in Vercel (`GOOGLE_OAUTH_*` accepted as aliases). `{ op: 'status' }` names any that are missing, and the Calendar tab prints them.
 - **The consent screen must stay published to Production.** In "Testing" Google expires refresh tokens after 7 days and the hourly disconnect returns as a weekly one.
 - Which calendar it reads and writes is `google_credentials.calendar_id` (default `primary`). It must match the calendar the receptionist's Apps Script writes to, or the two-way reconciliation compares unrelated calendars and matches nothing.
 - Replaced (Sept 2026) the browser implicit flow, which stored a one-hour access token in `localStorage` with no refresh token — the cause of the constant reconnecting, and completely broken in the Capacitor shell where the Google session cookie is blocked.

@@ -40,12 +40,23 @@ function serviceHeaders(extra) {
   return { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}`, ...(extra || {}) };
 }
 
+// GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET were already set in Vercel on
+// 2026-06-04, the same day the OAuth client was created, for a server-side flow
+// that was never built — nothing in the repo read them. Reusing those names
+// rather than adding GOOGLE_OAUTH_* duplicates keeps one client's credentials
+// in one place; two copies of a client secret is how you end up rotating one
+// and wondering why auth still fails. Both spellings are accepted.
 export function clientId() {
-  return process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || null;
+  return process.env.GOOGLE_OAUTH_CLIENT_ID
+      || process.env.GOOGLE_CLIENT_ID
+      || process.env.VITE_GOOGLE_CLIENT_ID
+      || null;
 }
 
 export function clientSecret() {
-  return process.env.GOOGLE_OAUTH_CLIENT_SECRET || null;
+  return process.env.GOOGLE_OAUTH_CLIENT_SECRET
+      || process.env.GOOGLE_CLIENT_SECRET
+      || null;
 }
 
 export function isConfigured() {

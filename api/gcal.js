@@ -66,8 +66,8 @@ export default async function handler(req, res) {
       // down". Naming them lets the app say which is missing.
       const missing = [];
       if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
-      if (!clientId()) missing.push('GOOGLE_OAUTH_CLIENT_ID');
-      if (!clientSecret()) missing.push('GOOGLE_OAUTH_CLIENT_SECRET');
+      if (!clientId()) missing.push('GOOGLE_CLIENT_ID');
+      if (!clientSecret()) missing.push('GOOGLE_CLIENT_SECRET');
       if (missing.length) {
         return json(res, 200, { configured: false, connected: false, missing });
       }
