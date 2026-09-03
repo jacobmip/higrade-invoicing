@@ -153,7 +153,14 @@ is the only AI key set. Model ids per endpoint are listed in `CLAUDE.md`.
 - Setup checklist in `PUSH_SETUP.md`.
 
 ### Google Calendar
-- OAuth via the user's personal Google account. Tokens stored in `localStorage`. No server-side token storage.
+- **Server-side OAuth with an offline refresh token.** Connect once, from any device; the grant is shared by every browser and the iOS build.
+- Flow: `POST /api/gcal-auth` (Supabase bearer required) returns a signed consent URL → popup → Google redirects to `GET /api/gcal-auth` → code exchanged for a **refresh token** → stored in `public.google_credentials`.
+- All calendar traffic goes through `POST /api/gcal` with six named ops (`status`, `list`, `create`, `update`, `delete`, `disconnect`). Never a pass-through proxy: forwarding an arbitrary path would give any signed-in user, including the `test` plumber account, full reach into Jake's Google account.
+- `google_credentials` has RLS **on with zero policies**, so only the service-role key can read it. It is deliberately not in `settings`, because `db.loadAll()` does `select('*')` on that table and ships every row to the browser.
+- Requires `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` in Vercel. `{ op: 'status' }` names any that are missing, and the Calendar tab prints them.
+- **The consent screen must stay published to Production.** In "Testing" Google expires refresh tokens after 7 days and the hourly disconnect returns as a weekly one.
+- Which calendar it reads and writes is `google_credentials.calendar_id` (default `primary`). It must match the calendar the receptionist's Apps Script writes to, or the two-way reconciliation compares unrelated calendars and matches nothing.
+- Replaced (Sept 2026) the browser implicit flow, which stored a one-hour access token in `localStorage` with no refresh token — the cause of the constant reconnecting, and completely broken in the Capacitor shell where the Google session cookie is blocked.
 
 ### Supabase Auth (login gate — added May 2026)
 - The web app at `https://higrade-invoicing.vercel.app` requires email + password sign-in. Single-tenant: only Jake's account exists.

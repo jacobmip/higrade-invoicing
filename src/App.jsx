@@ -2413,11 +2413,13 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
           const client = fuzzyFindClient(data.clients, action.clientName);
           if (!client) {
             setMsgs(p => [...p, { role: "assistant", text: `I couldn't find a client matching "${action.clientName}". Please check the name and try again.` }]);
-          } else if (!GCal.isConfigured()) {
-            setMsgs(p => [...p, { role: "assistant", text: "Google Calendar isn't configured yet. Connect it in the Calendar tab first." }]);
+          } else if (!GCal.isConnected()) {
+            setMsgs(p => [...p, { role: "assistant", text: "Google Calendar isn't connected yet. Connect it in the Calendar tab first — you only have to do it once." }]);
           } else {
             try {
-              if (!GCal.getStoredToken()) await GCal.requestToken("consent");
+              // No token to fetch here any more — the grant lives on the
+              // server, so createEvent either works or throws not_connected,
+              // which the catch below reports.
               const time = action.time || "09:00";
               const durationHours = action.durationHours || 2;
               const startDt = new Date(`${action.date}T${time}:00`);
@@ -7024,7 +7026,7 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
   );
 }
 
-function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed, onEventsFetched }) {
+function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed, onEventsFetched }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
   });
@@ -7082,12 +7084,26 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
     return () => { cancelled = true; };
   }, [gcalAuthed, rangeStart.getTime(), rangeEnd.getTime()]);
 
+  const [connecting, setConnecting] = useState(false);
   const handleSignIn = async () => {
     setAuthError("");
-    try { await GCal.requestToken('consent'); onAuthChange(true); }
+    setConnecting(true);
+    try {
+      // Opens Google's consent screen in a popup and resolves once the server
+      // has stored the refresh token. One time only — this is the last time
+      // this button gets tapped unless the grant is revoked in Google.
+      const ok = await GCal.connect();
+      onAuthChange(ok);
+      if (!ok) setAuthError("Connection was not completed. Try again.");
+    }
     catch (e) { setAuthError(e.message || "Sign-in failed"); }
+    finally { setConnecting(false); }
   };
-  const handleSignOut = () => { GCal.signOut(); onAuthChange(false); setGcalEvents([]); };
+  const handleSignOut = async () => {
+    await GCal.disconnect();
+    onAuthChange(false);
+    setGcalEvents([]);
+  };
 
   // ── One list of events, with the duplicate scheduled jobs merged ────────────
   // A job that synced to Google exists twice: once as invoice.gcalDate and
@@ -7204,7 +7220,7 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
         {GCal.isConfigured() && (gcalAuthed ? (
           <button onClick={handleSignOut} style={{ ...S.btn("ghost"), fontSize: 11, padding: "6px 10px" }}>Disconnect</button>
         ) : (
-          <button onClick={handleSignIn} style={{ background: "#4285f4", color: "#fff", border: "none", borderRadius: 8, padding: "8px 12px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, cursor: "pointer", letterSpacing: 0.5 }}>+ Google Calendar</button>
+          <button onClick={handleSignIn} disabled={connecting} style={{ background: "#4285f4", color: "#fff", border: "none", borderRadius: 8, padding: "8px 12px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, cursor: connecting ? "default" : "pointer", opacity: connecting ? 0.6 : 1, letterSpacing: 0.5 }}>{connecting ? "Connecting…" : "+ Google Calendar"}</button>
         ))}
       </div>
       {authError && <div style={{ background: "#fff0ee", padding: "8px 16px", fontSize: 12, color: "#cc4444" }}>{authError}</div>}
@@ -7275,15 +7291,17 @@ function CalendarTab({ invoices, gcalAuthed, onAuthChange, defaultJobMinutes, on
             </div>
           </div>
         ))}
-        {!GCal.isConfigured() && (
-          <div style={{ background: "#f8f9fc", borderRadius: 10, padding: "14px 16px", marginTop: 8, fontSize: 12, color: "#888", textAlign: "center" }}>
-            Add <strong>VITE_GOOGLE_CLIENT_ID</strong> to your .env to enable Google Calendar sync
+        {gcalMissing.length > 0 && (
+          <div style={{ background: "#fff8f0", borderRadius: 10, padding: "14px 16px", marginTop: 8, fontSize: 12, color: "#885522", textAlign: "center" }}>
+            Calendar sync is not set up on the server. Missing in Vercel:{" "}
+            <strong>{gcalMissing.join(", ")}</strong>
           </div>
         )}
-        {GCal.isConfigured() && !gcalAuthed && (
+        {gcalMissing.length === 0 && !gcalAuthed && (
           <div style={{ background: "#f0f7ff", borderRadius: 10, padding: "14px 16px", marginTop: 8, textAlign: "center" }}>
             <div style={{ fontSize: 13, color: "#555", marginBottom: 10 }}>Connect Google Calendar to see all your events and sync scheduled jobs</div>
-            <button onClick={handleSignIn} style={{ background: "#4285f4", color: "#fff", border: "none", borderRadius: 8, padding: "9px 22px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Connect Google Calendar</button>
+            <button onClick={handleSignIn} disabled={connecting} style={{ background: "#4285f4", color: "#fff", border: "none", borderRadius: 8, padding: "9px 22px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, cursor: connecting ? "default" : "pointer", opacity: connecting ? 0.6 : 1 }}>{connecting ? "Waiting for Google…" : "Connect Google Calendar"}</button>
+            <div style={{ fontSize: 11, color: "#8899bb", marginTop: 8 }}>One time only. This stays connected on every device.</div>
           </div>
         )}
       </div>
@@ -9654,22 +9672,30 @@ export default function App() {
   // ExpensesTab watches this with useEffect and opens its modal in response.
   // (Invoices/Estimates have direct onNew handlers, so they don't need this.)
   const [expenseNewToken, setExpenseNewToken] = useState(0);
-  const [gcalAuthed, setGcalAuthed] = useState(() => !!GCal.getStoredToken());
-  // Google access tokens last one hour and the implicit flow issues no refresh
-  // token, so a stored token is almost always dead by the next time the app is
-  // opened — which is what made the calendar look like it kept logging itself
-  // out. Consent is remembered by Google, though, so ask for a fresh token
-  // silently on startup. No prompt, no popup, nothing on screen; if there is no
-  // Google session it resolves to null and the Connect button stays as it was.
+  const [gcalAuthed, setGcalAuthed] = useState(false);
+  // Server env vars the /api/gcal route reported missing, if any. Kept in state
+  // rather than read from the module so the Calendar tab re-renders once the
+  // status call lands.
+  const [gcalMissing, setGcalMissing] = useState([]);
+  // The connection state is server-side now, so it cannot be known
+  // synchronously — start false and ask on mount. This used to read a token out
+  // of localStorage that expired after an hour and could not be refreshed,
+  // which is exactly why the calendar kept asking to be reconnected. Nothing
+  // here expires: if the grant is stored, this comes back connected on every
+  // machine and in the iOS build.
+  // Keyed on the session, not on mount. /api/gcal authenticates with the
+  // Supabase access token, and `session` is undefined for the first render
+  // while getSession() resolves — a mount-only check would ask before there
+  // was anything to ask with, get "not connected", and leave the Connect
+  // button up for the rest of the session.
   useEffect(() => {
-    if (gcalAuthed || !GCal.isConfigured()) return;
+    if (!session) return;
     let cancelled = false;
-    GCal.silentRefresh()
-      .then(tok => { if (!cancelled && tok) setGcalAuthed(true); })
+    GCal.checkStatus()
+      .then(s => { if (!cancelled) { setGcalAuthed(s.connected); setGcalMissing(s.missing || []); } })
       .catch(() => {});
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session]);
   // Per-tab sub-header slot. Tab components render their KPI strip / filter
   // tabs into this so brand header + sub-header sit together inside a single
   // sticky container at App level (no offset math, no jitter on iOS Safari).
@@ -11046,7 +11072,7 @@ export default function App() {
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
-        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
+        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
