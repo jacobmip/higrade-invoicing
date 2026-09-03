@@ -63,11 +63,15 @@ export function isConfigured() {
   return Boolean(clientId() && clientSecret());
 }
 
+// Must match the Authorized redirect URI on the OAuth client EXACTLY. It is
+// /api/gcal rather than a dedicated /api/gcal-auth because the Hobby plan caps
+// Node functions at 12 and a second file put this project over — see the header
+// of api/gcal.js.
 export function redirectUri(req) {
   if (process.env.GOOGLE_OAUTH_REDIRECT_URI) return process.env.GOOGLE_OAUTH_REDIRECT_URI;
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const host = req.headers['x-forwarded-host'] || req.headers.host;
-  return `${proto}://${host}/api/gcal-auth`;
+  return `${proto}://${host}/api/gcal`;
 }
 
 // ─── Credential row ────────────────────────────────────────────────────────

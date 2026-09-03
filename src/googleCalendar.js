@@ -11,16 +11,16 @@
 // it never held at all.
 //
 // Google issues a refresh token only to a server-side code exchange, so that
-// moved to /api/gcal-auth and the grant now lives in the database. This file
+// moved to the server and the grant now lives in the database. This file
 // just forwards calls with the user's Supabase session. Connect once, on any
 // machine, and every machine plus the iOS build is connected.
 //
 // SETUP (one time, in https://console.cloud.google.com):
 //  1. APIs & Services → Library → enable "Google Calendar API"
 //  2. Credentials → OAuth 2.0 Client ID → Web application
-//  3. Authorized redirect URI: https://higrade-invoicing.vercel.app/api/gcal-auth
-//  4. Put the client ID + secret in Vercel env as GOOGLE_OAUTH_CLIENT_ID and
-//     GOOGLE_OAUTH_CLIENT_SECRET
+//  3. Authorized redirect URI: https://higrade-invoicing.vercel.app/api/gcal
+//  4. Put the client ID + secret in Vercel env as GOOGLE_CLIENT_ID and
+//     GOOGLE_CLIENT_SECRET
 //  5. OAuth consent screen → PUBLISH TO PRODUCTION. Left in "Testing", Google
 //     expires the refresh token after 7 days and the disconnect comes back.
 
@@ -109,12 +109,8 @@ export async function connect() {
 
   let json;
   try {
-    const headers = await authHeader();
-    const res = await fetch(api('/api/gcal-auth'), { method: 'POST', headers });
-    json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.url) {
-      throw new Error(json.detail || json.error || 'Could not start Google sign-in.');
-    }
+    json = await call({ op: 'connect_url' });
+    if (!json?.url) throw new Error('Could not start Google sign-in.');
   } catch (e) {
     try { popup?.close(); } catch { /* already gone */ }
     throw e;
