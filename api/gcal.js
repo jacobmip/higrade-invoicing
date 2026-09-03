@@ -77,6 +77,35 @@ function cal(id) {
   return `/calendars/${encodeURIComponent(id)}/events`;
 }
 
+// Every calendar the app lists, write target always included. Falls back to the
+// write target alone for a row written before migration 046.
+function readCalendars(cred) {
+  const ids = Array.isArray(cred?.read_calendar_ids) ? cred.read_calendar_ids.filter(Boolean) : [];
+  const write = cred?.calendar_id || 'primary';
+  return ids.length ? Array.from(new Set([...ids, write])) : [write];
+}
+
+// Try the write calendar first, then the rest of the read set.
+//
+// Needed because events created by the OLD browser flow live on 'primary'
+// while new ones are written to the Work calendar. Patching a legacy job on
+// Work returns 404, so a reschedule would fail on exactly the jobs that
+// predate this change. Try each calendar until one owns the event.
+async function onEventCalendar(cred, id, opts) {
+  const write = cred?.calendar_id || 'primary';
+  const candidates = Array.from(new Set([write, ...readCalendars(cred)]));
+  let lastNotFound = null;
+  for (const calId of candidates) {
+    try {
+      return await calendarFetch(`${cal(calId)}/${encodeURIComponent(id)}`, opts);
+    } catch (e) {
+      if (e.status === 404 || e.status === 410) { lastNotFound = e; continue; }
+      throw e;
+    }
+  }
+  throw lastNotFound || Object.assign(new Error('Event not found'), { status: 404 });
+}
+
 function missingConfig() {
   const missing = [];
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
@@ -204,6 +233,7 @@ export default async function handler(req, res) {
         connected: Boolean(cred?.refresh_token),
         email: cred?.google_email || null,
         calendarId: cred?.calendar_id || 'primary',
+        readCalendarIds: readCalendars(cred),
         connectedAt: cred?.connected_at || null,
         missing: [],
       });
@@ -256,8 +286,31 @@ export default async function handler(req, res) {
         orderBy: 'startTime',
         maxResults: '250',
       });
-      const data = await calendarFetch(`${cal(calendarId)}?${p}`);
-      return json(res, 200, { items: data?.items || [] });
+      // allSettled, not all: one unreadable calendar (renamed, unshared, a
+      // stale id in read_calendar_ids) must not blank the whole Calendar tab.
+      // Failures come back as warnings so a misconfigured id is debuggable
+      // instead of silently showing fewer events.
+      const ids = readCalendars(cred);
+      const results = await Promise.allSettled(
+        ids.map(calId => calendarFetch(`${cal(calId)}?${p}`))
+      );
+      const items = [];
+      const warnings = [];
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          // Tag the source so a caller can tell a work job from a personal
+          // event without re-querying.
+          for (const ev of r.value?.items || []) items.push({ ...ev, _calendarId: ids[i] });
+        } else {
+          warnings.push({ calendarId: ids[i], error: r.reason?.message || String(r.reason) });
+          console.warn('[gcal] list failed for', ids[i], r.reason?.message);
+        }
+      });
+      // orderBy=startTime sorts within a calendar, not across the merge.
+      items.sort((a, b) =>
+        String(a.start?.dateTime || a.start?.date || '').localeCompare(
+        String(b.start?.dateTime || b.start?.date || '')));
+      return json(res, 200, { items, warnings });
     }
 
     if (op === 'create') {
@@ -273,7 +326,7 @@ export default async function handler(req, res) {
       // PATCH, not PUT. Events created by the receptionist's Apps Script carry
       // the lead notes and the job address; a full replace would drop them and
       // leave the customer's details nowhere.
-      const updated = await calendarFetch(`${cal(calendarId)}/${encodeURIComponent(body.id)}`, {
+      const updated = await onEventCalendar(cred, body.id, {
         method: 'PATCH', body: JSON.stringify(body.patch),
       });
       return json(res, 200, updated);
@@ -282,7 +335,7 @@ export default async function handler(req, res) {
     if (op === 'delete') {
       if (!body.id) return json(res, 400, { error: 'id is required' });
       try {
-        await calendarFetch(`${cal(calendarId)}/${encodeURIComponent(body.id)}`, { method: 'DELETE' });
+        await onEventCalendar(cred, body.id, { method: 'DELETE' });
       } catch (e) {
         // Already gone (deleted in Google's UI) is the outcome the caller
         // wanted. Anything else is a real failure.
