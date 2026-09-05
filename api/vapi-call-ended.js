@@ -30,8 +30,17 @@ export const config = { runtime: 'nodejs', maxDuration: 15 };
 // production.
 const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 
+// Must match the registered A2P brand name and the campaign sample message
+// EXACTLY. A sample that does not match what is actually sent is the most
+// common reason a campaign gets rejected, and a mismatch found after approval
+// means re-submitting.
+//
+// "HI Grade Plumbing", not "High Grade". The voice rule is the other way round
+// on purpose: Lisa SAYS "High Grade" so callers hear the word "high" rather
+// than the letters H-I, but everything WRITTEN uses the legal name. Every
+// email path already did this; this constant was the only place that did not.
 const KICKOFF =
-  'Mahalo for contacting High Grade Plumbing. Please reply with your service ' +
+  'Mahalo for contacting HI Grade Plumbing. Please reply with your service ' +
   'address, best email address, and any helpful photos of the plumbing issue ' +
   'so our team can assist you.';
 
