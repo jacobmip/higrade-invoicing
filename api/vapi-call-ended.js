@@ -39,10 +39,15 @@ const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 // on purpose: Lisa SAYS "High Grade" so callers hear the word "high" rather
 // than the letters H-I, but everything WRITTEN uses the legal name. Every
 // email path already did this; this constant was the only place that did not.
+// This is the FIRST message a customer receives, sent after a call they
+// placed. Carriers expect the initial message of a campaign to disclose both
+// STOP and HELP, and an opt-in follow-up that carries neither is a common
+// rejection reason. Costs nothing to include: 210 characters is still two
+// segments, the same as without it.
 const KICKOFF =
   'Mahalo for contacting HI Grade Plumbing. Please reply with your service ' +
   'address, best email address, and any helpful photos of the plumbing issue ' +
-  'so our team can assist you.';
+  'so our team can assist you. Reply STOP to opt out, HELP for help.';
 
 function json(res, status, body) {
   res.statusCode = status;
