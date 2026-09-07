@@ -76,8 +76,15 @@ export default async function handler(req, res) {
   const body = params.Body || params.body || '';
   const sid  = params.MessageSid || params.SmsSid || null;
 
-  if (!from || !String(body).trim()) {
-    console.warn('[sms-inbound] missing From or Body; ignoring');
+  // A photo with no caption is the single most likely thing a customer sends
+  // after being asked to text a picture of the problem, so an empty body is
+  // only grounds for ignoring the message when there is no media either.
+  // Rejecting on body alone silently discarded exactly the messages this
+  // whole flow exists to collect.
+  const mediaCount = parseInt(params.NumMedia || '0', 10) || 0;
+
+  if (!from || (!String(body).trim() && mediaCount === 0)) {
+    console.warn('[sms-inbound] no From, and no body or media; ignoring');
     return twiml(res);
   }
 
