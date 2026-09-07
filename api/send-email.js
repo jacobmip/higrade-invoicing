@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, summary, callId, callSeconds, callUrl, matchedClient } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, summary, smsMedia, callId, callSeconds, callUrl, matchedClient } = await req.json();
     // ccAddresses is the new multi-recipient field (array). cc is the legacy
     // single-string field. Merge them and deduplicate.
     const ccList = [...new Set([
@@ -151,6 +151,43 @@ export default async function handler(req) {
     // so emailing it would ship a dead link.
     const isCall = template === 'call';
 
+    // ─── Inbound text alert ──────────────────────────────────────────────────
+    // Customer texts were landing in client_messages with nothing announcing
+    // them — no email, no bell, no screen in the app reading that table. On
+    // 2026-09-07 a reply containing an address and email address went entirely
+    // unseen. This is the thing that surfaces it.
+    const isSms = template === 'sms';
+
+    const mediaBlock = (Array.isArray(smsMedia) && smsMedia.length)
+      ? `<div style="margin-top:16px;">
+           <p style="color:#66748c;font-size:11px;font-weight:bold;letter-spacing:1px;margin:0 0 8px;">
+             ${smsMedia.length} ATTACHMENT${smsMedia.length > 1 ? 'S' : ''}
+           </p>
+           ${smsMedia.map(m => (String(m.type || '').startsWith('video/')
+             ? `<p style="margin:0 0 8px;"><a href="${escapeHtml(m.url)}" style="color:#0070ba;font-size:13px;">View video attachment</a></p>`
+             : `<a href="${escapeHtml(m.url)}"><img src="${escapeHtml(m.url)}" alt="Texted photo" style="max-width:100%;border-radius:8px;border:1px solid #e8ecf4;margin-bottom:8px;display:block;"></a>`
+           )).join('')}
+         </div>`
+      : '';
+
+    const smsHtml = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e3e8f0;border-radius:10px;overflow:hidden;">
+        <div style="background:#0a1628;padding:14px 20px;">
+          <p style="color:#7fd1a3;font-size:11px;font-weight:bold;letter-spacing:2px;margin:0;">INCOMING TEXT</p>
+        </div>
+        <div style="padding:20px;">
+          <p style="color:#0a1628;font-size:19px;font-weight:bold;margin:0 0 4px;">${escapeHtml(clientName || 'Unknown number')}</p>
+          ${leadPhone ? `<a href="tel:${escapeHtml(String(leadPhone).replace(/[^\d+]/g, ''))}" style="color:#0070ba;text-decoration:none;font-size:15px;font-weight:bold;">${escapeHtml(leadPhone)}</a>` : ''}
+
+          <div style="margin-top:16px;padding:14px;background:#f5f7fa;border:1px solid #e8ecf4;border-radius:8px;color:#243040;font-size:15px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(transcript || '(no text)')}</div>
+
+          ${mediaBlock}
+
+          ${invoiceId ? `<p style="color:#8894a8;font-size:12px;margin:16px 0 0;">Attachments filed against estimate <strong>${escapeHtml(invoiceId)}</strong>.</p>` : ''}
+        </div>
+      </div>
+    `;
+
     const mmss = (s) => {
       const n = parseInt(s, 10);
       if (!Number.isFinite(n) || n <= 0) return '';
@@ -264,7 +301,7 @@ export default async function handler(req) {
           : (isPaidInFull
               ? `Mahalo \u2014 ${invoiceId} paid in full`
               : `Invoice ${invoiceId} from HI Grade Plumbing`),
-        html: isCall ? callHtml : (isLead ? leadHtml : emailBody),
+        html: isSms ? smsHtml : (isCall ? callHtml : (isLead ? leadHtml : emailBody)),
       }),
     });
 

@@ -19,9 +19,14 @@
 
 import {
   rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature, twilioAuthToken,
+  rehostTwilioMedia, getSetting,
 } from './_lib/sms.js';
 
-export const config = { runtime: 'nodejs', maxDuration: 10 };
+export const config = { runtime: 'nodejs', maxDuration: 30 };
+
+// Same origin this route is served from; hardcoded so a Twilio retry hitting a
+// preview deployment still mails through production.
+const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 
 function twiml(res, status = 200) {
   res.statusCode = status;
@@ -77,15 +82,66 @@ export default async function handler(req, res) {
   }
 
   try {
+    const secret = await webhookSecret();
+
+    // Re-host any attachments before logging, so the stored row points at a URL
+    // that will still work in six months.
+    const media = await rehostTwilioMedia(params);
+
     const result = await rpc('log_client_message', {
-      p_secret: await webhookSecret(),
+      p_secret: secret,
       p_phone: from,
       p_direction: 'inbound',
       p_body: String(body),
       p_call_id: sid,
+      p_media: media.length ? media : null,
     });
+
+    // Put texted photos on the job they belong to, not just in the thread.
+    let attached = null;
+    if (media.length && result?.client_id) {
+      try {
+        attached = await rpc('attach_media_to_recent_estimate', {
+          p_secret: secret,
+          p_client_id: result.client_id,
+          p_media: media,
+          p_caption: String(body).slice(0, 200) || null,
+        });
+      } catch (e) {
+        console.error('[sms-inbound] attach to estimate failed:', e.message || e);
+      }
+    }
+
+    // Tell Jake. Without this the message lands in a table nobody reads --
+    // which is exactly what happened on 2026-09-07 when a customer texted
+    // their address and it went nowhere anyone could see.
+    try {
+      const recipients = String(await getSetting('lead_notify_to') || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+      if (recipients.length) {
+        await fetch(`${APP_URL}/api/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: recipients,
+            bccAdmin: false,
+            template: 'sms',
+            subject: `Text from ${result?.client_name || from}`,
+            clientName: result?.client_name || 'Unknown number',
+            leadPhone: from,
+            transcript: String(body),
+            smsMedia: media,
+            invoiceId: attached?.estimate_id || null,
+          }),
+        });
+      }
+    } catch (e) {
+      console.error('[sms-inbound] alert email failed:', e.message || e);
+    }
+
     console.log('[sms-inbound] logged', {
       from, matched: result?.matched, client: result?.client_name || null,
+      media: media.length, attachedTo: attached?.estimate_id || null,
     });
   } catch (e) {
     // Swallow: returning non-200 makes Twilio retry, and a retry storm would

@@ -150,6 +150,66 @@ export async function readBody(req) {
   return { params, raw };
 }
 
+// Twilio delivers MMS attachments as MediaUrl0, MediaUrl1... on the webhook.
+// Those URLs are auth-gated AND deleted after Twilio's retention window, so
+// storing the link is worthless — it fails immediately for anyone without the
+// account credentials, and rots even for those who have them. So fetch each
+// one with Basic auth and re-upload to the public job-photos bucket that the
+// app already serves images from.
+export async function rehostTwilioMedia(params) {
+  const out = [];
+  const sid = await twilioAccountSid();
+  const token = await twilioAuthToken();
+  if (!sid || !token) return out;
+
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) {
+    console.warn('[sms] no service-role key; cannot re-host media');
+    return out;
+  }
+
+  const count = parseInt(params.NumMedia || '0', 10);
+  if (!Number.isFinite(count) || count < 1) return out;
+
+  const auth = 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64');
+
+  for (let i = 0; i < count && i < 10; i++) {
+    const url = params[`MediaUrl${i}`];
+    const type = params[`MediaContentType${i}`] || 'application/octet-stream';
+    if (!url) continue;
+    try {
+      const res = await fetch(url, { headers: { Authorization: auth }, redirect: 'follow' });
+      if (!res.ok) { console.error('[sms] media fetch failed', i, res.status); continue; }
+      const bytes = Buffer.from(await res.arrayBuffer());
+
+      const ext = (type.split('/')[1] || 'bin').split(';')[0].replace(/[^a-z0-9]/gi, '');
+      const path = `sms/${params.MessageSid || Date.now()}-${i}.${ext}`;
+
+      const up = await fetch(`${supabaseUrl()}/storage/v1/object/job-photos/${path}`, {
+        method: 'POST',
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          'Content-Type': type,
+          'x-upsert': 'true',
+        },
+        body: bytes,
+      });
+      if (!up.ok) {
+        console.error('[sms] media upload failed', i, up.status, await up.text());
+        continue;
+      }
+      out.push({
+        url: `${supabaseUrl()}/storage/v1/object/public/job-photos/${path}`,
+        type,
+      });
+    } catch (e) {
+      console.error('[sms] media rehost error', i, e.message || e);
+    }
+  }
+  return out;
+}
+
 export function fullUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const host = req.headers['x-forwarded-host'] || req.headers.host;
