@@ -5,6 +5,16 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.10.2 — 2026-09-11
+
+### Bug Fixes
+- **A form showing the wrong document can no longer overwrite the right one.** All three save paths — the auto-save flush, Done, and the partial save — now refuse to write when the form's own `id` differs from the row being targeted. Previously only the id *prefix* was checked against the document type, which catches an invoice's contents landing on an `EST` row but is blind to two documents of the same type. This matters more than it sounds: backing out of the form runs the auto-save flush on unmount, so a document that merely *displayed* wrong became a corrupted row just by being closed.
+
+### Note
+This is a containment fix, not the root cause. It stops the wrong contents being written; it does not yet explain why the form shows a stale document in the first place. That investigation is ongoing.
+
+---
+
 ## v1.10.1 — 2026-08-27
 
 ### Bug Fixes

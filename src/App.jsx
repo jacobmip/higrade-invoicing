@@ -3719,6 +3719,23 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // A row that is already mismatched (EST0767 and anything else the old
       // bug produced) stays editable, otherwise it could never be repaired.
       const targetId = autoSavedId || f.id;
+
+      // Invariant: the form's own id must match the row we are about to write.
+      //
+      // The form carries the id it was loaded with. If those two disagree, the
+      // form is holding one document's contents while pointed at another's row
+      // -- and saving would overwrite the target with the wrong document. The
+      // id/type check below cannot see this when both are the same type, and
+      // it is the only thing standing between a display glitch and real data
+      // loss, because backing out of the form runs this flush on unmount.
+      //
+      // A brand-new document legitimately has no f.id until its first save,
+      // so only an id that is present and different is a refusal.
+      if (targetId && f.id && f.id !== targetId) {
+        console.error("Refusing auto-save: form is holding a different document", { formId: f.id, targetId });
+        return null;
+      }
+
       if (targetId) {
         const idWantsEstimate = String(targetId).startsWith("EST");
         const formIsEstimate = f.type === "estimate";
@@ -10245,6 +10262,15 @@ export default function App() {
   const updateInvoice = async (form) => {
     const year = new Date(form.date || today()).getFullYear();
     if (selected) {
+    // Same invariant the auto-save flush enforces: the payload's own id must
+    // match the row it is about to be written to. Both of these overwrite the
+    // id with selected.id, so without this a form holding one document's
+    // contents would silently overwrite another document's row.
+    if (form.id && form.id !== selected.id) {
+        console.error("Refusing save: form is holding a different document", { formId: form.id, targetId: selected.id });
+        alert(`Not saved. This form is showing ${form.id} but is pointed at ${selected.id}. Close the app and reopen it, then try again.`);
+        return;
+      }
       const updated = { ...form, id: selected.id, year };
       // Update local state first so the UI is always responsive,
       // even if the Supabase write later throws.
@@ -10779,6 +10805,14 @@ export default function App() {
 
   const partialSaveInvoice = async (updated) => {
     if (!selected?.id) return;
+    // Same invariant the auto-save flush enforces: the payload's own id must
+    // match the row it is about to be written to. Both of these overwrite the
+    // id with selected.id, so without this a form holding one document's
+    // contents would silently overwrite another document's row.
+    if (updated.id && updated.id !== selected.id) {
+      console.error("Refusing partial save: form is holding a different document", { formId: updated.id, targetId: selected.id });
+      return;
+    }
     const year = new Date(updated.date || today()).getFullYear();
     // Carry updatedAt from the loaded copy so the RPC's optimistic-lock check
     // can detect concurrent edits from another device.
