@@ -1,0 +1,84 @@
+# Enforces hard rule 13: app changes ship with a version bump and a changelog
+# entry.
+#
+# This exists because the rule went unenforced for 15 commits between 2026-09-02
+# and 2026-09-07 — the server-side Google OAuth rewrite, migrations 045 to 051,
+# and the SMS compliance work all shipped while the app still reported 1.10.1.
+# Rule 14 was followed across the same commits, so the sessions had clearly read
+# CLAUDE.md; the difference is that rule 14 binds to the work itself while rule
+# 13 is a ritual at the end of a session, and a ritual is what gets dropped.
+#
+# It runs on GitHub rather than as a git hook on purpose: every Claude Code web
+# session works from a fresh clone, so .git/hooks is empty and any hook-based
+# check would silently not exist where most of the work happens.
+#
+# It does not block the deploy. Vercel builds from the same push regardless, so
+# a red check here is a note to go back and add the entry, never a reason the
+# business is down.
+
+name: Release check
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  version-bumped:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: App changes must bump src/version.js and land in CHANGELOG.md
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          # First push to a branch, or history rewritten: nothing to compare.
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "No previous commit to diff against; skipping."
+            exit 0
+          fi
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "Previous commit $BEFORE is not reachable; skipping."
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
+          echo "Files in this push:"; echo "$CHANGED" | sed 's/^/  /'
+
+          # src/App.jsx.bak is the rule 11 restore point. It is pushed on its own,
+          # before the code change it protects, and that push carries no app change.
+          APP_CHANGED=$(echo "$CHANGED" \
+            | grep -E '^(src/|api/|supabase/migrations/)' \
+            | grep -v '^src/App\.jsx\.bak$' \
+            | grep -v '^src/version\.js$' || true)
+
+          if [ -z "$APP_CHANGED" ]; then
+            echo "No app code or migrations in this push. Nothing to check."
+            exit 0
+          fi
+
+          echo "App changes present:"; echo "$APP_CHANGED" | sed 's/^/  /'
+
+          if ! echo "$CHANGED" | grep -q '^src/version\.js$'; then
+            echo ""
+            echo "FAILED: app code changed but src/version.js was not bumped (hard rule 13)."
+            echo "Bump the version, prepend a CHANGELOG.md section, and commit both"
+            echo "alongside the code — not as a follow-up."
+            exit 1
+          fi
+
+          VERSION=$(grep -oE 'APP_VERSION[^"]*"[^"]+"' src/version.js | grep -oE '"[^"]+"' | tr -d '"')
+          echo "Version in this push: $VERSION"
+
+          if ! grep -q "## v${VERSION}" CHANGELOG.md; then
+            echo ""
+            echo "FAILED: src/version.js says $VERSION but CHANGELOG.md has no '## v${VERSION}' section."
+            exit 1
+          fi
+
+          BUILD_DATE=$(grep -oE 'APP_BUILD_DATE[^"]*"[^"]+"' src/version.js | grep -oE '"[^"]+"' | tr -d '"')
+          echo "Build date: $BUILD_DATE"
+          echo "OK: $VERSION is bumped and logged."

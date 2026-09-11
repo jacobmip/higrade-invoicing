@@ -29,6 +29,22 @@ Read this file first. It captures everything an AI agent needs to safely continu
     - Bump the version: patch (+0.0.1) for bug fixes / small changes, minor (+0.1.0) for new features, major (+1.0.0) for big architectural changes. Also update `APP_BUILD_DATE` to today's date (YYYY-MM-DD).
     - Prepend a new `## vX.Y.Z — YYYY-MM-DD` section to `CHANGELOG.md` describing every change in that push.
     - Commit both files in the same commit as the code change (not a separate commit).
+    - **This is enforced by CI** (`.github/workflows/release-check.yml`): a push
+      to `main` that touches `src/`, `api/` or `supabase/migrations/` without
+      bumping `src/version.js` fails the check, as does a version with no
+      matching `CHANGELOG.md` section. It does not block the deploy — Vercel
+      builds the same push regardless — so a red check means go back and add
+      the entry, never that the business is down. `src/App.jsx.bak` is exempt,
+      since rule 11 pushes it on its own.
+    - The check exists because this rule was missed for fifteen commits between
+      2026-09-02 and 2026-09-07 — the server-side OAuth rewrite, migrations 045
+      to 051 and the SMS compliance work all shipped while the app reported
+      1.10.1. Rule 14 was followed across those same commits, so the sessions
+      had read this file. The difference is that rule 14 binds to the work
+      ("not finished until") while rule 13 was a ritual at the end of a
+      session, and the ritual is what got dropped. A git hook would not have
+      helped: every Claude Code web session starts from a fresh clone, so
+      `.git/hooks` is empty where most of the work happens.
 14. **Update the docs in the same commit as the change.** `CLAUDE.md` is the
     single source of truth for the schema, migrations, document numbering, the
     invariants and the sharp edges; `HANDOFF.md` covers architecture patterns,
@@ -82,11 +98,13 @@ api/                 — Vercel serverless functions, all nodejs runtime
   send-email.js / send-estimate.js / submit-signature.js / track-open.js
   public-invoice.js        — service-role read for /v/<token>
   register-device.js       — APNs token upsert
-  vapi-call-ended.js       — Vapi end-of-call webhook
+  vapi-call-ended.js       — Vapi end-of-call webhook + call record email
   sms-inbound.js           — Twilio inbound SMS webhook
+  gcal.js                  — Google Calendar: server-side OAuth, callback, read/write
   eta.js / geocode.js      — travel time + address lookup
   _lib/notify.js           — APNs JWT + push fan-out
   _lib/sms.js              — Twilio send helper
+  _lib/gcal.js             — Google token refresh + calendar helpers
 public/
   estimator-test.html — standalone test harness for AI estimator + extractor
 supabase/migrations/ — numbered SQL, applied by hand in the SQL editor
@@ -104,7 +122,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 041)
+## Database schema (current through migration 051)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -122,6 +140,7 @@ Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 - `notifications` / `device_tokens` — in-app bell + APNs
 - `ai_chat_history` — user_id PK, messages jsonb (max 200); **RLS self-only, admins do NOT bypass**
 - `settings` — key/value. Counters live here: `next_doc_num` is live, `next_num` and `next_estimate_num` are retired.
+- `google_credentials` — the app's server-side Google OAuth refresh token, plus `calendar_id` (the write target, must match the receptionist's Apps Script) and `read_calendar_ids` (every calendar the Calendar tab displays). Migration 045/046.
 
 ### Helper functions and RPCs
 - `is_admin()` / `is_admin_uid(uid)` — SECURITY DEFINER; the second breaks RLS recursion in profiles policies
@@ -168,9 +187,14 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **042** — `gcal_duration_minutes` on invoices, so a scheduled job's length survives without Google
 - **043** — shared price book: `admin_owner_ids()` plus a widening SELECT policy on `saved_items`
 - **044** — `visits` jsonb: a job can be scheduled across several appointments
+- **045–046** — server-side Google OAuth (`google_credentials`), and the shared Work calendar as the single write target
+- **047** — the calendar callback writes into `visits` instead of `gcal_event_id`, which the `sync_first_visit` trigger was overwriting
+- **048** — stop `save_invoice_with_items` restamping `gcal_date` as UTC
+- **049–050** — lead timestamps in Hawaii time, and a backfill of the ten rows already written wrong
+- **051** — inbound SMS media and alerts
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `045_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `052_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids

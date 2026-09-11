@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.10.4 — 2026-09-11
+
+### Changes
+- **Hard rule 13 is now enforced by CI.** `.github/workflows/release-check.yml` fails any push to `main` that changes `src/`, `api/` or `supabase/migrations/` without bumping `src/version.js`, and any version with no matching `CHANGELOG.md` section. It deliberately does not block the deploy — Vercel builds the same push regardless, so a red check is a note to go back, never a reason the business is down. `src/App.jsx.bak` is exempt so rule 11's standalone backup push stays clean.
+- **The 2026-09-02 to 2026-09-07 gap is recorded** as an unversioned changelog section, reconstructed from commit history. Fifteen commits shipped there with no version bump, so the app reported 1.10.1 while the server-side OAuth rewrite, migrations 045–051 and the SMS compliance work all went live. Those releases are not renumbered — rewriting version numbers that already shipped to a phone would be worse than recording the gap honestly.
+- **CLAUDE.md brought current**: schema through migration 051, the `google_credentials` table, migrations 045–051 in the list, the next migration number, and `api/gcal.js` and `api/_lib/gcal.js` in the source layout.
+
+---
+
 ## v1.10.3 — 2026-09-11
 
 ### Bug Fixes
@@ -21,6 +30,35 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ### Note
 This is a containment fix, not the root cause. It stops the wrong contents being written; it does not yet explain why the form shows a stale document in the first place. That investigation is ongoing.
+
+---
+
+## Unversioned — 2026-09-02 to 2026-09-07
+
+**Fifteen commits shipped here without a version bump or a changelog entry.**
+The app reported `1.10.1` throughout, so anything that went wrong in this window
+cannot be traced to a release. Reconstructed from commit history on 2026-09-11
+and left unversioned deliberately — renumbering releases that already shipped to
+a phone would be worse than recording the gap honestly. A CI check now fails any
+push that changes app code without bumping the version, so this cannot recur.
+
+### 2026-09-02 — Google Calendar moved to server-side OAuth
+- Google Calendar now holds a **server-side refresh token** in `google_credentials` rather than a browser access token, ending the disconnect-every-hour behaviour that v1.5.0 could only soften. `src/googleCalendar.js` became a thin client for `/api/gcal` and holds no Google credential of its own. Migration 045.
+- The OAuth callback was folded into `api/gcal.js` instead of getting its own route — the project is at the Hobby plan's 12 Node function cap, and a thirteenth makes every deploy fail at `Deploying outputs...` with no error line in the log.
+- Google client credentials are read from the env vars Vercel already had.
+- **Both calendar writers now target the same calendar.** The app's write target (`google_credentials.calendar_id`) must equal the one the receptionist's Apps Script uses — the shared Work calendar. While they disagreed everything appeared to work, but reconciliation compared unrelated calendars and never saw a booking Lisa made. Migration 046.
+- **The calendar callback was losing every event id it was handed.** `set_invoice_gcal_event()` wrote `gcal_event_id` directly, and the `invoices_sync_first_visit` trigger rewrites that column from `visits` on every update — so the write was undone inside the same statement, with no error. It now writes into the visit the trigger derives from. Migration 047.
+- **`save_invoice_with_items` was stamping `gcal_date` as UTC.** `gcal_date` is local wall-clock text with no offset and the database runs UTC, so a `::timestamptz` cast restamped a 6pm job as 6pm UTC — 8am Hawaii. It hid well: three of the four consumers cancelled the error out. Migration 048.
+- **Lead timestamps were stamped in the server's UTC, not Hawaii time.** For the ten hours between 2pm and midnight local — exactly when an after-hours receptionist matters — the server is already on tomorrow's date. A 10:07pm Sep 2 call was logged "Sep 03, 08:07 AM" and its estimate dated a day ahead. Migration 049, with 050 correcting the ten lead rows already written.
+- A call record with the full transcript is now emailed after every receptionist call, with the summary at the top.
+
+### 2026-09-05 — SMS compliance
+- The first SMS a customer receives discloses STOP and HELP.
+- Outbound SMS uses the business's legal name rather than the name Lisa speaks on the phone.
+
+### 2026-09-07 — Inbound texts
+- Inbound customer texts are surfaced in the app, and photos customers send are kept rather than discarded. Migration 051.
+- Caption-less photos were being dropped by the route as well as the RPC; both now keep them.
 
 ---
 
