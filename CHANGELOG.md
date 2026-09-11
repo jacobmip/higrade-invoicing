@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.10.3 — 2026-09-11
+
+### Bug Fixes
+- **A document could open showing a different document's contents.** EST1022 opened with INV1021's client and line items while the header still read EST1022. The app keeps a per-document draft in the browser so a reload doesn't lose unsaved edits, but the draft's key is built from the invoice being opened while its contents come from form state — and those two are a render apart during a document switch. A draft could therefore be filed under the wrong document's key, and was then restored into it on every open, surviving reloads. Drafts now carry their own id and are only restored into the document they came from; a mismatched one is deleted rather than left to resurface. The same check applies on write, so one can't be misfiled in the first place.
+  - The stored data was never affected — EST1022's own client and items were intact throughout. The v1.10.2 guard is what kept it that way, since backing out of the form runs the auto-save flush.
+  - The iOS backgrounding flush now reads its key from a ref. Its listener is registered once at mount, so it had been writing under whatever document was open at the time.
+
+---
+
 ## v1.10.2 — 2026-09-11
 
 ### Bug Fixes

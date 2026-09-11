@@ -215,21 +215,41 @@ function fuzzyFindClient(clients, query) {
 //
 // • state = null/undefined → immediately removes the draft (edit closed).
 // • serverUpdatedAt → ISO string; draft is skipped if server version is newer.
-function useDraftPersistence(key, state, setState, serverUpdatedAt) {
+// expectedId: when given, a stored draft is only restored if it belongs to that
+// document. Drafts are keyed per document, but the key is built from the
+// invoice prop while the draft's contents come from form state, and those two
+// are not in step during a document switch — so a draft carrying one
+// document's contents can end up filed under another's key. Restoring it makes
+// the form show the wrong document entirely, which is what happened to EST1022
+// (it opened showing INV1021). Checking the draft's own id closes that off
+// whatever wrote it, and a mismatched draft is deleted rather than left to
+// resurface on the next open.
+function useDraftPersistence(key, state, setState, serverUpdatedAt, expectedId) {
   const timerRef = useRef(null);
   // skipSaveRef starts true so the first render does not overwrite an existing
   // draft before the restore check in useLayoutEffect has a chance to run.
   const skipSaveRef = useRef(true);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // The visibilitychange listener below is registered once, so it would
+  // otherwise write under whatever key was current at mount.
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  const expectedIdRef = useRef(expectedId);
+  expectedIdRef.current = expectedId;
 
   useLayoutEffect(() => {
     try {
       const raw = localStorage.getItem(key);
       if (raw) {
         const { state: draft, savedAt } = JSON.parse(raw);
-        const serverMs = serverUpdatedAt ? new Date(serverUpdatedAt).getTime() : 0;
-        if (savedAt > serverMs) setState(draft);
+        if (expectedId && draft?.id && draft.id !== expectedId) {
+          console.error('Discarding draft that belongs to a different document', { key, draftId: draft.id, expectedId });
+          localStorage.removeItem(key);
+        } else {
+          const serverMs = serverUpdatedAt ? new Date(serverUpdatedAt).getTime() : 0;
+          if (savedAt > serverMs) setState(draft);
+        }
       }
     } catch {}
     skipSaveRef.current = false;
@@ -242,8 +262,9 @@ function useDraftPersistence(key, state, setState, serverUpdatedAt) {
     const flush = () => {
       if (document.visibilityState !== 'hidden') return;
       if (skipSaveRef.current || stateRef.current == null) return;
+      if (expectedIdRef.current && stateRef.current?.id && stateRef.current.id !== expectedIdRef.current) return;
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      try { localStorage.setItem(key, JSON.stringify({ state: stateRef.current, savedAt: Date.now() })); } catch {}
+      try { localStorage.setItem(keyRef.current, JSON.stringify({ state: stateRef.current, savedAt: Date.now() })); } catch {}
     };
     document.addEventListener('visibilitychange', flush);
     return () => document.removeEventListener('visibilitychange', flush);
@@ -258,6 +279,11 @@ function useDraftPersistence(key, state, setState, serverUpdatedAt) {
       return;
     }
     timerRef.current = setTimeout(() => {
+      // Writing is guarded as well as reading. During a document switch the
+      // key updates a render before the form does, so without this a draft
+      // gets filed under the document the form is about to become rather than
+      // the one it still holds.
+      if (expectedId && state?.id && state.id !== expectedId) return;
       try {
         localStorage.setItem(key, JSON.stringify({ state, savedAt: Date.now() }));
       } catch {}
@@ -3686,7 +3712,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // id/type guards cannot catch because the minted id matches the wrong type
   // it was handed.
   const _invoiceDraftKey = 'higrade_invoice_draft_' + (invoice?.id || ('new-' + (defaultType || 'invoice')));
-  const clearInvoiceDraft = useDraftPersistence(_invoiceDraftKey, form, setForm, invoice?.updatedAt);
+  const clearInvoiceDraft = useDraftPersistence(_invoiceDraftKey, form, setForm, invoice?.updatedAt, invoice?.id || null);
 
   const flushAutoSaveRef = useRef(async () => {});
   flushAutoSaveRef.current = async () => {
