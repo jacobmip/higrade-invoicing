@@ -341,6 +341,23 @@ Anything that changes how documents are **numbered, identified, typed, or schedu
 | `push_invoice_to_calendar()` | reads `gcal_date`, posts to the calendar webhook | trigger on `ai_lead` insert |
 | `notify_owner_of_lead()` | inserts `notifications`, sends the lead email | trigger on `ai_lead` insert |
 
+#### The Apps Script is mirrored in `apps-script/`
+
+The receptionist's calendar booking runs in a Google Apps Script web app in
+Jake's own Google account — the one piece of this system that does not live in
+this repo. Until 2026-09-14 there was no copy of it anywhere, so losing that
+account meant losing the ability to rebuild Lisa's calendar booking at all.
+
+`apps-script/` is that copy: `Code.gs`, the `appsscript.json` manifest, and a
+README covering where the live project is, the deploy steps, and how to test a
+change without placing a real call. Credentials in the mirror are placeholders
+— this repo is public — and the README says where each real value lives.
+
+It is a **mirror, not the source of truth**. Editing `apps-script/Code.gs`
+changes nothing on its own; the live script is edited in the Apps Script editor
+and needs a redeploy (Manage deployments, edit, New version) before an edit
+takes effect at all. Change one, change the other.
+
 This has already caused two production breaks:
 
 - **Migration 040** retired `next_estimate_num` and said nothing minted from it. `create_estimate_from_lead` still did. `INV0808` exists and 52 more legacy invoices sit between 808 and 999, so the next lead would have reissued a number already printed on a customer's invoice. Fixed in `041`.

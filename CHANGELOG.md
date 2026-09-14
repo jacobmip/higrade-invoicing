@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.11.2 — 2026-09-14
+
+### Changes
+- **The receptionist's Apps Script is now mirrored in `apps-script/`.** It ran in a Google Apps Script web app in Jake's Google account and existed nowhere else — lose the account and Lisa's calendar booking could not be rebuilt. The folder holds `Code.gs`, the `appsscript.json` manifest and a README covering where the live project is, the deploy steps (an edit does nothing until the existing deployment is redeployed as a new version), and how to test with `select push_invoice_to_calendar('EST0807');` instead of placing a real call. Credentials are placeholders because this repo is public; the README names where each real value lives. It is a mirror, not the source of truth — change one side and change the other.
+
+---
+
 ## v1.11.1 — 2026-09-14
 
 ### Changes
