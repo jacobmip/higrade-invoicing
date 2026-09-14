@@ -5,6 +5,28 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.11.0 — 2026-09-14
+
+### Changes
+- **One calendar event format, used by every writer.** Five places created Google Calendar events and each built its own body, so an appointment read differently depending on whether the schedule modal, the sync sweep, the AI assistant, the follow-up modal or Lisa's server-side push had made it. `buildCalendarEvent()` in `src/App.jsx` is now the only builder on the app side, and migration `052` rewrites `push_invoice_to_calendar()` to match it field for field.
+- **New event title: `Work · Client · Document`.** Was `Client - ID - label`. The work leads because that is what a week has to be read for — spotting every water heater at a glance is what makes one parts run instead of three. The work description falls back from the visit label, to the first line item's name, to "Plumbing", so a title is never just a name and a number. Long item names are cut at their spec dash and capped at 30 characters.
+- **The job site is no longer truncated.** The Location field got `job_address.line1` alone, dropping the unit, city and zip — right street number, potentially the wrong block when tapped for directions. It now carries line1, line2 and line3.
+- **Line items in the event body.** A `SCOPE` block lists up to six line-item names, then `…and N more`. Names only: the per-item description is the customer-facing scope of work and far too long for a calendar entry.
+- **Estimates pushed from the server are no longer all labelled "Estimate".** `push_invoice_to_calendar()` hardcoded the word regardless of `invoices.type`, so invoices read as estimates. It reads the document now.
+- **Job / Estimate / Emergency per visit.** A picker at the top of each visit in the Schedule Job modal, stored as `visits[].kind`. Defaults from the document type, so nothing needs backfilling and `visits` being jsonb means no schema change. Emergency had no representation anywhere before this.
+- **Colour coding, matched between the app and Google.** Job is Peacock, Estimate Tangerine, Emergency Tomato, Follow-up Banana, everything else Graphite. The app's hex values are the colours Google actually draws for those palette ids, so the key means one thing in both places.
+- **A key on the Calendar tab, and tapping a chip filters that kind** out of every view including the month dots. The choice persists.
+- **New Agenda view.** A rolling list of everything scheduled from today forward, in date order, with no grid above it — the first job is the first thing on screen. Days with nothing on them are skipped.
+- **Swipe left and right to change period**, on every view but the agenda. A swipe has to be decisive and mostly horizontal so a flick down the hour grid does not jump the week.
+- **Pinch to resize the grid.** Scales the hour rows in the time views and the cell height in the month view, between 0.6x and 2.2x. Persists.
+- **Month cells start shorter** (36px, was 46) so the day list below them clears the fold on a phone.
+- **Editing a job now reaches its calendar event.** A reschedule patched times and title only, so changing the notes or the line items never showed up on the calendar. Events this app created are stamped `builtBy`, and only those get their text patched — a booking from Lisa still keeps the caller's own words, which was the reason for the blanket rule.
+
+### Migration
+- `052_calendar_event_format.sql` — rewrites `push_invoice_to_calendar()` to match the app. Also sends a `colorId`; the Apps Script behind `settings.gcal_webhook_url` needs `if (p.colorId) event.setColor(p.colorId);` for that half to take effect, and ignores the field harmlessly until then.
+
+---
+
 ## v1.10.4 — 2026-09-11
 
 ### Changes

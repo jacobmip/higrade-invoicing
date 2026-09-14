@@ -122,7 +122,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 051)
+## Database schema (current through migration 052)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -149,6 +149,7 @@ Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 - `save_invoice_with_items(...)` — the main upsert. Redefined by seven migrations; rebuild it from its live definition, never from an old file.
 - `enforce_invoice_id_type()` — trigger, migration 039. An `EST` row is an estimate and an `INV` row is an invoice; blocks any write that would introduce a mismatch, grandfathers rows already mismatched.
 - `bump_doc_num(n)` — advance-only shared counter, migration 040
+- `visits[]` entries are `{ id, start, minutes, label, kind, eventId, builtBy, pending? }`. `kind` is `job` / `estimate` / `emergency` and drives the Google event colour; absent, it falls back to the document type, so nothing needed backfilling when it was added. `builtBy: "app"` marks an event this app created — only those get their description and location patched on a reschedule, so a booking from Lisa keeps the caller's own words. Both live in the jsonb, so neither cost a migration.
 - `sync_first_visit()` — trigger, migration 044. Mirrors the earliest entry of `invoices.visits` into `gcal_date` / `gcal_event_id` / `gcal_duration_minutes`. Runs only when `visits` is a non-empty array, so the AI receptionist writing `gcal_date` directly on a lead is left alone.
 - `create_estimate_from_lead(...)` / `capture_abandoned_call(...)` — AI receptionist
 - `set_invoice_internal_notes(...)`, `set_invoice_gcal_event(...)`, `push_invoice_to_calendar(...)`, `notify_owner_of_lead(...)`, `propagate_client_to_invoices(...)`, `lookup_client_by_phone(...)`, `log_client_message(...)`, `client_message_thread(...)`
@@ -192,6 +193,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **048** — stop `save_invoice_with_items` restamping `gcal_date` as UTC
 - **049–050** — lead timestamps in Hawaii time, and a backfill of the ten rows already written wrong
 - **051** — inbound SMS media and alerts
+- **052** — `push_invoice_to_calendar()` rewritten to match `buildCalendarEvent()` in `src/App.jsx`: title `Work · Client · Document`, the whole job site in the location field, line-item names as a SCOPE block, the document's real type instead of a hardcoded "Estimate", and a `colorId` in the webhook payload
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
 Next migration is `052_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
