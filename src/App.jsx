@@ -1958,6 +1958,30 @@ async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackM
       }
 
       const ev = nv.eventId ? byId.get(nv.eventId) : null;
+
+      // Colour a booking this app did not create.
+      //
+      // Lisa's Apps Script sets no colour, so every job she books would sit in
+      // Google's default blue on a calendar whose whole key is colour — and
+      // fixing that inside the Apps Script means editing a web app that lives
+      // only in Jake's Google account, with a redeploy step, for one line. The
+      // app already holds a write token and already reads these events, so it
+      // repairs them here instead.
+      //
+      // Patched only when it actually differs, so this is one write per event
+      // once, not a write on every sweep. Purely a Google-side fix: no local
+      // state changes, so it deliberately does not set `changed`.
+      if (canWrite && ev) {
+        const wantColor = JOB_KINDS[visitKind(inv, nv)].colorId;
+        if ((ev.colorId || null) !== wantColor) {
+          try {
+            await GCal.updateEvent(nv.eventId, { colorId: wantColor });
+          } catch (err) {
+            console.warn(`[sync] could not colour event ${nv.eventId}:`, err?.message || err);
+          }
+        }
+      }
+
       const gs = ev?.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
       const ge = ev?.end?.dateTime ? calZonedParts(ev.end.dateTime) : null;
       if (gs) {

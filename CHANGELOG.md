@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.11.1 — 2026-09-14
+
+### Changes
+- **The app colours Lisa's bookings itself, so the Apps Script needs no edit.** v1.11.0 sent a `colorId` in the webhook payload, which meant the Apps Script behind `settings.gcal_webhook_url` had to be changed to use it — a web app that exists only in Jake's Google account, with a redeploy step, for one line. The calendar reconciliation now compares each linked event's colour against its visit's kind and patches it when they differ. One write per event, once, rather than on every sweep. The `colorId` in the webhook payload stays: harmless, and it saves the repair trip if the Apps Script is ever updated.
+
+---
+
 ## v1.11.0 — 2026-09-14
 
 ### Changes
