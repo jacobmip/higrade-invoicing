@@ -1752,40 +1752,140 @@ function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }
 }
 
 
-// ─── Calendar event body ──────────────────────────────────────────────────────
+// ─── Job kinds ─────────────────────────────────────────────────────────────
+// One colour system for the app and for Google. Google only accepts ids from
+// its own fixed palette on an event, so each hex here is the colour Google
+// actually draws for that id. Change one side without the other and the key on
+// the Calendar tab starts lying about what the blocks mean.
+const JOB_KINDS = {
+  job:       { label: "Job",       colorId: "7",  hex: "#039BE5" }, // Peacock
+  estimate:  { label: "Estimate",  colorId: "6",  hex: "#F4511E" }, // Tangerine
+  emergency: { label: "Emergency", colorId: "11", hex: "#D50000" }, // Tomato
+};
+const JOB_KIND_ORDER = ["job", "estimate", "emergency"];
+const FOLLOWUP_KIND = { label: "Follow-up", colorId: "5", hex: "#F6BF26" }; // Banana
+const GCAL_OTHER    = { label: "Other",     colorId: "8", hex: "#616161" }; // Graphite
+
+// The key on the Calendar tab, in the order it is drawn. Every event carries a
+// `kind` from this list, which is also what the chips filter on.
+const CAL_LEGEND = [
+  ...JOB_KIND_ORDER.map(k => [k, JOB_KINDS[k]]),
+  ["followup", FOLLOWUP_KIND],
+  ["other", GCAL_OTHER],
+];
+
+// A visit's kind, falling back to the document type. Estimates colour as
+// estimates and invoices as jobs with nobody setting anything, so every visit
+// already on file has a kind without a migration or a backfill. `visits` is a
+// jsonb column, so the override this reads costs no schema change either.
+const visitKind = (invoice, v) =>
+  (v?.kind && JOB_KINDS[v.kind]) ? v.kind
+    : (invoice?.type === "estimate" ? "estimate" : "job");
+
+// The whole job site on one line. This used to be job_address.line1 alone,
+// which dropped the unit, the city and the zip — enough to send the Location
+// field's directions to the right street number on the wrong block.
+const calFullAddress = (a) =>
+  [a?.line1, a?.line2, a?.line3].map(s => String(s || "").trim()).filter(Boolean).join(", ");
+
+// What the work is, for the front of the title. The visit label wins, then the
+// first line item, so a title is never just a name and a document number.
+const CAL_WHAT_MAX = 30;
+function calJobWhat(invoice, v) {
+  const raw = ((v?.label || "").split("\n")[0].trim())
+    || ((invoice?.items?.[0]?.name || "").trim())
+    || "Plumbing";
+  // Item names carry their spec after a dash ("Water Heater Replacement –
+  // Electric 40gal"). Cut there first, then hard cap whatever is left.
+  const cut = raw.split(/\s[–—-]\s/)[0].trim() || raw;
+  return cut.length > CAL_WHAT_MAX ? cut.slice(0, CAL_WHAT_MAX - 1).trimEnd() + "…" : cut;
+}
+
+
+// ─── Calendar event body ────────────────────────────────────────────────────
 // Built exactly the way the server does it, so an appointment looks the same
-// whoever booked it. push_invoice_to_calendar() (migration 038) is the
-// reference: title "Client - ID", location is the job address line, body is
-// contact details, the private notes, then the document number.
+// whoever booked it. push_invoice_to_calendar() is the server-side twin;
+// migration 051 moves it to this same shape.
 //
-// Module level on purpose. The schedule modal and the calendar reconciliation
-// both create events, and if they built different bodies the calendar would
-// drift depending on which one happened to run.
+//   Title        Water Heater · Mike Johnson · EST0807
+//   Location     the full job site, so tapping it gives real directions
+//   Description  contact block, the scope as line-item names, the visit label,
+//                the private notes, then the document number
+//
+// The job site is deliberately NOT in the title. Google puts it in the Location
+// field, where it is tappable, and a second copy would only eat the characters
+// the work description needs.
+//
+// Module level on purpose. The schedule modal, the calendar reconciliation, the
+// follow-up modal and the assistant all create events, and when they each built
+// their own body the calendar read differently depending on which one ran.
+const CAL_SCOPE_MAX = 6;
 function buildCalendarEvent(invoice, v, fallbackMinutes) {
   const startDt = new Date(`${v.start}:00`);
   const endDt = new Date(startDt.getTime() + (Number(v.minutes) || fallbackMinutes || DEFAULT_JOB_MINUTES) * 60000);
 
   const client = (invoice.client || "").trim();
   const label = (v.label || "").trim();
-  // Google strips newlines from a title, so only the first line goes there.
-  const firstLine = label.split("\n")[0].trim();
-  const loc = (invoice.jobAddress?.line1 || "").trim();
+  const loc = calFullAddress(invoice.jobAddress);
   const phone = (invoice.clientInfo?.phone || "").trim();
   const notes = (invoice.internalNotes || "").trim();
-  const kind = invoice.type === "estimate" ? "Estimate" : "Invoice";
+  const kind = visitKind(invoice, v);
+  // Was hardcoded to "Estimate" on the server, which labelled every invoice
+  // wrong. Read the document instead.
+  const docKind = invoice.type === "estimate" ? "Estimate" : "Invoice";
+
+  // Line-item NAMES only. The per-item `desc` is the scope of work written for
+  // the customer's paperwork; on a calendar block it is a wall of text. The
+  // name alone is the "what needs doing here" glance.
+  const names = (invoice.items || [])
+    .map(it => String(it.name || it.desc || "").split("\n")[0].trim())
+    .filter(Boolean);
+  const scope = names.slice(0, CAL_SCOPE_MAX).map(n => `• ${n}`);
+  if (names.length > CAL_SCOPE_MAX) scope.push(`…and ${names.length - CAL_SCOPE_MAX} more`);
 
   return {
-    summary: `${client || "Job"} - ${invoice.id || ""}`.trim() + (firstLine ? ` - ${firstLine}` : ""),
+    // Google strips newlines from a title, so every part here is single-line.
+    summary: [calJobWhat(invoice, v), client || "Job", invoice.id].filter(Boolean).join(" · "),
     description: [
       [client, phone, loc].filter(Boolean).join("\n"),
+      scope.length ? ["SCOPE", ...scope].join("\n") : "",
       label,
-      notes || "(no notes)",
-      `${kind}: ${invoice.id || ""}`,
+      notes,
+      invoice.id ? `${docKind} ${invoice.id}` : "",
     ].filter(Boolean).join("\n\n"),
     location: loc || undefined,
+    colorId: JOB_KINDS[kind].colorId,
     start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
     end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
+    // Stamps the event as this app's own on Google's side. The visit carries
+    // the same fact locally in `builtBy`, which is what the patch below reads;
+    // this copy is the one that survives if the local record is ever lost.
+    extendedProperties: { private: { builtBy: "app", kind } },
   };
+}
+
+// What a reschedule sends to Google.
+//
+// Times and colour always. The TEXT only for events this app created. A booking
+// from Lisa the receptionist carries the caller's own words in its description
+// and the lead's address in its location, and those are worth more than this
+// app's template — replacing them was the original reason the description was
+// never patched at all.
+//
+// The cost of that blanket rule was that editing a job's notes or line items
+// never reached the calendar. `builtBy` is set on every event this app creates,
+// so its own bookings now stay current and Lisa's stay untouched. A visit from
+// before this change has no marker and is treated as hers, which is the safe
+// way to be wrong.
+function buildCalendarPatch(body, v, { titleChanged = false } = {}) {
+  const patch = { start: body.start, end: body.end, colorId: body.colorId };
+  if (titleChanged) patch.summary = body.summary;
+  if (v?.builtBy === "app") {
+    patch.summary = body.summary;
+    patch.description = body.description;
+    if (body.location) patch.location = body.location;
+  }
+  return patch;
 }
 
 
@@ -1840,10 +1940,11 @@ async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackM
         const body = buildCalendarEvent(inv, nv, fallbackMinutes);
         try {
           if (nv.eventId) {
-            await GCal.updateEvent(nv.eventId, { start: body.start, end: body.end, summary: body.summary });
+            await GCal.updateEvent(nv.eventId, buildCalendarPatch(body, nv, { titleChanged: true }));
           } else {
             const resp = await GCal.createEvent(body);
             nv.eventId = resp?.id || null;
+            nv.builtBy = "app";
           }
           delete nv.pending;
           changed = true;
@@ -1893,11 +1994,17 @@ const JOB_DURATIONS = [
 
 function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave }) {
   const fallback = defaultMinutes || DEFAULT_JOB_MINUTES;
+  // Estimate documents open on Estimate, invoices on Job. Jake overrides to
+  // Emergency per visit, so a call-out today and the scheduled repair next week
+  // can be two colours on the same document — which is how the day actually
+  // goes.
+  const defaultKind = invoice.type === "estimate" ? "estimate" : "job";
   const newVisit = (start) => ({
     id: "v_" + Math.random().toString(36).slice(2, 10),
     start: start || `${today()}T09:00`,
     minutes: JOB_DURATIONS.some(d => d.v === fallback) ? fallback : 120,
     label: "",
+    kind: defaultKind,
     eventId: null,
   });
 
@@ -1913,6 +2020,7 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
         start: invoice.gcalDate.slice(0, 16),
         minutes: invoice.gcalDurationMinutes || fallback,
         label: "",
+        kind: defaultKind,
         eventId: invoice.gcalEventId || null,
       }];
     }
@@ -1953,7 +2061,8 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
         const before = originalRef.current.find(o => o.id === v.id);
         const moved = !before || before.start !== v.start
           || Number(before.minutes) !== Number(v.minutes)
-          || (before.label || "") !== (v.label || "");
+          || (before.label || "") !== (v.label || "")
+          || (before.kind || defaultKind) !== (v.kind || defaultKind);
         if (moved) v.pending = true;
       });
     }
@@ -1973,22 +2082,21 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
         const before = originalRef.current.find(o => o.id === v.id);
         const timeChanged = !before || before.start !== v.start || Number(before.minutes) !== Number(v.minutes);
         const labelChanged = !before || (before.label || "") !== (v.label || "");
-        if (before && before.eventId && !timeChanged && !labelChanged) continue;
+        const kindChanged = !before || (before.kind || defaultKind) !== (v.kind || defaultKind);
+        if (before && before.eventId && !timeChanged && !labelChanged && !kindChanged) continue;
 
         const ev = eventFor(v);
 
         // An existing event gets MOVED, not replaced. Deleting and re-creating
         // it was destroying everything the AI receptionist put there: its
         // title, the lead notes in the description and the job address as the
-        // location, all replaced by this app's bare template. A PATCH sends
-        // only the times, so the rest survives a date change untouched.
+        // location, all replaced by this app's bare template.
         //
-        // The description is deliberately never patched. On a receptionist
-        // booking it holds the caller's own words, which are worth more than
-        // the line-item text this app would put there.
+        // buildCalendarPatch decides how much to send: times and colour for any
+        // event, the text as well only for one this app created. See its header
+        // for why a visit with no `builtBy` marker is treated as Lisa's.
         if (v.eventId) {
-          const patch = { start: ev.start, end: ev.end };
-          if (labelChanged) patch.summary = ev.summary;
+          const patch = buildCalendarPatch(ev, v, { titleChanged: labelChanged || kindChanged });
           try {
             await GCal.updateEvent(v.eventId, patch);
             delete v.pending;
@@ -2004,6 +2112,7 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
         try {
           const resp = await GCal.createEvent(ev);
           v.eventId = resp?.id || null;
+          v.builtBy = "app";
           delete v.pending;
         } catch (err) {
           // Mark it so the sweep pushes this change to Google later instead of
@@ -2057,6 +2166,23 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
               {ordered.length > 1 && (
                 <button onClick={() => removeVisit(v.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#cc4444", fontSize: 18, lineHeight: 1, padding: "0 4px" }}>×</button>
               )}
+            </div>
+            {/* Kind picker. Drives the event colour on Google and the key on
+                the Calendar tab. */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+              {JOB_KIND_ORDER.map(k => {
+                const on = (v.kind || defaultKind) === k;
+                return (
+                  <button key={k} onClick={() => setVisit(v.id, { kind: k })} style={{
+                    flex: 1, padding: "7px 0", borderRadius: 7, cursor: "pointer",
+                    border: `1.5px solid ${on ? JOB_KINDS[k].hex : "#e4e8f0"}`,
+                    background: on ? JOB_KINDS[k].hex : "#fff",
+                    color: on ? "#fff" : "#889",
+                    fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                    fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase",
+                  }}>{JOB_KINDS[k].label}</button>
+                );
+              })}
             </div>
             <div style={{ marginBottom: 8 }}>
               {/* Grows on input rather than through a ref callback. An inline
@@ -2113,7 +2239,12 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
     setSaving(true);
     let followUpEventId = invoice.followUpEventId || null;
     if (gcalAuthed && GCal.isConfigured()) {
-      const event = { summary: `Follow up: ${invoice.id} – ${invoice.client || "Client"}`, start: { date }, end: { date } };
+      const event = {
+        summary: ["Follow up", invoice.client || "Client", invoice.id].filter(Boolean).join(" · "),
+        start: { date }, end: { date },
+        colorId: FOLLOWUP_KIND.colorId,
+        extendedProperties: { private: { builtBy: "app", kind: "followup" } },
+      };
       try {
         if (followUpEventId) await GCal.deleteEvent(followUpEventId).catch(() => {});
         const resp = await GCal.createEvent(event);
@@ -2448,8 +2579,6 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
               // which the catch below reports.
               const time = action.time || "09:00";
               const durationHours = action.durationHours || 2;
-              const startDt = new Date(`${action.date}T${time}:00`);
-              const endDt = new Date(startDt.getTime() + durationHours * 3600000);
               // Full street address goes in the calendar event's location
               // field (so it's tappable for directions), not the notes.
               // Prefer an explicit job-site address from Jake's message; fall
@@ -2458,16 +2587,25 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
                 || [client.address1, client.address2, client.address3].filter(Boolean).join(", ")
                 || [client.addresses?.[0]?.line1, client.addresses?.[0]?.line2, client.addresses?.[0]?.line3].filter(Boolean).join(", ")
                 || "";
-              const event = {
-                summary: `${client.name} – ${action.jobDescription}`,
-                location: location || undefined,
-                description: [
-                  action.jobDescription,
-                  client.phone || "",
-                ].filter(Boolean).join("\n"),
-                start: { dateTime: startDt.toISOString(), timeZone: GCal.TZ },
-                end: { dateTime: endDt.toISOString(), timeZone: GCal.TZ },
-              };
+              // The same builder the schedule modal uses, so a booking made by
+              // asking for it is indistinguishable from one made by hand. There
+              // is no invoice behind this one, so the job description stands in
+              // for the line items and the document number is left off the
+              // title. The label is left empty on purpose — filling it too
+              // would print the description twice.
+              const event = buildCalendarEvent(
+                {
+                  client: client.name,
+                  id: "",
+                  type: "invoice",
+                  clientInfo: { phone: client.phone || "" },
+                  jobAddress: { line1: location },
+                  items: [{ name: action.jobDescription }],
+                  internalNotes: "",
+                },
+                { start: `${action.date}T${time}`, minutes: durationHours * 60, label: "" },
+                DEFAULT_JOB_MINUTES,
+              );
               const resp = await GCal.createEvent(event);
               setMsgs(p => [...p, { role: "assistant", text: action.summary || `Scheduled ${client.name}.`, card: { type: "schedule_confirm", clientName: client.name, date: action.date, time, durationHours, jobDescription: action.jobDescription, eventId: resp?.id } }]);
             } catch (e) {
@@ -6870,12 +7008,23 @@ function PaymentsTab({ invoices }) {
 // ─── Calendar Tab ─────────────────────────────────────────────────────────────
 // ─── Calendar date helpers ────────────────────────────────────────────────────
 const CAL_VIEWS = [
+  // Agenda first: it is the one that answers "what is coming up" without
+  // tapping a day, which is the question the grid views make you work for.
+  { id: "agenda", label: "Agenda", days: 0 },
   { id: "day",   label: "Day",   days: 1 },
   { id: "3day",  label: "3 Day", days: 3 },
   { id: "week",  label: "Week",  days: 7 },
   { id: "month", label: "Month", days: 0 },
 ];
+// How far forward the agenda looks. Two months is past the end of any job
+// currently on the books and still one Google fetch.
+const CAL_AGENDA_DAYS = 60;
 const CAL_HOUR_PX = 52;
+// Pinch range. Below ~0.6 the hour labels collide, above ~2.2 a week no longer
+// fits across a phone.
+const CAL_ZOOM_MIN = 0.6;
+const CAL_ZOOM_MAX = 2.2;
+const calClampZoom = (z) => Math.min(CAL_ZOOM_MAX, Math.max(CAL_ZOOM_MIN, z));
 
 const calYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const calParseYmd = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -6945,7 +7094,10 @@ function calAssignLanes(evs) {
 // ─── Time-slot grid (Day / 3 Day / Week) ──────────────────────────────────────
 // Google-Calendar-style: hour rows down the side, one column per day, events
 // drawn as blocks positioned and sized by their real start and end.
-function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpenInvoice }) {
+function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpenInvoice, zoom = 1 }) {
+  // Pinching scales the hour row rather than CSS-transforming the grid, so text
+  // stays crisp and the scroll position keeps meaning the same time of day.
+  const hourPx = Math.round(CAL_HOUR_PX * zoom);
   const scrollRef = useRef(null);
   const todayStr = today();
 
@@ -6957,17 +7109,17 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
   const startHour = 0;
   const endHour = 24;
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
-  const pxPerMin = CAL_HOUR_PX / 60;
-  const bodyHeight = (endHour - startHour) * CAL_HOUR_PX;
+  const pxPerMin = hourPx / 60;
+  const bodyHeight = (endHour - startHour) * hourPx;
 
   // Open on the working day rather than at midnight — but if something is
   // booked earlier than that, start there instead so it is not off-screen.
   const earliestMin = timed.length ? Math.min(...timed.map(e => e.startMin)) : 8 * 60;
   const openAtHour = Math.max(0, Math.min(8, Math.floor(earliestMin / 60) - 1));
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, openAtHour * CAL_HOUR_PX - 12);
+    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, openAtHour * hourPx - 12);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openAtHour, days[0]]);
+  }, [openAtHour, days[0], hourPx]);
 
   // Red "now" line, only when today is one of the visible columns.
   const [nowMin, setNowMin] = useState(() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); });
@@ -7019,12 +7171,12 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
       {/* Hour grid */}
       {/* overscrollBehavior contain stops a flick that reaches the end of the
           grid from continuing into the page behind it. */}
-      <div ref={scrollRef} style={{ maxHeight: 460, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
+      <div ref={scrollRef} style={{ maxHeight: Math.round(420 * Math.min(zoom, 1.35)), overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
         <div style={{ display: "flex", position: "relative", height: bodyHeight }}>
           {/* Hour labels */}
           <div style={{ width: GUTTER, flexShrink: 0, position: "relative" }}>
             {hours.map((h, i) => (
-              <div key={h} style={{ position: "absolute", top: i * CAL_HOUR_PX - 6, right: 6, fontSize: 10, color: "#aab" }}>{calFmtTime(h * 60)}</div>
+              <div key={h} style={{ position: "absolute", top: i * hourPx - 6, right: 6, fontSize: 10, color: "#aab" }}>{calFmtTime(h * 60)}</div>
             ))}
           </div>
           {/* Day columns */}
@@ -7033,7 +7185,7 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
             return (
               <div key={d} style={{ flex: 1, minWidth: 0, position: "relative", borderLeft: "1px solid #f2f4f9" }}>
                 {hours.map((h, i) => (
-                  <div key={h} style={{ position: "absolute", top: i * CAL_HOUR_PX, left: 0, right: 0, height: CAL_HOUR_PX, borderTop: "1px solid #f2f4f9" }} />
+                  <div key={h} style={{ position: "absolute", top: i * hourPx, left: 0, right: 0, height: hourPx, borderTop: "1px solid #f2f4f9" }} />
                 ))}
                 {evs.map((ev, j) => {
                   const top = (ev.startMin - startHour * 60) * pxPerMin;
@@ -7069,6 +7221,66 @@ function CalendarTimeGrid({ days, eventsByDate, onSelectDay, selectedDay, onOpen
   );
 }
 
+// ─── Agenda (rolling list) ──────────────────────────────────────────────────
+// Everything scheduled from the anchor date forward, in order, grouped by day.
+// Days with nothing on them are skipped: this is a list of what is coming, not
+// a calendar with holes in it. No grid above it, so the first job is the first
+// thing on screen.
+const AG_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const AG_MONS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function CalendarAgenda({ days, eventsByDate, onOpenInvoice, loading }) {
+  const todayStr = today();
+  const rows = days.filter(d => (eventsByDate[d] || []).length);
+
+  if (!rows.length) {
+    return (
+      <div style={{ padding: "34px 16px", textAlign: "center", fontSize: 13, color: "#bbb" }}>
+        {loading ? "Loading events…" : "Nothing scheduled in this window"}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "4px 10px 0" }}>
+      {rows.map(d => {
+        const evs = [...(eventsByDate[d] || [])]
+          .sort((a, b) => (a.allDay ? -1 : b.allDay ? 1 : a.startMin - b.startMin));
+        const dt = calParseYmd(d);
+        const isToday = d === todayStr;
+        return (
+          <div key={d} style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 7, padding: "0 4px 6px" }}>
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, letterSpacing: 0.5, textTransform: "uppercase", color: isToday ? ORANGE : NAVY }}>
+                {isToday ? "Today" : AG_DAYS[dt.getDay()]}
+              </span>
+              <span style={{ fontSize: 12, color: "#99a" }}>{AG_MONS[dt.getMonth()]} {dt.getDate()}</span>
+              <span style={{ flex: 1, height: 1, background: "#eef1f7" }} />
+              <span style={{ fontSize: 11, color: "#bbc" }}>{evs.length}</span>
+            </div>
+            {evs.map((ev, i) => (
+              <div key={i}
+                onClick={ev.invoiceId ? () => onOpenInvoice?.(ev.invoiceId) : undefined}
+                style={{ background: "#fff", borderRadius: 10, padding: "10px 13px", marginBottom: 6, display: "flex", alignItems: "center", gap: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderLeft: `4px solid ${ev.color}`, cursor: ev.invoiceId ? "pointer" : "default" }}>
+                <div style={{ width: 50, flexShrink: 0, fontSize: 11, fontWeight: 700, color: "#667", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 0.3 }}>
+                  {ev.allDay ? "ALL DAY" : calFmtTime(ev.startMin)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.label}</div>
+                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 1 }}>
+                    {!ev.allDay && <span>to {calFmtTime(ev.endMin)} · </span>}
+                    {CAL_LEGEND.find(([k]) => k === ev.kind)?.[1]?.label || "Event"}
+                    {ev.invoiceId && <span style={{ color: ORANGE, fontWeight: 600 }}> · {ev.invoiceId}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed, onEventsFetched }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
@@ -7080,6 +7292,26 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
   const [gcalEvents, setGcalEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [authError, setAuthError] = useState("");
+
+  // Pinch zoom. Persisted, because the size that reads well on the truck is not
+  // the size that reads well at the shop and neither should be re-set daily.
+  const [zoom, setZoom] = useState(() => {
+    try { const z = parseFloat(localStorage.getItem("higrade_cal_zoom")); return isNaN(z) ? 1 : calClampZoom(z); }
+    catch { return 1; }
+  });
+
+  // Which kinds the key is hiding. Also persisted: a filter set on site should
+  // still be set when the app is reopened.
+  const [hiddenKinds, setHiddenKinds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("higrade_cal_hidden") || "[]")); }
+    catch { return new Set(); }
+  });
+  const toggleKind = (k) => setHiddenKinds(prev => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    try { localStorage.setItem("higrade_cal_hidden", JSON.stringify([...next])); } catch {}
+    return next;
+  });
 
   useEffect(() => {
     if (!focusDate) return;
@@ -7095,6 +7327,9 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
   // The dates this view covers. Empty for month, which uses its own grid.
   const viewDays = useMemo(() => {
     if (view === "month") return [];
+    if (view === "agenda") {
+      return Array.from({ length: CAL_AGENDA_DAYS }, (_, i) => calYmd(calAddDays(anchor, i)));
+    }
     const n = view === "day" ? 1 : view === "3day" ? 3 : 7;
     const start = view === "week" ? calStartOfWeek(anchor) : anchor;
     return Array.from({ length: n }, (_, i) => calYmd(calAddDays(start, i)));
@@ -7193,47 +7428,128 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
           startMin = (parseInt(visit.start.slice(11, 13), 10) || 0) * 60 + (parseInt(visit.start.slice(14, 16), 10) || 0);
           endMin = Math.min(24 * 60, startMin + (stored || fallbackMins));
         }
-        // Label the block with the visit's own name when it has one, so three
-        // appointments on the same job do not read as three identical entries.
+        // Read the same way as the event's Google title — work first, then who
+        // — so the block on this grid and the block in Google Calendar are
+        // recognisably the same appointment. The document number is left off
+        // here because the row already prints it in its own colour.
         const who = inv.client || inv.id;
-        // Labels can run to several lines; a block only has room for the first.
         const firstLine = (visit.label || "").trim().split("\n")[0].trim();
-        const suffix = firstLine
-          ? ` · ${firstLine}`
-          : (visits.length > 1 ? ` · Visit ${vi + 1}` : "");
-        push({ date, startMin, endMin, label: who + suffix, invoiceId: inv.id, color: ORANGE, type: "job" });
+        // With no label of its own, every visit on a job would fall back to the
+        // same first line item. Number them so three visits do not read as
+        // three identical entries.
+        const suffix = (!firstLine && visits.length > 1) ? ` · Visit ${vi + 1}` : "";
+        const kind = visitKind(inv, visit);
+        push({
+          date, startMin, endMin,
+          label: `${calJobWhat(inv, visit)} · ${who}${suffix}`,
+          invoiceId: inv.id, color: JOB_KINDS[kind].hex, type: "job", kind,
+        });
       });
       if (inv.followUpDate) {
-        push({ date: inv.followUpDate, allDay: true, label: `Follow-up: ${inv.id}`, invoiceId: inv.id, color: "#2980b9", type: "followup" });
+        push({ date: inv.followUpDate, allDay: true, label: `Follow-up · ${inv.client || inv.id}`, invoiceId: inv.id, color: FOLLOWUP_KIND.hex, type: "followup", kind: "followup" });
       }
     });
 
     gcalEvents.forEach(ev => {
       if (merged.has(ev.id)) return;
-      if (ev.start?.date) { push({ date: ev.start.date, allDay: true, label: ev.summary || "Event", color: "#27ae60", type: "gcal" }); return; }
+      if (ev.start?.date) { push({ date: ev.start.date, allDay: true, label: ev.summary || "Event", color: GCAL_OTHER.hex, type: "gcal", kind: "other" }); return; }
       const s = ev.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
       if (!s) return;
       const e = ev.end?.dateTime ? calZonedParts(ev.end.dateTime) : null;
       push({
         date: s.date, startMin: s.minutes,
         endMin: e && e.date === s.date ? Math.max(e.minutes, s.minutes + 15) : Math.min(24 * 60, s.minutes + 60),
-        label: ev.summary || "Event", color: "#27ae60", type: "gcal",
+        label: ev.summary || "Event", color: GCAL_OTHER.hex, type: "gcal", kind: "other",
       });
     });
     return out;
   }, [invoices, gcalEvents, defaultJobMinutes]);
 
+  // Counted before filtering, so a chip can say how much it is hiding.
+  const kindCounts = useMemo(() => {
+    const c = {};
+    Object.values(eventsByDate).forEach(list => list.forEach(ev => { c[ev.kind] = (c[ev.kind] || 0) + 1; }));
+    return c;
+  }, [eventsByDate]);
+
+  // What the grids and lists actually draw. Filtering here rather than inside
+  // eventsByDate keeps the counts above honest.
+  const visibleByDate = useMemo(() => {
+    if (!hiddenKinds.size) return eventsByDate;
+    const out = {};
+    Object.entries(eventsByDate).forEach(([d, list]) => {
+      const keep = list.filter(ev => !hiddenKinds.has(ev.kind));
+      if (keep.length) out[d] = keep;
+    });
+    return out;
+  }, [eventsByDate, hiddenKinds]);
+
   // ── Navigation ─────────────────────────────────────────────────────────────
   const step = (dir) => setAnchor(a => {
     if (view === "month") { const n = new Date(a); n.setMonth(a.getMonth() + dir); return n; }
+    // The agenda already runs two months forward, so stepping it moves by a
+    // fortnight rather than by one screen.
+    if (view === "agenda") return calAddDays(a, dir * 14);
     return calAddDays(a, dir * (view === "day" ? 1 : view === "3day" ? 3 : 7));
   });
+
+  // ── Swipe to change period, pinch to resize the grid ───────────────────────
+  // One pair of handlers on the wrapper around whichever grid is showing. A
+  // swipe has to be decisive and mostly horizontal, or a flick down the hour
+  // grid would jump the week every time.
+  const swipe = useRef(null);
+  const pinch = useRef(null);
+  const onCalTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const [a, b] = e.touches;
+      pinch.current = { d: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY), z: zoom };
+      swipe.current = null;
+    } else if (e.touches.length === 1) {
+      swipe.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+    }
+  };
+  const onCalTouchMove = (e) => {
+    if (e.touches.length !== 2 || !pinch.current) return;
+    const [a, b] = e.touches;
+    const d = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    if (pinch.current.d <= 0) return;
+    const next = calClampZoom(pinch.current.z * (d / pinch.current.d));
+    // Kept on the ref as well as in state. touchend can arrive before React has
+    // re-rendered with the new zoom, and reading the state variable there would
+    // then persist the value from before the pinch.
+    pinch.current.last = next;
+    setZoom(next);
+  };
+  const onCalTouchEnd = (e) => {
+    if (pinch.current) {
+      // Only persist once the fingers are off, not on every move frame.
+      if (e.touches.length === 0) {
+        const z = pinch.current.last ?? pinch.current.z;
+        try { localStorage.setItem("higrade_cal_zoom", String(z)); } catch {}
+        pinch.current = null;
+      }
+      return;
+    }
+    const st = swipe.current;
+    swipe.current = null;
+    // The agenda is one continuous list; swiping it would fight the scroll.
+    if (!st || view === "agenda" || !e.changedTouches?.length) return;
+    const dx = e.changedTouches[0].clientX - st.x;
+    const dy = e.changedTouches[0].clientY - st.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6 && Date.now() - st.t < 600) {
+      step(dx < 0 ? 1 : -1);
+    }
+  };
   const goToday = () => { const n = new Date(); setAnchor(n); setSelectedDay(today()); };
 
   const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const MON_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const rangeLabel = (() => {
     if (view === "month") return `${MONTHS[month]} ${year}`;
+    if (view === "agenda") {
+      const a = calParseYmd(viewDays[0]);
+      return `${MON_SHORT[a.getMonth()]} ${a.getDate()} onward`;
+    }
     const a = calParseYmd(viewDays[0]);
     const b = calParseYmd(viewDays[viewDays.length - 1]);
     if (view === "day") return `${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][a.getDay()]}, ${MON_SHORT[a.getMonth()]} ${a.getDate()}`;
@@ -7249,7 +7565,7 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
   const cells = [];
   for (let i = 0; i < firstDayOfMonth; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  const selectedEvents = (eventsByDate[selectedDay] || [])
+  const selectedEvents = (visibleByDate[selectedDay] || [])
     .slice()
     .sort((a, b) => (a.allDay ? -1 : b.allDay ? 1 : a.startMin - b.startMin));
 
@@ -7279,14 +7595,43 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
         ))}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 16px 2px" }}>
+      {/* The key. Every colour this tab can draw, with a count, and a tap hides
+          that kind everywhere including the month dots. */}
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: "8px 10px 0" }}>
+        {CAL_LEGEND.map(([k, meta]) => {
+          const off = hiddenKinds.has(k);
+          return (
+            <button key={k} onClick={() => toggleKind(k)} title={`${off ? "Show" : "Hide"} ${meta.label}`} style={{
+              display: "flex", alignItems: "center", gap: 4, padding: "3px 7px",
+              borderRadius: 20, cursor: "pointer", border: "1px solid #e2e7f0",
+              background: off ? "#f5f6fa" : "#fff", opacity: off ? 0.55 : 1,
+              fontSize: 10, fontWeight: 600, color: "#556", whiteSpace: "nowrap",
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: "50%", flexShrink: 0, boxSizing: "border-box",
+                background: off ? "transparent" : meta.hex,
+                border: off ? `1.5px solid ${meta.hex}` : "none",
+              }} />
+              {meta.label}
+              {kindCounts[k] > 0 && <span style={{ color: "#aab", fontWeight: 500 }}>{kindCounts[k]}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 16px 0" }}>
         <button onClick={() => step(-1)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}><Icon name="back" size={18} /></button>
         <button onClick={goToday} style={{ ...S.btn("ghost"), fontSize: 12, padding: "5px 14px" }}>Today</button>
         <button onClick={() => step(1)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, transform: "rotate(180deg)" }}><Icon name="back" size={18} /></button>
       </div>
 
-      {view !== "month" ? (
-        <CalendarTimeGrid days={viewDays} eventsByDate={eventsByDate} selectedDay={selectedDay} onSelectDay={setSelectedDay} onOpenInvoice={onOpenInvoice} />
+      {/* touchAction pan-y leaves vertical scrolling to the browser and keeps
+          horizontal drags and two-finger pinches for us. */}
+      <div onTouchStart={onCalTouchStart} onTouchMove={onCalTouchMove} onTouchEnd={onCalTouchEnd} style={{ touchAction: "pan-y" }}>
+      {view === "agenda" ? (
+        <CalendarAgenda days={viewDays} eventsByDate={visibleByDate} onOpenInvoice={onOpenInvoice} loading={loadingEvents} />
+      ) : view !== "month" ? (
+        <CalendarTimeGrid days={viewDays} eventsByDate={visibleByDate} selectedDay={selectedDay} onSelectDay={setSelectedDay} onOpenInvoice={onOpenInvoice} zoom={zoom} />
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "6px 8px 0" }}>
@@ -7296,14 +7641,14 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
             {cells.map((day, i) => {
               if (!day) return <div key={i} />;
               const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-              const evs = eventsByDate[dateStr] || [];
+              const evs = visibleByDate[dateStr] || [];
               const isToday = dateStr === today();
               const isSel = dateStr === selectedDay;
               return (
-                <div key={i} onClick={() => setSelectedDay(dateStr)} style={{ background: isSel ? NAVY : isToday ? "#fff3ee" : "#fff", borderRadius: 8, padding: "5px 3px", minHeight: 46, cursor: "pointer", border: isToday && !isSel ? `1.5px solid ${ORANGE}` : "1.5px solid transparent", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <div key={i} onClick={() => setSelectedDay(dateStr)} style={{ background: isSel ? NAVY : isToday ? "#fff3ee" : "#fff", borderRadius: 8, padding: "4px 3px", minHeight: Math.round(36 * zoom), cursor: "pointer", border: isToday && !isSel ? `1.5px solid ${ORANGE}` : "1.5px solid transparent", display: "flex", flexDirection: "column", alignItems: "center" }}>
                   <div style={{ fontSize: 13, fontWeight: isToday ? 700 : 400, color: isSel ? "#fff" : isToday ? ORANGE : "#333", marginBottom: 2 }}>{day}</div>
                   <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "center" }}>
-                    {evs.slice(0, 3).map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? "#fff" : ev.color }} />)}
+                    {evs.slice(0, zoom > 1.4 ? 6 : 3).map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? "#fff" : ev.color }} />)}
                   </div>
                 </div>
               );
@@ -7311,9 +7656,12 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
           </div>
         </>
       )}
+      </div>
 
-      {/* Agenda for the selected day — kept in every view */}
+      {/* Agenda for the selected day — kept in every view but the agenda, which
+          is already a list of exactly this. */}
       <div style={{ margin: "12px 12px 0" }}>
+        {view !== "agenda" && <>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 8, padding: "0 4px" }}>{fmtDate(selectedDay)}</div>
         {selectedEvents.length === 0 ? (
           <div style={{ padding: "20px 16px", textAlign: "center" }}>
@@ -7328,12 +7676,13 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>{ev.label}</div>
               <div style={{ fontSize: 11, color: "#aaa", marginTop: 1 }}>
                 {!ev.allDay && <span>{calFmtTime(ev.startMin)}–{calFmtTime(ev.endMin)} · </span>}
-                {ev.type === "job" ? "Scheduled Job" : ev.type === "followup" ? "Follow-Up Reminder" : "Google Calendar"}
+                {CAL_LEGEND.find(([k]) => k === ev.kind)?.[1]?.label || "Event"}
                 {ev.invoiceId && <span style={{ color: ORANGE, fontWeight: 600 }}> · {ev.invoiceId}</span>}
               </div>
             </div>
           </div>
         ))}
+        </>}
         {gcalMissing.length > 0 && (
           <div style={{ background: "#fff8f0", borderRadius: 10, padding: "14px 16px", marginTop: 8, fontSize: 12, color: "#885522", textAlign: "center" }}>
             Calendar sync is not set up on the server. Missing in Vercel:{" "}
