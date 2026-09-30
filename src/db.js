@@ -204,11 +204,21 @@ export async function getMyProfile() {
   const { data: sessionData } = await supabase.auth.getSession()
   const uid = sessionData?.session?.user?.id
   if (!uid) return null
-  const { data, error } = await supabase
-    .from('profiles').select('id, display_name, role').eq('id', uid).maybeSingle()
+  // `tier` arrives with migration 054. Ask for it, but fall back to the
+  // pre-054 column set if the database has not been migrated yet — without
+  // this, PostgREST 400s on the unknown column, the profile comes back null
+  // and the admin loses admin in the UI. The app must never be hostage to
+  // deploy ordering for a purely additive column.
+  let { data, error } = await supabase
+    .from('profiles').select('id, display_name, role, tier').eq('id', uid).maybeSingle()
   if (error) {
-    console.warn('getMyProfile failed:', error.message)
-    return null
+    const res = await supabase
+      .from('profiles').select('id, display_name, role').eq('id', uid).maybeSingle()
+    if (res.error) {
+      console.warn('getMyProfile failed:', res.error.message)
+      return null
+    }
+    data = res.data
   }
   return data || null
 }
@@ -218,10 +228,17 @@ export async function getMyProfile() {
 // surface a quick invoice count so the admin Users panel can show activity
 // at a glance.
 export async function listAllUsers() {
-  const { data: profs, error } = await supabase
-    .from('profiles').select('id, display_name, role, created_at')
+  // Same pre-054 fallback as getMyProfile.
+  let { data: profs, error } = await supabase
+    .from('profiles').select('id, display_name, role, tier, created_at')
     .order('created_at', { ascending: true })
-  if (error) throw error
+  if (error) {
+    const res = await supabase
+      .from('profiles').select('id, display_name, role, created_at')
+      .order('created_at', { ascending: true })
+    if (res.error) throw res.error
+    profs = res.data
+  }
   const profiles = profs || []
   if (profiles.length === 0) return []
 
@@ -239,10 +256,62 @@ export async function listAllUsers() {
     id: p.id,
     displayName: p.display_name || '',
     role: p.role || 'plumber',
+    // Pay band / scorecard selector (migration 054). Falls back to a
+    // revenue tier so a profile predating the column is never mistaken for
+    // an apprentice and measured on the wrong thing.
+    tier: p.tier || (p.role === 'admin' ? 'admin' : 'technician'),
     createdAt: p.created_at,
     invoiceCount: invCount.get(p.id) || 0,
     estimateCount: estCount.get(p.id) || 0,
   }))
+}
+
+// ─── Apprentice competencies (migration 054) ─────────────────────────────────
+
+// Loads every stored skill level, shaped as { techId: { skillKey: level } }.
+// RLS decides the scope: an admin gets everyone, a tech gets only themselves.
+// Skills never signed off simply have no row, so the caller treats a missing
+// key as level 0 rather than needing the catalog seeded per person.
+export async function loadCompetencies() {
+  const { data, error } = await supabase
+    .from('tech_competencies').select('tech_id, skill_key, level, note, updated_at')
+  if (error) {
+    console.warn('loadCompetencies failed:', error.message)
+    return {}
+  }
+  const out = {}
+  for (const r of (data || [])) {
+    if (!out[r.tech_id]) out[r.tech_id] = {}
+    out[r.tech_id][r.skill_key] = r.level ?? 0
+  }
+  return out
+}
+
+// Signs a single skill off at a level. Admin-only by RLS — a tech grading
+// themselves would make the graduation gate meaningless.
+export async function setCompetency(techId, skillKey, level, note) {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const by = sessionData?.session?.user?.id || null
+  const row = {
+    tech_id: techId,
+    skill_key: skillKey,
+    level: Math.max(0, Math.min(4, Number(level) || 0)),
+    updated_at: new Date().toISOString(),
+    updated_by: by,
+  }
+  if (note !== undefined) row.note = note || null
+  const { error } = await supabase
+    .from('tech_competencies').upsert(row, { onConflict: 'tech_id,skill_key' })
+  if (error) throw error
+}
+
+// Sets a profile's pay band / scorecard tier. Admin-only by the profiles RLS.
+export async function setUserTier(userId, tier) {
+  if (!['apprentice', 'technician', 'admin'].includes(tier)) {
+    throw new Error(`invalid tier: ${tier}`)
+  }
+  const { error } = await supabase.from('profiles').update({ tier }).eq('id', userId)
+  if (error) throw error
 }
 
 // ─── AI chat history (server-side, per user) ─────────────────────────────────

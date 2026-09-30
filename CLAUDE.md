@@ -82,6 +82,7 @@ src/
   OnMyWay.jsx        — "on my way" customer notification
   PriceBook.jsx      — price book picker
   billTo.js          — bill-to / job-site address resolution
+  competencies.js    — apprentice skill catalog + graduation math (migration 054)
   backup.js          — manual backup export + restore
   contacts.js        — phone contact import (iOS)
   googleCalendar.js  — gcal sync helpers
@@ -122,13 +123,15 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 053)
+## Database schema (current through migration 054)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
 so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 
-- `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), created_at
+- `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('apprentice'|'technician'|'admin'), created_at
+  - **`tier` is not `role`.** `role` drives `is_admin()` and therefore every RLS policy; `tier` (migration 054) is pay band and which Reports scorecard the person gets, and touches no policy. Never fold one into the other.
+- `tech_competencies` — tech_id, skill_key, level 0–4, note, updated_at, updated_by. Unique on `(tech_id, skill_key)`. Admin-only writes; a tech may read their own rows. `skill_key` matches a `key` in `src/competencies.js` — the catalog is code, not a table, so it is versioned. A stored row whose skill has been removed from the catalog is orphaned and ignored, never deleted.
 - `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes
 - `client_versions` — full client snapshots, mirrors invoice_versions
 - `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, assigned_tech_id, deleted_at, updated_at
@@ -198,9 +201,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **051** — inbound SMS media and alerts
 - **052** — `push_invoice_to_calendar()` rewritten to match `buildCalendarEvent()` in `src/App.jsx`: title `Work · Client · Document`, the whole job site in the location field, line-item names as a SCOPE block, the document's real type instead of a hardcoded "Estimate", and a `colorId` in the webhook payload
 - **053** — `assigned_tech_id` on invoices for the per-tech KPI scorecard: the column, a backfill from `owner_id`, a partial index, `save_invoice_with_items` taught to carry it, and `invoices_select` widened so a tech can see the jobs assigned to them. The update branch treats an absent or null key as "leave the assignment alone" and the literal string `'none'` as "clear it", so the AI receptionist's RPCs — which know nothing about the column — cannot blank out an assignment.
+- **054** — apprentice competencies: `profiles.tier`, the `tech_competencies` table and its RLS. Pairs with `src/competencies.js`.
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `054_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `055_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids

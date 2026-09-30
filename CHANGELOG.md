@@ -5,6 +5,52 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.13.0 — 2026-09-29
+
+### Apprentice competency tracker
+The revenue scorecard shipped in v1.12.0 measures things an apprentice does
+not control: billed, avg ticket, close rate. Scoring a learner at zero against
+the owner is the wrong instrument, so an apprentice now gets a different board
+entirely.
+
+- **`profiles.tier`** (migration 054) — `apprentice` | `technician` | `admin`.
+  Deliberately separate from `profiles.role`, which drives `is_admin()` and
+  every RLS policy in the database; overloading `role` with a pay band would
+  quietly change authorization. Tier is presentation and pay band only.
+- **`tech_competencies`** — one row per (tech, skill), level 0 to 4. Admin-only
+  writes: a tech grading themselves would make the graduation gate meaningless.
+  A tech can read their own record.
+- **`src/competencies.js`** — the catalog: 60 skills across 12 domains (safety,
+  truck and materials, copper, PEX, DWV, fixtures, water heaters, gas, sewer,
+  code and permits, customer, paperwork). It is code rather than a table so it
+  is versioned and reviewable. Skill `key` strings are permanent; renaming one
+  silently resets that skill for everyone who had it signed off.
+- **Graduation gate** — 21 of the 60 are gate skills that must reach Solo
+  before anyone runs their own van, plus 80% of the whole catalog at Supervised
+  or better. Both bars must clear. Reports shows what is still open.
+- **Apprentice Progress card** in Reports, above the revenue scorecard, with a
+  per-domain breakdown and a tap-through editor. Levels save optimistically and
+  roll back on failure — tapping through sixty skills against a round trip each
+  would be unusable on a phone.
+- **Tier selector** in Settings → Users. Flipping someone from Apprentice to
+  Service Tech is the graduation, and it is the moment they move onto the
+  revenue scorecard and commission.
+- Apprentices are filtered out of the revenue scorecard so they no longer drag
+  the team average they cannot yet contribute to.
+
+Colors stay keyed to a tech's stable roster position, so adding an apprentice
+above someone in the list does not repaint them.
+
+**Safe to deploy before migration 054 runs.** `getMyProfile` and `listAllUsers`
+ask for `tier` and fall back to the pre-054 column set if the database does not
+have it yet. Without that fallback PostgREST 400s on the unknown column, the
+profile resolves to null and the admin loses admin in the UI — push is deploy on
+this project, so the app must not be hostage to migration ordering for a purely
+additive column. Until 054 runs, the tier selector and the apprentice card are
+simply inert.
+
+---
+
 ## v1.12.0 — 2026-09-29
 
 ### Per-tech KPI scorecard (Reports tab)
