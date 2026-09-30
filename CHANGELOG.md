@@ -5,6 +5,29 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.15.0 — 2026-09-30
+
+### Chat agent: job sites and scheduling onto the job
+- **Add a job site from chat.** "Add 742 Kapahulu Ave to Karen as the
+  Kapahulu rental" saves a property on the client, same format as Add
+  Property in the app. Refuses to add the same street twice.
+- **New documents get a job site.** Estimates and invoices created from chat
+  used to have no job address or client link, so they printed without one and
+  a booking on them had no calendar location. They now take the named job site
+  (by name, nickname or street), or the client's first one, like the form. If
+  a name matches two properties it asks which.
+- **Move a document to another job site** from chat.
+- **Booking attaches to the job.** Scheduling used to drop a bare Google event
+  that no estimate or invoice knew about, so it never showed on the job and
+  could not be moved from the app. With a document it now adds a visit to that
+  job, exactly like the Schedule button: shows in the app's schedule, uses the
+  job site as the location, several visits per job allowed. An appointment Lisa
+  booked is kept, not overwritten. If Google Calendar is not reachable the
+  visit is still saved and syncs later, and the chat says so instead of
+  calling it booked.
+
+---
+
 ## v1.14.0 — 2026-09-30
 
 ### The app-wide AI chat is now a real agent

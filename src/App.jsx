@@ -11016,7 +11016,12 @@ export default function App() {
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [] };
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+        // The chat agent passes these so a document it creates carries its
+        // client link and job site the way one picked in the form does.
+        ...(inv.client_id ? { client_id: inv.client_id } : {}),
+        ...(inv.clientInfo ? { clientInfo: inv.clientInfo } : {}),
+        ...(inv.jobAddress ? { jobAddress: inv.jobAddress } : {}) };
       // Persist FIRST so we don't show success in the UI for records that fail
       // to land in Supabase. If the write throws we surface the error.
       let saveResult;
@@ -11165,6 +11170,99 @@ export default function App() {
       try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { fail(e); }
       setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
       return updated;
+    }
+    if (parsed.action === "add_job_site") {
+      // Same shape the form's "Add property" and the client editor write, so
+      // the job-site dropdown, the PDF and the calendar all read it normally.
+      const target = data.clients.find(c => c.id === parsed.clientId);
+      if (!target) throw new Error("Client not found");
+      const a = parsed.site || {};
+      const site = {
+        id: newAddressId(),
+        label: a.label || "",
+        nickname: a.nickname || "",
+        line1: a.line1 || "",
+        line2: a.line2 || "",
+        city: a.city || "",
+        state: a.state || (a.city ? "HI" : ""),
+        zip: a.zip || "",
+        notes: a.notes || "",
+      };
+      site.line3 = [site.city, site.state, site.zip].filter(Boolean).join(" ");
+      const updated = { ...target, addresses: [...(target.addresses || []), site] };
+      try { await db.updateClient(updated); } catch (e) { fail(e); return; }
+      db.recordClientVersion(updated, "AI added job site").catch(() => {});
+      setData(d => ({
+        ...d,
+        clients: d.clients.map(c => c.id === target.id ? updated : c),
+        invoices: refreshInvoicesForClient(d.invoices, updated),
+      }));
+      return { client: updated, site };
+    }
+    if (parsed.action === "set_job_site") {
+      // Point a document at one of its client's job sites. Mirrors picking it
+      // from the dropdown in the form, including the clientInfo address lines.
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      if (!inv) throw new Error("Document not found");
+      const addr = parsed.address;
+      const updated = {
+        ...inv,
+        jobAddress: addr,
+        clientInfo: { ...(inv.clientInfo || {}), address1: addr.line1 || "", address2: addr.line2 || "", address3: addr.line3 || "" },
+      };
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      return updated;
+    }
+    if (parsed.action === "add_visit") {
+      // Book an appointment ON a document, the way ScheduleJobModal does:
+      // append to invoices.visits (the schedule's source of truth), create the
+      // Google event with the shared builder, and mark the visit pending when
+      // Google is unreachable so the startup sweep pushes it later. Never
+      // write gcal_date directly; the sync_first_visit trigger derives it.
+      const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      if (!inv) throw new Error("Document not found");
+      const kind = parsed.visit.kind || (inv.type === "estimate" ? "estimate" : "job");
+      // A job booked before visits existed (or by Lisa) keeps its appointment
+      // in the legacy fields only. Seed it first, exactly as the modal does,
+      // or the trigger would overwrite that appointment with the new one.
+      const existing = (Array.isArray(inv.visits) && inv.visits.length)
+        ? inv.visits.map(v => ({ ...v }))
+        : (inv.gcalDate ? [{
+            id: "v_" + Math.random().toString(36).slice(2, 10),
+            start: inv.gcalDate.slice(0, 16),
+            minutes: inv.gcalDurationMinutes || defaultJobMins,
+            label: "",
+            kind: inv.type === "estimate" ? "estimate" : "job",
+            eventId: inv.gcalEventId || null,
+          }] : []);
+      const v = {
+        id: "v_" + Math.random().toString(36).slice(2, 10),
+        start: parsed.visit.start,
+        minutes: parsed.visit.minutes || defaultJobMins,
+        label: parsed.visit.label || "",
+        kind,
+        eventId: null,
+      };
+      let calendarError = null;
+      if (gcalAuthed && GCal.isConfigured()) {
+        try {
+          const resp = await GCal.createEvent(buildCalendarEvent(inv, v, defaultJobMins));
+          v.eventId = resp?.id || null;
+          v.builtBy = "app";
+        } catch (e) {
+          calendarError = e?.message || String(e);
+          v.pending = true;
+        }
+      } else {
+        v.pending = true;
+      }
+      const visits = [...existing, v];
+      try { await db.updateInvoiceVisits(inv.id, visits); } catch (e) { fail(e); return; }
+      const first = [...visits].sort((a, b) => a.start.localeCompare(b.start))[0];
+      const updated = { ...inv, visits, gcalDate: first.start, gcalEventId: first.eventId || null, gcalDurationMinutes: Number(first.minutes) || null };
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      return { invoice: updated, visit: v, calendarError, calendarConnected: gcalAuthed && GCal.isConfigured() };
     }
     if (parsed.action === "delete_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);

@@ -175,8 +175,8 @@ function findClient(input, ctx) {
         email2: c.email2 || '',
         billing_address: [c.address1, c.unit, c.address2, c.address3].filter(Boolean).join(', '),
         job_sites: (Array.isArray(c.addresses) ? c.addresses : [])
-          .map(a => ({ label: a.label || '', address: streetOf(a) }))
-          .filter(a => a.address),
+          .map(a => ({ site_id: a.id, label: a.label || '', ...(a.nickname ? { nickname: a.nickname } : {}), address: streetOf(a) }))
+          .filter(a => a.address || a.label),
         documents: docs.length,
         open_balance: money(open.reduce((s, i) => s + ctx.calcTotals(i).balance, 0)),
         unpaid_invoices: open.map(i => i.id),
@@ -302,6 +302,29 @@ function exactClient(ctx, name) {
   return ctx.getData().clients.find(c => lc(c.name).trim() === n) || null;
 }
 
+// Match a job site on a client by id, name, internal nickname or street.
+// Returns { site } or { error } naming the choices, never a silent guess
+// between two properties.
+function resolveSite(client, query) {
+  const sites = Array.isArray(client.addresses) ? client.addresses : [];
+  if (!sites.length) return { error: `${client.name} has no job sites saved. Add one with add_job_site.` };
+  const q = lc(query).trim();
+  const list = () => sites.map(a => `${a.label || a.nickname || '(no name)'}: ${streetOf(a)} [site_id ${a.id}]`).join('; ');
+  const tiers = [
+    a => lc(a.id) === q,
+    a => lc(a.label) === q || lc(a.nickname) === q,
+    a => lc(a.line1) === q || lc(streetOf(a)) === q,
+    a => (a.label && lc(a.label).includes(q)) || (a.nickname && lc(a.nickname).includes(q)),
+    a => lc(streetOf(a)).includes(q),
+  ];
+  for (const t of tiers) {
+    const hits = sites.filter(t);
+    if (hits.length === 1) return { site: hits[0] };
+    if (hits.length > 1) return { error: `"${query}" matches more than one of ${client.name}'s job sites: ${list()}. Ask Jake which.` };
+  }
+  return { error: `No job site on ${client.name} matches "${query}". Saved sites: ${list()}.` };
+}
+
 async function createClient(input, ctx) {
   const name = String(input.name || '').trim();
   if (!name) return { error: 'A client needs a name.' };
@@ -319,18 +342,62 @@ async function updateClient(input, ctx) {
   return { ok: true, client_id: target.id, name: updated?.name || target.name, changed: Object.keys(input.changes || {}) };
 }
 
+async function addJobSite(input, ctx) {
+  const client = ctx.getData().clients.find(c => String(c.id) === String(input.client_id));
+  if (!client) return { error: `No client with id ${input.client_id}. Use find_client first.` };
+  const street = String(input.street || '').trim();
+  if (!street && !input.label) return { error: 'A job site needs a street address or at least a name.' };
+  // Adding the same property twice is the usual mistake; hand back the one
+  // already saved instead.
+  const dupe = (client.addresses || []).find(a => street && lc(a.line1).replace(/\s+/g, ' ') === lc(street).replace(/\s+/g, ' '));
+  if (dupe) return { ok: true, already_saved: true, site_id: dupe.id, label: dupe.label || '', address: streetOf(dupe) };
+  const r = await ctx.onAction({
+    action: 'add_job_site',
+    clientId: client.id,
+    site: {
+      label: input.label || '', nickname: input.nickname || '', line1: street, line2: input.unit || '',
+      city: input.city || '', state: input.state || '', zip: input.zip || '', notes: input.notes || '',
+    },
+  });
+  if (!r?.site) return { error: 'The job site was not saved.' };
+  return { ok: true, client: client.name, site_id: r.site.id, label: r.site.label, address: streetOf(r.site), card: { type: 'created_client', client: r.client } };
+}
+
 async function createDocument(input, ctx) {
   const type = input.type === 'invoice' ? 'invoice' : 'estimate';
   const client = exactClient(ctx, input.client_name);
   if (!client) return { error: `No client named "${input.client_name}". Use find_client, or create_client first.` };
   const items = normalizeItems(input.items);
   if (!items.length) return { error: 'A document needs at least one line item.' };
+  // Job site: the one named, else the client's first, which is what the form
+  // picks when a client is chosen. Without one the document prints with no
+  // job address and a booking on it has no calendar location.
+  let site = null;
+  if (input.job_site) {
+    const r = resolveSite(client, input.job_site);
+    if (r.error) return { error: r.error };
+    site = r.site;
+  } else {
+    site = (Array.isArray(client.addresses) && client.addresses[0]) || null;
+  }
+  const lines = site
+    ? { address1: site.line1 || '', address2: site.line2 || '', address3: site.line3 || '' }
+    : { address1: client.address1 || '', address2: client.address2 || '', address3: client.address3 || '' };
   const doc = await ctx.onAction({
     action: type === 'estimate' ? 'create_estimate' : 'create_invoice',
-    invoice: { client: client.name, items, notes: input.notes || '' },
+    invoice: {
+      client: client.name, items, notes: input.notes || '',
+      client_id: client.id,
+      clientInfo: { name: client.name, email: client.email || '', phone: client.phone || client.mobile || '', ...lines },
+      jobAddress: site || client.billingAddress || null,
+    },
   });
   if (!doc) return { error: 'The document was not created.' };
-  return { ok: true, document_id: doc.id, type, client: client.name, total: money(ctx.calcTotals(doc).total), card: { type: 'created', invoice: doc } };
+  return {
+    ok: true, document_id: doc.id, type, client: client.name, total: money(ctx.calcTotals(doc).total),
+    job_site: site ? `${site.label ? site.label + ': ' : ''}${streetOf(site)}` : 'none (client has no job sites)',
+    card: { type: 'created', invoice: doc },
+  };
 }
 
 async function addLineItems(input, ctx) {
@@ -370,6 +437,19 @@ async function updateDocument(input, ctx) {
   const { inv, error } = requireDoc(ctx, input.document_id);
   if (error) return { error };
   const changes = { ...(input.changes || {}) };
+  let jobSiteNote;
+  if (changes.job_site) {
+    const client = exactClient(ctx, changes.client || inv.client);
+    if (!client) return { error: `Can't find client "${changes.client || inv.client}" to look up job sites.` };
+    const r = resolveSite(client, changes.job_site);
+    if (r.error) return { error: r.error };
+    await ctx.onAction({ action: 'set_job_site', invoiceId: inv.id, address: r.site });
+    jobSiteNote = streetOf(r.site);
+  }
+  delete changes.job_site;
+  if (!Object.keys(changes).length) {
+    return { ok: true, document_id: inv.id, job_site: jobSiteNote };
+  }
   if (typeof changes.client === 'string') {
     const c = exactClient(ctx, changes.client);
     if (!c) return { error: `No client named "${changes.client}".` };
@@ -377,7 +457,7 @@ async function updateDocument(input, ctx) {
   }
   const updated = await ctx.onAction({ action: 'update_invoice', invoiceId: inv.id, changes });
   const u = updated || inv;
-  return { ok: true, document_id: inv.id, status: u.status, due: u.dueDate, client: u.client, total: money(ctx.calcTotals(u).total) };
+  return { ok: true, document_id: inv.id, status: u.status, due: u.dueDate, client: u.client, total: money(ctx.calcTotals(u).total), ...(jobSiteNote ? { job_site: jobSiteNote } : {}) };
 }
 
 async function recordPayment(input, ctx) {
@@ -401,6 +481,35 @@ async function savePrice(input, ctx) {
   const item = { name: String(input.name).trim(), category: input.category || 'Custom', price };
   await ctx.onAction({ action: 'save_item', item });
   return { ok: true, saved: item, card: { type: 'saved_item', item } };
+}
+
+// With a document_id the appointment goes onto that job (invoices.visits),
+// which is what the app's schedule, get_schedule and the Calendar tab read, and
+// what lets it be moved later. Without one it is a bare calendar event.
+async function scheduleJob(input, ctx) {
+  const date = String(input.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'date must be YYYY-MM-DD.' };
+  const time = /^\d{1,2}:\d{2}$/.test(input.time || '') ? input.time.padStart(5, '0') : '09:00';
+  const hours = Number(input.duration_hours) > 0 ? Number(input.duration_hours) : 2;
+  if (!input.document_id) return ctx.scheduleJob({ ...input, date, time, duration_hours: hours });
+
+  const { inv, error } = requireDoc(ctx, input.document_id);
+  if (error) return { error };
+  const r = await ctx.onAction({
+    action: 'add_visit', invoiceId: inv.id,
+    visit: { start: `${date}T${time}`, minutes: Math.round(hours * 60), label: input.job_description || '', kind: input.kind || null },
+  });
+  if (!r?.visit) return { error: 'The appointment was not saved.' };
+  const onCalendar = !!r.visit.eventId;
+  return {
+    ok: true, document_id: inv.id, client: inv.client, start: r.visit.start, duration_hours: hours,
+    location: streetOf(inv.jobAddress) || 'none: the document has no job site, set one with update_document',
+    all_visits_on_job: r.invoice.visits.map(v => v.start).sort(),
+    calendar: onCalendar ? 'on Google Calendar'
+      : r.calendarConnected ? `saved on the job, but Google refused it (${r.calendarError}); it will retry on the next sync`
+      : 'saved on the job; Google Calendar is not connected in the app, so it syncs once Jake connects it',
+    card: { type: 'schedule_confirm', clientName: inv.client, date, time, durationHours: hours, jobDescription: input.job_description || inv.id, eventId: r.visit.eventId },
+  };
 }
 
 async function deleteDocument(input, ctx) {
@@ -439,6 +548,7 @@ const TOOLS = {
   query_database: queryDatabase,
   create_client: createClient,
   update_client: updateClient,
+  add_job_site: addJobSite,
   create_document: createDocument,
   add_line_items: addLineItems,
   update_line_item: updateLineItem,
@@ -446,12 +556,12 @@ const TOOLS = {
   update_document: updateDocument,
   record_payment: recordPayment,
   save_price: savePrice,
-  schedule_job: (input, ctx) => ctx.scheduleJob(input),
+  schedule_job: scheduleJob,
   send_document_email: sendDocumentEmail,
   delete_document: deleteDocument,
 };
 const WRITE_TOOLS = new Set([
-  'create_client', 'update_client', 'create_document', 'add_line_items', 'update_line_item',
+  'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
   'remove_line_item', 'update_document', 'record_payment', 'save_price', 'schedule_job',
   'send_document_email', 'delete_document',
 ]);
@@ -467,6 +577,7 @@ const PROGRESS = {
   query_database: 'Checking the database',
   create_client: (i) => `Adding client ${i.name || ''}`.trim(),
   update_client: 'Updating client',
+  add_job_site: 'Adding job site',
   create_document: (i) => `Creating ${i.type || 'estimate'}`,
   add_line_items: (i) => `Adding items to ${i.document_id || 'document'}`,
   update_line_item: (i) => `Editing ${i.document_id || 'line item'}`,

@@ -49,9 +49,18 @@ Each user message starts with a <context> block giving today's date in Hawaii, t
 - Always find_client before create_client. A duplicate client record is a mess to undo.
 - Address fields: address1 is the street, unit is apt/suite, address2 is city and state together ("Honolulu HI"), address3 is the ZIP. That is the billing address. Job-site addresses are listed separately by find_client.
 
+## Job sites
+- A client can have several job sites (properties), each with a name like "Rental" or "Kaimuki Duplex". find_client lists them with a site_id.
+- When Jake gives a new address for work at a client, save it with add_job_site (it refuses a duplicate street and hands back the saved one).
+- create_document takes job_site (a name, nickname, street or site_id). Leave it out and the client's first job site is used. If the client has several and Jake did not say which, ask.
+- To move an existing document to another job site, update_document with changes.job_site.
+
 ## Scheduling
 - Times are Hawaii local, 24-hour HH:MM. Default 09:00 and 2 hours when Jake does not say.
-- Put the job-site street address in the address field. Use the one Jake gives, or the client's saved job site when there is one clear choice. If a client has several job sites and it is unclear which, ask which one.
+- Book onto the job whenever there is one: pass document_id to schedule_job. That puts the visit on the estimate or invoice, where the app's schedule shows it and it can be moved later, and the calendar location comes from the document's job site. Check search_documents for the client's open estimate or invoice first.
+- If there is no document yet, either create the estimate first and book onto it, or book a bare calendar event (no document_id, with address). A bare event does not appear on any job in the app; say so when you use it.
+- A job can have several visits (rough-in, then finish). Each schedule_job call adds one.
+- The result says whether the visit reached Google Calendar. If it did not, tell Jake it is saved on the job and will sync, rather than calling it booked.
 
 ## Things that need Jake's tap
 - send_document_email does not send. It puts a confirmation card in the chat and Jake taps Send. Tell him it is ready to send, not that it was sent.
@@ -197,6 +206,25 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'add_job_site',
+    description: 'Save a job-site address (property) on an existing client. Returns the site_id. If that street is already saved, returns the existing one instead of adding a duplicate.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'From find_client.' },
+        street: { type: 'string', description: 'Street address, e.g. "742 Kapahulu Ave"' },
+        unit: { type: 'string', description: 'Apt / suite / unit' },
+        city: { type: 'string' },
+        state: { type: 'string', description: 'Two letters, default HI' },
+        zip: { type: 'string' },
+        label: { type: 'string', description: 'Property name printed on invoices, e.g. "Rental" or "Kaimuki Duplex"' },
+        nickname: { type: 'string', description: 'Internal nickname, admin only, never printed' },
+        notes: { type: 'string', description: 'Internal notes about the property (gate code, shutoff location)' },
+      },
+      required: ['client_id', 'street'],
+    },
+  },
+  {
     name: 'create_document',
     description: 'Create a new estimate or invoice for an existing client. Dated today. Returns the new number and total.',
     input_schema: {
@@ -218,6 +246,7 @@ export const AGENT_TOOLS = [
           },
         },
         notes: { type: 'string', description: 'Customer-facing notes printed on the document.' },
+        job_site: { type: 'string', description: "Which of the client's job sites: name, nickname, street or site_id. Omit to use their first one." },
       },
       required: ['type', 'client_name', 'items'],
     },
@@ -282,7 +311,7 @@ export const AGENT_TOOLS = [
   },
   {
     name: 'update_document',
-    description: 'Change document-level fields: status, customer notes, discount (dollars), tax rate, due date, or which client it is for.',
+    description: 'Change document-level fields: status, customer notes, discount (dollars), tax rate, due date, which client it is for, or which of the client\'s job sites it is at.',
     input_schema: {
       type: 'object',
       properties: {
@@ -296,6 +325,7 @@ export const AGENT_TOOLS = [
             tax: { type: 'number', description: 'Percent, normally 4.712.' },
             dueDate: { type: 'string', description: 'YYYY-MM-DD' },
             client: { type: 'string', description: 'Exact client name.' },
+            job_site: { type: 'string', description: "One of the client's saved job sites: name, nickname, street or site_id." },
           },
         },
       },
@@ -332,18 +362,21 @@ export const AGENT_TOOLS = [
   {
     name: 'schedule_job',
     description:
-      'Put a job on the shared Google Calendar for a client. Requires Google Calendar to be connected in the app.',
+      'Book an appointment. With document_id it is added as a visit on that estimate or invoice (shows in the app schedule, uses the document\'s job site, synced to Google Calendar). ' +
+      'Without document_id it is a bare Google Calendar event for the client, not attached to any job, and needs Google Calendar connected.',
     input_schema: {
       type: 'object',
       properties: {
-        client_name: { type: 'string' },
+        document_id: { type: 'string', description: 'The estimate or invoice this appointment is for. Strongly preferred.' },
+        kind: { type: 'string', enum: ['job', 'estimate', 'emergency'], description: 'Sets the calendar colour. Default: estimate for an estimate, job for an invoice.' },
+        client_name: { type: 'string', description: 'Needed only without document_id.' },
         date: { type: 'string', description: 'YYYY-MM-DD' },
         time: { type: 'string', description: 'HH:MM 24-hour Hawaii time. Default 09:00.' },
         duration_hours: { type: 'number', description: 'Default 2.' },
         job_description: { type: 'string', description: 'Short, e.g. "Snake bathtub drain".' },
-        address: { type: 'string', description: 'Job-site street address for the event location.' },
+        address: { type: 'string', description: 'Only without document_id: job-site street address for the event location.' },
       },
-      required: ['client_name', 'date', 'job_description'],
+      required: ['date', 'job_description'],
     },
   },
   {

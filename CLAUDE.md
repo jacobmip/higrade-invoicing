@@ -250,6 +250,17 @@ browser, up to 12 model calls per message.
   with `{ error }`.
 - A write to a document open in the form is refused (`openDocId`), because of
   the open-form overwrite below.
+- **Scheduling with a `document_id` goes through the `add_visit` action,** which
+  does what `ScheduleJobModal` does: appends to `invoices.visits` via
+  `updateInvoiceVisits`, creates the Google event with `buildCalendarEvent`
+  (location from the document's job site), marks the visit `pending` when
+  Google is not reachable, and first seeds a legacy `gcal_date` appointment
+  (a Lisa booking) into `visits` so the trigger does not overwrite it. Without
+  a `document_id` it is a bare calendar event on no job.
+- **Job sites:** `add_job_site` appends to `clients.addresses` in the same shape
+  as the form's "Add property"; `create_document` sets `jobAddress`,
+  `client_id` and `clientInfo` the way picking a client in the form does
+  (named site, else the client's first).
 - Tool names and descriptions in `agent-tools.js` must match what the executors
   in `aiAgent.js` actually do. The model believes the descriptions.
 
