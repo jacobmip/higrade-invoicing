@@ -25,6 +25,13 @@ import { api } from './apiBase.js';
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
 const HISTORY_MESSAGES = 30;     // earlier chat turns replayed as context
+// Screenshots stay visible for a few messages after they are sent, so a
+// follow-up ("yes, book it", "use the other address") can still read the
+// phone number or address off the image instead of relying on whatever the
+// model happened to write down. Capped so the request stays well under the
+// edge function's body limit.
+const PHOTO_REPLAY_MESSAGES = 6;
+const PHOTO_REPLAY_MAX = 4;
 
 // ─── Dates ───────────────────────────────────────────────────────────────────
 // The business runs on Hawaii time. `new Date().toISOString()` is UTC, which is
@@ -634,18 +641,41 @@ export function describeFailure(err) {
 // Rebuild the API conversation from the chat's stored messages: text only,
 // oldest first, starting on a user turn. Tool calls from earlier messages are
 // not replayed; their trace line stands in for them.
-function buildHistory(msgs, cleanText) {
+function imageBlocks(photos) {
   const out = [];
-  for (const m of msgs.slice(-HISTORY_MESSAGES)) {
+  for (const dataUrl of photos || []) {
+    const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+    if (m) out.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+  }
+  return out;
+}
+
+function buildHistory(msgs, cleanText, photoBudget) {
+  const out = [];
+  const recent = msgs.slice(-HISTORY_MESSAGES);
+  const replayFrom = recent.length - PHOTO_REPLAY_MESSAGES;
+  // Newest photos win the budget, so walk backwards to decide who keeps theirs.
+  const keepPhotos = new Set();
+  let budget = photoBudget;
+  for (let i = recent.length - 1; i >= Math.max(0, replayFrom) && budget > 0; i--) {
+    const n = recent[i].role === 'user' ? (recent[i].photos || []).length : 0;
+    if (n && n <= budget) { keepPhotos.add(i); budget -= n; }
+  }
+  recent.forEach((m, i) => {
     if (m.role === 'user') {
       const text = (m.agentCtx || '') + (m.text || '');
-      if (text.trim()) out.push({ role: 'user', content: text });
+      if (keepPhotos.has(i)) {
+        // Same shape as when it was first sent: images, then the text.
+        out.push({ role: 'user', content: [...imageBlocks(m.photos), { type: 'text', text: text || '(see attached photo)' }] });
+      } else if (text.trim()) {
+        out.push({ role: 'user', content: text });
+      }
     } else {
       const body = cleanText ? cleanText(m.text || '') : (m.text || '');
       const text = [body, m.agentTrace ? `[Actions taken: ${m.agentTrace}]` : ''].filter(s => s.trim()).join('\n\n');
       if (text.trim()) out.push({ role: 'assistant', content: text });
     }
-  }
+  });
   while (out.length && out[0].role !== 'user') out.shift();
   return out;
 }
@@ -676,17 +706,13 @@ async function callModel(messages) {
  */
 export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx, onProgress }) {
   const agentCtx = contextBlock(userLabel);
-  const content = [];
-  for (const dataUrl of photos || []) {
-    const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
-    if (m) content.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
-  }
-  content.push({ type: 'text', text: agentCtx + (text || '(see attached photo)') });
+  const content = [...imageBlocks(photos), { type: 'text', text: agentCtx + (text || '(see attached photo)') }];
 
   // Append-only within the message: every model call re-sends this array with
   // the previous response and tool results added on the end, unmodified, which
   // is what keeps the model's own reasoning valid between steps.
-  const working = [...buildHistory(priorMsgs, ctx.cleanText), { role: 'user', content }];
+  const photoBudget = Math.max(0, PHOTO_REPLAY_MAX - (photos || []).length);
+  const working = [...buildHistory(priorMsgs, ctx.cleanText, photoBudget), { role: 'user', content }];
   const cards = [];
   const trace = [];
   let reply = '';

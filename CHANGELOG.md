@@ -5,6 +5,22 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.15.1 — 2026-09-30
+
+### Chat agent: screenshots
+- **A screenshot stays readable for the next few messages.** Before, the chat
+  saw an image only on the message it came with, so answering its follow-up
+  question ("which address?", "yes, book it") left it working from memory of
+  the picture. Up to 4 recent images now ride along for 6 messages.
+- **Screenshot playbook in the prompt.** Reads name, phone, address, the work
+  and the agreed time (latest time both sides agreed to, not one only
+  proposed); looks the person up by phone first, then name. A screenshot with
+  instructions is acted on directly. A screenshot on its own gets a one-line
+  summary and proposed actions to confirm with a yes. Cut-off or unreadable
+  details are called out instead of guessed.
+
+---
+
 ## v1.15.0 — 2026-09-30
 
 ### Chat agent: job sites and scheduling onto the job

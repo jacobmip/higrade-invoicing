@@ -261,6 +261,12 @@ browser, up to 12 model calls per message.
   as the form's "Add property"; `create_document` sets `jobAddress`,
   `client_id` and `clientInfo` the way picking a client in the form does
   (named site, else the client's first).
+- **Screenshots stay visible for follow-ups.** A user message's photos are
+  replayed for `PHOTO_REPLAY_MESSAGES` (6) messages, newest first, at most
+  `PHOTO_REPLAY_MAX` (4) images per request including the current one, rebuilt
+  byte-identically to the original send so the cache still hits. Earlier photos
+  drop to their text placeholder. Keep the cap: images count toward the edge
+  function's request body limit.
 - Tool names and descriptions in `agent-tools.js` must match what the executors
   in `aiAgent.js` actually do. The model believes the descriptions.
 
