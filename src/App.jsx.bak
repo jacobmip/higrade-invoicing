@@ -11,6 +11,7 @@ import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo } from './billTo.js';
+import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
@@ -2310,9 +2311,12 @@ function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
 }
 
 // ─── Global AI Modal ──────────────────────────────────────────────────────────
-function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, onOpenDoc, onOpenClient }) {
+function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onResetChat, onClose, onAction, onOpenDoc, onOpenClient }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // What the agent is doing right now ("Looking up Karen"), shown under the
+  // typing dots so a multi-step request does not look frozen.
+  const [progress, setProgress] = useState("");
   const [listening, setListening] = useState(false);
   // Pending photos waiting to be sent with the next message. Same shape
   // and behavior as AIChatPanel: paperclip button picks files, we resize
@@ -2506,6 +2510,50 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
     }
   };
 
+  // Book a job on the shared calendar for the agent's schedule_job tool. The
+  // same builder the schedule modal uses, so a booking made by asking for it
+  // is indistinguishable from one made by hand.
+  const scheduleFromChat = async (a) => {
+    const client = fuzzyFindClient(getData().clients, a.client_name);
+    if (!client) return { error: `No client matching "${a.client_name}".` };
+    if (!GCal.isConnected()) return { error: "Google Calendar isn't connected in the app. Jake can connect it once from the Calendar tab." };
+    const date = String(a.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "date must be YYYY-MM-DD." };
+    const time = /^\d{1,2}:\d{2}$/.test(a.time || "") ? a.time.padStart(5, "0") : "09:00";
+    const durationHours = Number(a.duration_hours) > 0 ? Number(a.duration_hours) : 2;
+    // Full street address goes in the event's location so it is tappable for
+    // directions. Explicit address first, then the client's address on file.
+    const location = (a.address || "").trim()
+      || [client.address1, client.address2, client.address3].filter(Boolean).join(", ")
+      || [client.addresses?.[0]?.line1, client.addresses?.[0]?.line2, client.addresses?.[0]?.line3].filter(Boolean).join(", ")
+      || "";
+    // No document behind this one, so the job description stands in for the
+    // line items and the number is left off the title. The label stays empty
+    // so the description is not printed twice.
+    const event = buildCalendarEvent(
+      {
+        client: client.name,
+        id: "",
+        type: "invoice",
+        clientInfo: { phone: client.phone || "" },
+        jobAddress: { line1: location },
+        items: [{ name: a.job_description }],
+        internalNotes: "",
+      },
+      { start: `${date}T${time}`, minutes: durationHours * 60, label: "" },
+      DEFAULT_JOB_MINUTES,
+    );
+    const resp = await GCal.createEvent(event);
+    return {
+      ok: true, client: client.name, date, time, duration_hours: durationHours, location: location || null,
+      card: { type: "schedule_confirm", clientName: client.name, date, time, durationHours, jobDescription: a.job_description, eventId: resp?.id },
+    };
+  };
+
+  // One message through the agent loop in src/aiAgent.js: the model looks
+  // things up and makes changes through tools, sees each result, and keeps
+  // going until the job is done. Replaced the old single-shot call that had
+  // to type its actions as JSON into the reply.
   const send = async () => {
     const text = input.trim();
     const hasPhotos = pendingPhotos.length > 0;
@@ -2518,158 +2566,41 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
       text: text || (hasPhotos ? `[${photosForSend.length} photo${photosForSend.length === 1 ? "" : "s"} attached]` : ""),
       photos: photosForSend.length ? photosForSend.map(p => p.dataUrl) : undefined,
     };
-    setMsgs(p => [...p, userMsg]); setLoading(true);
+    const prior = msgs;
+    setMsgs(p => [...p, userMsg]); setLoading(true); setProgress("Thinking");
     try {
-      // Past photos are dropped from history to save tokens — only the
-      // current send carries raw image blocks.
-      const history = [...msgs, userMsg]
-        .filter(m => m.text?.trim() || m.photos?.length)
-        .map((m, i, arr) => {
-          const isLatest = i === arr.length - 1;
-          if (m.role === "user" && isLatest && m.photos?.length) {
-            const blocks = m.photos.map(dataUrl => {
-              const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
-              if (!match) return null;
-              return { type: "image", source: { type: "base64", media_type: match[1], data: match[2] } };
-            }).filter(Boolean);
-            blocks.push({ type: "text", text: m.text || "(see attached photo)" });
-            return { role: "user", content: blocks };
-          }
-          return { role: m.role === "user" ? "user" : "assistant", content: m.text || "" };
-        });
-      const first = history.findIndex(m => m.role === "user");
-      const reply = await callAI(first >= 0 ? history.slice(first) : history, buildGlobalSystemPrompt(data));
-      console.log('[AI reply]', reply);
-      const actions = extractActionsJSON(reply);
-      console.log('[AI actions]', actions);
-
-      if (actions.length === 0) {
-        setMsgs(p => [...p, { role: "assistant", text: reply }]);
-        setLoading(false); return;
-      }
-
-      let invoicesCreated = 0, estimatesCreated = 0, itemsSaved = 0;
-      const createdDocs = [];
-
-      let failed = 0;
-      for (const action of actions) {
-        if (action.action === "create_invoice" || action.action === "create_estimate") {
-          try {
-            const newInv = await onAction(action);
-            if (newInv) { createdDocs.push(newInv); action.action === "create_estimate" ? estimatesCreated++ : invoicesCreated++; }
-          } catch (e) { console.error('create failed', e); failed++; }
-        } else if (action.action === "save_item") {
-          onAction(action); itemsSaved++;
-        } else if (action.action === "add_items") {
-          onAction(action);
-          setMsgs(p => [...p, { role: "assistant", text: action.summary || "Items added.", card: { type: "added", invoiceId: action.invoiceId, count: action.items?.length || 0 } }]);
-        } else if (action.action === "send_email") {
-          const inv = data.invoices.find(i => i.id === action.invoiceId);
-          const client = data.clients.find(c => c.name === inv?.client);
-          if (!inv || !client?.email) {
-            setMsgs(p => [...p, { role: "assistant", text: `Couldn't find ${action.invoiceId} or no email on file.` }]);
-          } else {
-            setMsgs(p => [...p, { role: "assistant", text: action.summary || `Ready to send ${action.invoiceId}.`, card: { type: "confirm_email", invoiceId: action.invoiceId, email: client.email, total: calcTotals(inv).total } }]);
-          }
-        } else if (action.action === "estimate") {
-          // AI used preview format instead of create_estimate — normalize and save
-          console.log('[AI] "estimate" action received in GlobalAI — converting to create_estimate');
-          const normalized = { action: "create_estimate", invoice: { client: action.client || "", date: today(), dueDate: today(), items: action.items || [], notes: action.notes || "", tax: TAX_RATE, discount: 0 }, summary: action.summary };
-          try {
-            const newInv = await onAction(normalized);
-            if (newInv) { createdDocs.push(newInv); estimatesCreated++; }
-          } catch (e) { console.error('estimate create failed', e); failed++; }
-        } else if (action.action === "create_client") {
-          const newClient = await onAction(action);
-          if (newClient) {
-            // Guard: if AI summary claims an address was added but address1 is blank, warn.
-            const summaryMentionsAddr = /address|street|ave|blvd|lane|drive|place|rd\b|at \d/i.test(action.summary || "");
-            const jsonHasAddr = !!(action.client?.address1);
-            if (summaryMentionsAddr && !jsonHasAddr) {
-              setMsgs(p => [...p, { role: "assistant", text: `⚠️ Client "${newClient.name}" was created but the address was not saved — the address fields were missing from the action. Ask me to update the client with the address.`, card: { type: "created_client", client: newClient } }]);
-            } else {
-              setMsgs(p => [...p, { role: "assistant", text: action.summary || `Client "${newClient.name}" added.`, card: { type: "created_client", client: newClient } }]);
-            }
-          }
-        } else if (action.action === "schedule_job") {
-          const client = fuzzyFindClient(data.clients, action.clientName);
-          if (!client) {
-            setMsgs(p => [...p, { role: "assistant", text: `I couldn't find a client matching "${action.clientName}". Please check the name and try again.` }]);
-          } else if (!GCal.isConnected()) {
-            setMsgs(p => [...p, { role: "assistant", text: "Google Calendar isn't connected yet. Connect it in the Calendar tab first — you only have to do it once." }]);
-          } else {
-            try {
-              // No token to fetch here any more — the grant lives on the
-              // server, so createEvent either works or throws not_connected,
-              // which the catch below reports.
-              const time = action.time || "09:00";
-              const durationHours = action.durationHours || 2;
-              // Full street address goes in the calendar event's location
-              // field (so it's tappable for directions), not the notes.
-              // Prefer an explicit job-site address from Jake's message; fall
-              // back to the client's address on file; otherwise leave it blank.
-              const location = (action.address || "").trim()
-                || [client.address1, client.address2, client.address3].filter(Boolean).join(", ")
-                || [client.addresses?.[0]?.line1, client.addresses?.[0]?.line2, client.addresses?.[0]?.line3].filter(Boolean).join(", ")
-                || "";
-              // The same builder the schedule modal uses, so a booking made by
-              // asking for it is indistinguishable from one made by hand. There
-              // is no invoice behind this one, so the job description stands in
-              // for the line items and the document number is left off the
-              // title. The label is left empty on purpose — filling it too
-              // would print the description twice.
-              const event = buildCalendarEvent(
-                {
-                  client: client.name,
-                  id: "",
-                  type: "invoice",
-                  clientInfo: { phone: client.phone || "" },
-                  jobAddress: { line1: location },
-                  items: [{ name: action.jobDescription }],
-                  internalNotes: "",
-                },
-                { start: `${action.date}T${time}`, minutes: durationHours * 60, label: "" },
-                DEFAULT_JOB_MINUTES,
-              );
-              const resp = await GCal.createEvent(event);
-              setMsgs(p => [...p, { role: "assistant", text: action.summary || `Scheduled ${client.name}.`, card: { type: "schedule_confirm", clientName: client.name, date: action.date, time, durationHours, jobDescription: action.jobDescription, eventId: resp?.id } }]);
-            } catch (e) {
-              console.error("schedule_job failed", e);
-              setMsgs(p => [...p, { role: "assistant", text: "Couldn't schedule the job: " + e.message }]);
-            }
-          }
-        } else {
-          // Catch-all for the remaining action types that the App-level
-          // handler knows about: delete_invoice, update_invoice, add_payment,
-          // remove_item, update_item, update_client, delete_client. These
-          // were previously falling through silently.
-          try { await onAction(action); }
-          catch (e) { console.error("action failed", action.action, e); failed++; }
-          if (action.summary) {
-            setMsgs(p => [...p, { role: "assistant", text: action.summary }]);
-          }
-        }
-      }
-
-      if (invoicesCreated || estimatesCreated || itemsSaved) {
-        const parts = [];
-        if (invoicesCreated) parts.push(`${invoicesCreated} invoice${invoicesCreated !== 1 ? "s" : ""}`);
-        if (estimatesCreated) parts.push(`${estimatesCreated} estimate${estimatesCreated !== 1 ? "s" : ""}`);
-        if (itemsSaved) parts.push(`${itemsSaved} price${itemsSaved !== 1 ? "s" : ""} saved`);
-        const isSingle = actions.length === 1;
-        let summaryText = isSingle
-          ? (actions[0].summary || `${parts[0].charAt(0).toUpperCase() + parts[0].slice(1)} created.`)
-          : `Created ${parts.join(" and ")} successfully.`;
-        if (failed > 0) summaryText += ` (${failed} failed to save \u2014 check connection.)`;
-        const card = createdDocs.length === 1
-          ? { type: "created", invoice: createdDocs[0] }
-          : createdDocs.length > 1 ? { type: "batch_created", invoices: createdDocs } : undefined;
-        setMsgs(p => [...p, { role: "assistant", text: summaryText, ...(card ? { card } : {}) }]);
-      } else if (failed > 0) {
-        setMsgs(p => [...p, { role: "assistant", text: `Couldn't save ${failed} document${failed !== 1 ? "s" : ""} \u2014 check your connection and try again.` }]);
-      }
-    } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Error: " + e.message }]); }
-    setLoading(false);
+      const { reply, cards, trace, agentCtx } = await runAgentMessage({
+        priorMsgs: prior,
+        text: userMsg.text,
+        photos: userMsg.photos,
+        userLabel,
+        onProgress: setProgress,
+        ctx: {
+          getData,
+          calcTotals,
+          onAction: (parsed) => onAction(parsed, { strict: true }),
+          scheduleJob: scheduleFromChat,
+          openDocId,
+          cleanText: stripActionBlocks,
+        },
+      });
+      // Keep the context block on the stored user message so later turns
+      // replay it byte-for-byte (better prompt caching), and the action trace
+      // on the reply so the model remembers what it did.
+      setMsgs(p => {
+        const out = [...p];
+        const ui = out.lastIndexOf(userMsg);
+        if (ui >= 0) out[ui] = { ...userMsg, agentCtx };
+        const [first, ...rest] = cards;
+        out.push({ role: "assistant", text: reply, ...(first ? { card: first } : {}), ...(trace ? { agentTrace: trace } : {}) });
+        for (const card of rest) out.push({ role: "assistant", text: "", card });
+        return out;
+      });
+    } catch (e) {
+      console.error("[agent]", e);
+      setMsgs(p => [...p, { role: "assistant", text: describeFailure(e) }]);
+    }
+    setLoading(false); setProgress("");
   };
 
   const confirmEmail = async (idx) => {
@@ -2710,7 +2641,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
     setMsgs(p => [...p, { role: "assistant", text: `Created ${newInv.id} — open it from the invoice list to assign a client.`, card: { type: "created", invoice: newInv } }]);
   };
 
-  const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" });
+  const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" });
 
   return (
     <div style={{ position: "fixed", left: 0, right: 0, top: 0, height: kbH ? `calc(100dvh - ${kbH}px)` : "100dvh", zIndex: 2000, display: "flex", flexDirection: "column", background: LIGHT, maxWidth: 480, margin: "0 auto", overflow: "hidden" }}>
@@ -2767,7 +2698,7 @@ function GlobalAIModal({ data, msgs, setMsgs, onResetChat, onClose, onAction, on
             </div>
           </div>
         ))}
-        {loading && <div style={{ display: "flex", marginBottom: 12 }}><div style={{ background: "#fff", borderRadius: "16px 16px 16px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>{[0,1,2].map(k => <span key={k} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}</div></div>}
+        {loading && <div style={{ display: "flex", marginBottom: 12 }}><div style={{ background: "#fff", borderRadius: "16px 16px 16px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 5 }}>{[0,1,2].map(k => <span key={k} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}{progress && <span style={{ fontSize: 12, color: "#888", marginLeft: 6 }}>{progress}…</span>}</div></div>}
         <div ref={endRef} style={{ height: 14 }} />
       </div>
       {pendingPhotos.length > 0 && (
@@ -11064,8 +10995,16 @@ export default function App() {
     setData(d => ({ ...d, expenses: (d.expenses||[]).filter(e => e.id !== id) }));
   };
 
-  const handleGlobalAIAction = async (parsed) => {
+  // Reads the freshest data through dataRef, not this render's closure: a step
+  // that follows another in the same chat message (add items to the estimate
+  // it just created) would otherwise look it up where it does not exist yet.
+  // opts.strict: throw when a save fails instead of only logging it. The chat
+  // agent (src/aiAgent.js) uses this so a failed write reaches the model as an
+  // error rather than a silent success.
+  const handleGlobalAIAction = async (parsed, opts = {}) => {
     console.log('[handleGlobalAIAction]', parsed.action, parsed);
+    const data = dataRef.current;
+    const fail = (e) => { console.error(e); if (opts.strict) throw e; };
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
       const year = new Date(today()).getFullYear();
@@ -11107,6 +11046,7 @@ export default function App() {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
         setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
         await db.upsertInvoice(updated, false);
+        return updated;
       }
     }
     if (parsed.action === "save_item") {
@@ -11156,12 +11096,13 @@ export default function App() {
         ...(typeof c.tax === "number" ? { tax: c.tax } : {}),
       };
       setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
-      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      return updated;
     }
     if (parsed.action === "delete_invoice") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       if (!inv) return;
-      try { await db.deleteInvoice(parsed.invoiceId); } catch (e) { console.error(e); }
+      try { await db.deleteInvoice(parsed.invoiceId); } catch (e) { fail(e); return; }
       setData(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
     }
     if (parsed.action === "add_payment") {
@@ -11175,7 +11116,8 @@ export default function App() {
       const netBalance = totals.balance + (calcLateFee({ ...inv, payments }, totals).fee || 0);
       const updated = { ...inv, payments, status: netBalance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : inv.status) };
       setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
-      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      return updated;
     }
     if (parsed.action === "remove_item") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
@@ -11183,7 +11125,8 @@ export default function App() {
       if (!inv || idx < 0) return;
       const updated = { ...inv, items: inv.items.filter((_, i) => i !== idx) };
       setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
-      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      return updated;
     }
     if (parsed.action === "update_item") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
@@ -11202,7 +11145,8 @@ export default function App() {
         } : it),
       };
       setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
-      try { await db.upsertInvoice(updated, false); } catch (e) { console.error(e); }
+      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      return updated;
     }
     if (parsed.action === "update_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);
@@ -11218,13 +11162,14 @@ export default function App() {
         ...(typeof c.address2 === "string" ? { address2: c.address2 } : {}),
         ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
       };
-      try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { console.error(e); }
+      try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { fail(e); }
       setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
+      return updated;
     }
     if (parsed.action === "delete_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);
       if (!target) return;
-      try { await db.deleteClient(target.id); } catch (e) { console.error(e); }
+      try { await db.deleteClient(target.id); } catch (e) { fail(e); return; }
       setData(d => ({ ...d, clients: d.clients.filter(cc => cc.id !== target.id) }));
     }
   };
@@ -12009,7 +11954,7 @@ export default function App() {
         </div>
       )}
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
-      {showGlobalAI && <GlobalAIModal data={data} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
+      {showGlobalAI && <GlobalAIModal data={data} getData={() => dataRef.current} userLabel={`${profile?.display_name || session?.user?.email || "unknown"} (${isAdmin ? "admin" : "tech"})`} openDocId={() => (view === "form" ? selected?.id || null : null)} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: textZoom === 1 ? 480 : "none", zIndex: 600, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
         <div style={{ background: NAVY, padding: "16px 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
