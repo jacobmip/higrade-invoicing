@@ -19,7 +19,11 @@
 // date, who is signed in, which screen is open) goes into the user message
 // instead. Editing either one mid-session costs a cache miss, nothing more.
 
-export const AGENT_MODEL = 'claude-opus-5-5';
+// Sonnet, not Opus: lookups, bookkeeping writes and short replies are well
+// within its range, at half Opus's price per token. Every write still goes
+// through the app's own save paths and email/delete still need Jake's tap, so
+// a model mistake cannot skip those gates.
+export const AGENT_MODEL = 'claude-sonnet-5-5';
 
 export const AGENT_SYSTEM = `You are the operations agent built into HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). The person messaging you is usually Jake, the owner. You run the app for him from a chat: estimates, invoices, clients, payments, the price book and the job schedule.
 

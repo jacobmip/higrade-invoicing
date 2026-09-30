@@ -230,8 +230,8 @@ async function callAgentModel(apiKey, messages, withFallbacks = true) {
       model: AGENT_MODEL,
       max_tokens: 16000,
       thinking: { type: 'adaptive' },
-      // Medium is this model's default; stated so a future default change
-      // does not silently change cost or latency.
+      // Sonnet 5.5 defaults to high. Medium is the recommended start for
+      // multi-step tool use and keeps replies quick on a phone.
       output_config: { effort: 'medium' },
       // The system block's breakpoint caches tools + system. The top-level
       // one caches the conversation so far, which grows append-only within a

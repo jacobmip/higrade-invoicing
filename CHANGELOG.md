@@ -32,7 +32,7 @@ steps.
 - **New:** edit or remove a line item by number, change status / notes /
   discount / due date, record a payment, delete one document (with a confirm
   dialog). Sending an email still stops at the Confirm Send card.
-- **Model:** `claude-opus-5-5` at medium effort, with server-side fallback so a
+- **Model:** `claude-sonnet-5-5` at medium effort, with server-side fallback so a
   false-positive safety decline is retried on another model instead of
   returning nothing. The per-invoice chat is unchanged (Haiku).
 - Shows what it is doing while it works ("Looking up Karen...").

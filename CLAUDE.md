@@ -215,7 +215,7 @@ below are the source of truth, and `ANTHROPIC_API_KEY` is the only AI key set).
 | Feature | Where | Model |
 |---|---|---|
 | Per-invoice chat (`AIChatPanel`) | `api/ai.js` | `claude-haiku-4-5-20251001` |
-| Global chat agent (`GlobalAIModal`) | `api/ai.js` agent mode, `api/_lib/agent-tools.js`, `src/aiAgent.js` | `claude-opus-5-5`, effort medium, server-side fallback |
+| Global chat agent (`GlobalAIModal`) | `api/ai.js` agent mode, `api/_lib/agent-tools.js`, `src/aiAgent.js` | `claude-sonnet-5-5`, effort medium, server-side fallback |
 | AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-sonnet-4-5-20250929` |
 | Screenshot-to-client extractor (vision) | `api/ai-extract-client.js` | `claude-sonnet-4-5-20250929` |
 | Receipt OCR to expense | `api/extract-receipt.js` | `claude-sonnet-4-6` |
