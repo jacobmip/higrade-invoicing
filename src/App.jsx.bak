@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
+import * as COMP from "./competencies";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -8806,6 +8807,217 @@ function ExpensesTab({ expenses, onSave, onDelete, newToken }) {
   );
 }
 
+// ─── Apprentice Competency Tracker ────────────────────────────────────────
+// An apprentice controls none of billed, avg ticket or close rate, so the
+// revenue scorecard scores them at zero on work they cannot yet do. They get
+// measured on the only thing they do control: how fast they are learning the
+// trade. Tier flips them onto the revenue board at graduation.
+
+function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
+  const [open, setOpen] = useState(() => new Set([COMP.DOMAINS[0].key]));
+  const [saving, setSaving] = useState(null);
+  const prog = COMP.progressFor(levels);
+
+  const toggle = (k) => setOpen(s => {
+    const n = new Set(s);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
+
+  const pick = async (skillKey, level) => {
+    if (!canEdit) return;
+    setSaving(skillKey);
+    try { await onSet(skillKey, level); } finally { setSaving(null); }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f5f7fb", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+        <div style={{ background: NAVY, padding: "14px 16px", borderRadius: "16px 16px 0 0", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tech.name}</div>
+              <div style={{ color: "#8899bb", fontSize: 11 }}>Apprentice · {Math.round(prog.overallPct * 100)}% overall</div>
+            </div>
+            <button onClick={onClose} style={{ background: "rgba(255,255,255,0.12)", border: "none", color: "#fff", borderRadius: 8, padding: "7px 13px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", flexShrink: 0 }}>Done</button>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "12px 12px 24px" }}>
+          <GraduationCard prog={prog} />
+
+          {COMP.DOMAINS.map(d => {
+            const dp = COMP.domainProgress(d, levels);
+            const isOpen = open.has(d.key);
+            return (
+              <div key={d.key} style={{ background: "#fff", borderRadius: 12, marginBottom: 8, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                <button onClick={() => toggle(d.key)} style={{ width: "100%", background: "none", border: "none", padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: NAVY, letterSpacing: 0.5, textTransform: "uppercase" }}>{d.name}</div>
+                    <div style={{ height: 5, background: "#f0f2f8", borderRadius: 3, marginTop: 5 }}>
+                      <div style={{ height: 5, width: `${Math.max(dp * 100, dp > 0 ? 2 : 0)}%`, background: dp >= 1 ? "#16a085" : ORANGE, borderRadius: 3 }} />
+                    </div>
+                  </div>
+                  <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, color: dp >= 1 ? "#16a085" : "#8899bb", flexShrink: 0 }}>{Math.round(dp * 100)}%</span>
+                  <span style={{ color: "#c3ccdd", fontSize: 12, flexShrink: 0 }}>{isOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {isOpen && (
+                  <div style={{ padding: "0 14px 12px" }}>
+                    {d.skills.map(sk => {
+                      const lv = Math.max(0, Math.min(COMP.MAX_LEVEL, levels[sk.key] ?? 0));
+                      return (
+                        <div key={sk.key} style={{ padding: "9px 0", borderTop: "1px solid #f4f6fa" }}>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 6 }}>
+                            <span style={{ fontSize: 12.5, color: "#333", lineHeight: 1.35, flex: 1 }}>{sk.label}</span>
+                            {sk.gate && (
+                              <span title="Must be Solo before running a van" style={{ flexShrink: 0, background: "#fff1ec", color: ORANGE, fontSize: 8, fontWeight: 700, letterSpacing: 0.6, padding: "2px 5px", borderRadius: 3, textTransform: "uppercase" }}>Gate</span>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: 3, opacity: saving === sk.key ? 0.45 : 1 }}>
+                            {COMP.LEVELS.map(L => {
+                              const on = lv === L.v;
+                              return (
+                                <button
+                                  key={L.v}
+                                  onClick={() => pick(sk.key, L.v)}
+                                  disabled={!canEdit}
+                                  title={L.label}
+                                  style={{
+                                    flex: 1, padding: "6px 2px", borderRadius: 6, cursor: canEdit ? "pointer" : "default",
+                                    border: on ? `2px solid ${L.v === 0 ? "#8899bb" : L.color}` : "1px solid #e4e8f2",
+                                    background: on ? (L.v === 0 ? "#eef1f7" : L.color) : "#fff",
+                                    color: on ? (L.v === 0 ? "#556" : L.ink) : "#aab",
+                                    fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 10,
+                                    letterSpacing: 0.3, textTransform: "uppercase", lineHeight: 1.2,
+                                  }}
+                                >
+                                  {L.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {!canEdit && (
+            <div style={{ fontSize: 11, color: "#aaa", textAlign: "center", padding: "6px 10px", lineHeight: 1.5 }}>
+              Read only. Only the owner can sign a skill off.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GraduationCard({ prog }) {
+  const pctTech = Math.round(prog.technicalPct * 100);
+  const need = Math.round(COMP.TECHNICAL_THRESHOLD * 100);
+  return (
+    <div style={{ background: prog.ready ? "#eaf7ef" : "#fff", border: prog.ready ? "1px solid #b8e3cd" : "none", borderRadius: 12, padding: "13px 14px", marginBottom: 10, boxShadow: prog.ready ? "none" : "0 1px 4px rgba(0,0,0,0.06)" }}>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: prog.ready ? "#16a085" : NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
+        {prog.ready ? "Ready for Service Technician" : "Path to Service Technician"}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 9 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 9, color: "#8899bb", textTransform: "uppercase", letterSpacing: 0.6, fontWeight: 700 }}>Gate skills solo</div>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, color: prog.gateDone === prog.gateTotal ? "#16a085" : ORANGE }}>
+            {prog.gateDone}<span style={{ fontSize: 13, color: "#aab" }}>/{prog.gateTotal}</span>
+          </div>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 9, color: "#8899bb", textTransform: "uppercase", letterSpacing: 0.6, fontWeight: 700 }}>Supervised+</div>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, color: pctTech >= need ? "#16a085" : ORANGE }}>
+            {pctTech}%<span style={{ fontSize: 12, color: "#aab" }}> / {need}%</span>
+          </div>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 9, color: "#8899bb", textTransform: "uppercase", letterSpacing: 0.6, fontWeight: 700 }}>Solo skills</div>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, color: NAVY }}>
+            {prog.soloCount}<span style={{ fontSize: 13, color: "#aab" }}>/{COMP.SKILL_COUNT}</span>
+          </div>
+        </div>
+      </div>
+      {prog.ready ? (
+        <div style={{ fontSize: 11, color: "#1f6f3a", lineHeight: 1.5 }}>
+          Both bars are met. Switch their tier to Technician in Settings to move
+          them onto the revenue scorecard and turn commission on.
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "#889", lineHeight: 1.5 }}>
+          Needs every gate skill at Solo and {need}% of all {COMP.SKILL_COUNT} skills at
+          Supervised or better.
+          {prog.gateRemaining.length > 0 && prog.gateRemaining.length <= 4 && (
+            <> Still open: {prog.gateRemaining.map(s => s.label).join("; ")}.</>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
+  const [openTech, setOpenTech] = useState(null);
+  if (!techs.length) return null;
+
+  return (
+    <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>
+        Apprentice Progress
+      </div>
+      <div style={{ fontSize: 10.5, color: "#aaa", marginBottom: 12, lineHeight: 1.45 }}>
+        Measured on learning, not revenue. Commission starts at Service Technician.
+      </div>
+
+      {techs.map((t, i) => {
+        const levels = competencies[t.id] || {};
+        const prog = COMP.progressFor(levels);
+        const pct = Math.round(prog.overallPct * 100);
+        return (
+          <button
+            key={t.id}
+            onClick={() => setOpenTech(t)}
+            style={{ width: "100%", textAlign: "left", background: "none", border: "none", borderTop: i > 0 ? "1px solid #f4f6fa" : "none", padding: "11px 0", cursor: "pointer" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+              <span style={{ width: 10, height: 10, borderRadius: "50%", background: t.color, flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: "#1a1a1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+              {prog.ready && (
+                <span style={{ flexShrink: 0, background: "#eaf7ef", color: "#16a085", fontSize: 9, fontWeight: 700, letterSpacing: 0.6, padding: "3px 7px", borderRadius: 4, textTransform: "uppercase" }}>Ready</span>
+              )}
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE, flexShrink: 0 }}>{pct}%</span>
+            </div>
+            <div style={{ height: 9, background: "#f0f2f8", borderRadius: 4, marginBottom: 6 }}>
+              <div style={{ height: 9, width: `${Math.max(pct, pct > 0 ? 1.5 : 0)}%`, background: prog.ready ? "#16a085" : t.color, borderRadius: 4 }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8899bb" }}>
+              <span>Gate {prog.gateDone}/{prog.gateTotal} solo · {prog.soloCount}/{COMP.SKILL_COUNT} skills solo</span>
+              <span style={{ color: ORANGE, fontWeight: 600 }}>Open</span>
+            </div>
+          </button>
+        );
+      })}
+
+      {openTech && (
+        <CompetencyModal
+          tech={openTech}
+          levels={competencies[openTech.id] || {}}
+          canEdit={canEdit}
+          onSet={(skillKey, level) => onSet(openTech.id, skillKey, level)}
+          onClose={() => setOpenTech(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── Per-Tech KPI Scorecard ───────────────────────────────────────────────
 // Attribution runs on `assignedTechId` (migration 053), never `ownerId`.
 // ownerId only records who created the row, and save_invoice_with_items
@@ -8850,12 +9062,19 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
       const me = src.find(u => u.id === myId);
       return myId ? [{ id: myId, name: me?.displayName || myName || "You", role: me?.role || "plumber", color: TECH_COLORS[0] }] : [];
     }
-    return src.map((u, i) => ({
-      id: u.id,
-      name: u.displayName || "Unnamed",
-      role: u.role || "plumber",
-      color: TECH_COLORS[i % TECH_COLORS.length],
-    }));
+    // Color index comes from the FULL roster, so a tech keeps their color
+    // whether or not an apprentice sits above them in the list.
+    return src
+      .map((u, i) => ({
+        id: u.id,
+        name: u.displayName || "Unnamed",
+        role: u.role || "plumber",
+        tier: u.tier || "technician",
+        color: TECH_COLORS[i % TECH_COLORS.length],
+      }))
+      // An apprentice generates no attributable revenue, so listing them here
+      // would score them at zero against the owner. They have their own card.
+      .filter(u => u.tier !== "apprentice");
   }, [users, isAdmin, myId, myName]);
 
   const statsFor = (techId) => {
@@ -9032,7 +9251,7 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
 }
 
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
-function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName }) {
+function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName, competencies, onSetCompetency }) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
@@ -9107,6 +9326,16 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
   });
   const methodEntries = Object.entries(methodTotals).sort((a,b) => b[1]-a[1]);
 
+  // Apprentices, in the same stable roster order (and therefore the same
+  // colors) the revenue scorecard uses. A plumber sees only their own card.
+  const apprentices = useMemo(() => {
+    const src = (users || []).slice().sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+    return src
+      .map((u, i) => ({ id: u.id, name: u.displayName || "Unnamed", tier: u.tier || "technician", color: TECH_COLORS[i % TECH_COLORS.length] }))
+      .filter(u => u.tier === "apprentice")
+      .filter(u => isAdmin || u.id === myId);
+  }, [users, isAdmin, myId]);
+
   const yearExpenses = (expenses||[]).filter(e => e.date >= yearStart && e.date <= yearEnd);
   const totalExpenses = yearExpenses.reduce((s, e) => s + (e.amount||0), 0);
   const totalDeductible = yearExpenses.reduce((s, e) => s + (e.category === "Meals & Entertainment" ? (e.amount||0)*0.5 : (e.amount||0)), 0);
@@ -9151,6 +9380,14 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         {kpi(`Inv ${MONTHS_SHORT[currentMonth]}`, String(monthInvoiceCount), NAVY, "this month")}
         {kpi(`GET Q${currentQuarter}`, fmt(getOwed), "#6B39A8", "owed")}
       </div>
+      {/* Apprentices first: they are the ones being actively developed, and
+          their card is the one Jake acts on week to week. */}
+      <ApprenticeScorecard
+        techs={apprentices}
+        competencies={competencies || {}}
+        canEdit={isAdmin}
+        onSet={onSetCompetency}
+      />
       {/* Per-tech scorecard. Runs on `allInvoices`, NOT the View-as-filtered
           set — narrowing to one user would collapse the board to one row and
           silently make every comparison meaningless. */}
@@ -9792,7 +10029,7 @@ function MessageTemplatesCard() {
   );
 }
 
-function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId, setViewAsUserId, refreshUsers }) {
+function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId, setViewAsUserId, refreshUsers, onSetTier }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
   const [importMode, setImportMode] = useState("merge"); // 'merge' | 'replace'
@@ -9877,6 +10114,28 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                       {u.role === "admin" && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, padding: "1px 5px", borderRadius: 3 }}>ADMIN</span>}
                     </div>
                     <div style={{ fontSize: 12, color: "#778" }}>{u.invoiceCount} invoices · {u.estimateCount} estimates</div>
+                    {/* Pay band. Apprentice moves them off the revenue
+                        scorecard and onto the competency tracker; flipping
+                        them to Technician is the graduation, and it is the
+                        moment commission starts. */}
+                    <div style={{ display: "flex", gap: 4, marginTop: 7 }} onClick={e => e.preventDefault()}>
+                      {[["apprentice", "Apprentice"], ["technician", "Service Tech"], ["admin", "Owner"]].map(([val, lbl]) => {
+                        const on = (u.tier || "technician") === val;
+                        return (
+                          <button
+                            key={val}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSetTier(u.id, val); }}
+                            style={{
+                              flex: 1, padding: "5px 4px", borderRadius: 6, cursor: "pointer",
+                              border: on ? `1.5px solid ${ORANGE}` : "1px solid #e4e8f2",
+                              background: on ? ORANGE : "#fff", color: on ? "#fff" : "#8899bb",
+                              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                              fontSize: 10.5, letterSpacing: 0.4, textTransform: "uppercase",
+                            }}
+                          >{lbl}</button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </label>
               );
@@ -10152,7 +10411,18 @@ export default function App() {
         if (p?.role === "admin") {
           try { const users = await db.listAllUsers(); if (!cancelled) setAllUsers(users); } catch {}
         } else {
-          setAllUsers([]);
+          // Not admin: the roster is just them. listAllUsers would return the
+          // same single row under RLS, but this avoids the round trip and
+          // still gives their own scorecard something to render from.
+          setAllUsers(p ? [{
+            id: p.id,
+            displayName: p.display_name || "",
+            role: p.role || "plumber",
+            tier: p.tier || "technician",
+            createdAt: null,
+            invoiceCount: 0,
+            estimateCount: 0,
+          }] : []);
           // Plumbers can never view-as anyone — clear any stale localStorage flag.
           setViewAsUserId("");
         }
@@ -10166,6 +10436,45 @@ export default function App() {
   const refreshUsers = async () => {
     if (!isAdmin) return;
     try { setAllUsers(await db.listAllUsers()); } catch (e) { console.warn(e); }
+  };
+
+  // Apprentice competency levels, shaped { techId: { skillKey: level } }.
+  // RLS scopes it: an admin gets everyone, a tech gets only themselves.
+  const [competencies, setCompetencies] = useState({});
+  useEffect(() => {
+    if (!session) { setCompetencies({}); return; }
+    let cancelled = false;
+    db.loadCompetencies()
+      .then(c => { if (!cancelled) setCompetencies(c); })
+      .catch(e => console.warn("loadCompetencies failed:", e));
+    return () => { cancelled = true; };
+  }, [session]);
+
+  const handleSetTier = async (userId, tier) => {
+    const prev = allUsers;
+    setAllUsers(us => us.map(u => u.id === userId ? { ...u, tier } : u));
+    try {
+      await db.setUserTier(userId, tier);
+    } catch (e) {
+      console.warn("setUserTier failed:", e);
+      setAllUsers(prev);
+      alert("Could not change that user's tier.");
+    }
+  };
+
+  // Optimistic: the grid repaints on tap, then rolls back if the write is
+  // rejected. Tapping through sixty skills against a round trip each would
+  // be unusable on a phone in a crawlspace.
+  const handleSetCompetency = async (techId, skillKey, level) => {
+    const prev = competencies[techId]?.[skillKey] ?? 0;
+    setCompetencies(c => ({ ...c, [techId]: { ...(c[techId] || {}), [skillKey]: level } }));
+    try {
+      await db.setCompetency(techId, skillKey, level);
+    } catch (e) {
+      console.warn("setCompetency failed:", e);
+      setCompetencies(c => ({ ...c, [techId]: { ...(c[techId] || {}), [skillKey]: prev } }));
+      alert("Could not save that skill level. Check your connection and try again.");
+    }
   };
   // Apply the View-as filter to in-memory data. Admins viewing themselves or
   // "All" see the full set. Plumbers always see everything they loaded (RLS
@@ -11766,9 +12075,9 @@ export default function App() {
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
-        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} />}
+        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} onSetCompetency={handleSetCompetency} />}
         {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
-        {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
+        {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
             invoices={deletedInvoices}
