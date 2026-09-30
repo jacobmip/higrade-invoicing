@@ -49,6 +49,10 @@ function toInvoice(row, items = [], payments = []) {
     // can be detected before it overwrites changes.
     updatedAt: row.updated_at || null,
     ownerId: row.owner_id || null,
+    // The tech who RAN the job (migration 053). Distinct from ownerId, which
+    // is only who created the record and gets restamped on every save.
+    // This is what the per-tech KPI scorecard groups by.
+    assignedTechId: row.assigned_tech_id || null,
     deletedAt: row.deleted_at || null,
     items: items
       .filter(it => it.invoice_id === row.id)
@@ -475,6 +479,11 @@ export async function upsertInvoice(inv, isNew) {
       billing_address: inv.billingAddress || null,
       show_billing_address: inv.showBillingAddress ?? true,
       late_fee_waived: inv.lateFeeWaived ?? false,
+      // Migration 053. The RPC treats null/absent as "leave the existing
+      // assignment alone" and the literal 'none' as "clear it", so an older
+      // client or an outside writer can never blank out a tech assignment.
+      assigned_tech_id: inv.assignedTechId === null ? 'none'
+                      : (inv.assignedTechId || null),
     },
     items: (inv.items || []).map((it, i) => ({
       name: it.name || '',

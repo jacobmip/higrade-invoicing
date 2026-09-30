@@ -5,6 +5,42 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.12.0 — 2026-09-29
+
+### Per-tech KPI scorecard (Reports tab)
+First piece of the 2026 scale plan — the tech scorecard the apprentice hire
+depends on.
+
+- **New `invoices.assigned_tech_id`** (migration 053) — who actually *ran* the
+  job. This is a new column rather than a reuse of `owner_id` on purpose:
+  `owner_id` records who created the row, and `save_invoice_with_items`
+  restamps it to whoever saved last, so an admin editing a plumber's invoice
+  silently takes ownership. Paying a bonus off `owner_id` would credit the
+  wrong person. Backfilled from `owner_id`, so all existing history is intact.
+- **Tech Scorecard card in Reports** — per tech: billed, collected, avg ticket,
+  paid rate, estimate close rate, jobs count. MTD / YTD toggle. An "Unassigned"
+  row surfaces jobs with no tech set so they cannot quietly vanish from the
+  board.
+- **Relative score (100 = team average)** — weights are billed 40%, avg ticket
+  20%, jobs 20%, paid rate 20%, defined in one place (`SCORE_WEIGHTS` in
+  `src/App.jsx`). Deliberately relative rather than against fixed dollar
+  targets, which go stale the first time pricing moves. Shows `—` until two
+  techs have jobs, because a team average of one is not a comparison.
+- **Assigned Tech picker on the job form** — admin-only, appears once there is
+  more than one profile. A plumber cannot reassign their own jobs.
+- **`invoices_select` RLS widened** to `assigned_tech_id = auth.uid()` so a
+  tech can see the jobs assigned to them and their own scorecard. SELECT only;
+  write access for an assigned tech is a separate decision and was not granted.
+- Scorecard reads the unfiltered invoice set, not the View-as-filtered one —
+  narrowing to a single user would collapse the board to one row and make
+  every comparison meaningless.
+
+Two measures (billed and collected) share one dollar axis; series color keys to
+the tech's stable roster position, not their rank, so climbing the board does
+not repaint anyone.
+
+---
+
 ## v1.11.2 — 2026-09-14
 
 ### Changes

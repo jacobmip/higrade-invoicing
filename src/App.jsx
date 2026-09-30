@@ -3606,7 +3606,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore }) {
+function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore, users, myId }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -4861,6 +4861,32 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               <div style={{ minWidth: 0 }}><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
             )}
           </div>
+
+          {/* Assigned tech (migration 053). Admin-only: a plumber does not get
+              to reassign their own jobs, which is the whole integrity of the
+              scorecard. Empty string is the sentinel for "clear it" — db.js
+              turns null into the literal 'none' the RPC understands, because
+              a plain null means "leave it alone" to any outside writer. */}
+          {isAdmin && (users || []).length > 1 && (
+            <div style={{ padding: "12px 16px 0" }}>
+              <label style={S.label}>Assigned Tech</label>
+              <select
+                style={S.input}
+                value={form.assignedTechId || ""}
+                onChange={e => setField("assignedTechId", e.target.value || null)}
+              >
+                <option value="">Unassigned</option>
+                {(users || []).map(u => (
+                  <option key={u.id} value={u.id}>
+                    {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
+                Who ran the job. Drives the tech scorecard in Reports.
+              </div>
+            </div>
+          )}
 
           {/* Line Items */}
           <div ref={aiSectionRef} style={{ padding: "16px 16px 0" }}>
@@ -8780,8 +8806,233 @@ function ExpensesTab({ expenses, onSave, onDelete, newToken }) {
   );
 }
 
+// ─── Per-Tech KPI Scorecard ───────────────────────────────────────────────
+// Attribution runs on `assignedTechId` (migration 053), never `ownerId`.
+// ownerId only records who created the row, and save_invoice_with_items
+// restamps it to whoever saved last — so an admin editing a plumber's
+// invoice quietly takes ownership of it. Paying a bonus off that number
+// would credit the wrong person.
+//
+// Colors key to a tech's position in a STABLE roster (profile creation
+// order), never to their rank on the board. A tech who climbs the
+// leaderboard keeps their own color instead of inheriting the leader's.
+const TECH_COLORS = ["#E8622A", "#3D95CE", "#6B39A8", "#16a085"];
+const UNASSIGNED_ID = "__unassigned__";
+
+// What the bonus rewards. Weights sum to 1. Change these and the scorecard
+// changes with them — this is the one place the incentive is defined.
+const SCORE_WEIGHTS = { billed: 0.40, avgTicket: 0.20, jobs: 0.20, paidRate: 0.20 };
+
+function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
+  const [period, setPeriod] = useState("ytd");
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const todayStr = today();
+  const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const pad2 = (n) => String(n).padStart(2, "0");
+
+  // Window bounds. A past year is shown whole; the current year stops today
+  // so an in-progress month is not compared against a full one.
+  const isCurYear = selYear === currentYear;
+  const lastDay = new Date(selYear, currentMonth + 1, 0).getDate();
+  const start = period === "mtd" ? `${selYear}-${pad2(currentMonth + 1)}-01` : `${selYear}-01-01`;
+  const end = period === "mtd"
+    ? (isCurYear ? todayStr : `${selYear}-${pad2(currentMonth + 1)}-${pad2(lastDay)}`)
+    : (isCurYear ? todayStr : `${selYear}-12-31`);
+  const periodLabel = period === "mtd" ? `${MONTHS_SHORT[currentMonth]} ${selYear}` : String(selYear);
+
+  // Roster. Admins see every tech; a plumber sees only their own card, which
+  // is also all RLS will hand them.
+  const roster = useMemo(() => {
+    const src = (users || []).slice().sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+    if (!isAdmin) {
+      const me = src.find(u => u.id === myId);
+      return myId ? [{ id: myId, name: me?.displayName || myName || "You", role: me?.role || "plumber", color: TECH_COLORS[0] }] : [];
+    }
+    return src.map((u, i) => ({
+      id: u.id,
+      name: u.displayName || "Unnamed",
+      role: u.role || "plumber",
+      color: TECH_COLORS[i % TECH_COLORS.length],
+    }));
+  }, [users, isAdmin, myId, myName]);
+
+  const statsFor = (techId) => {
+    const mine = (invoices || []).filter(i => {
+      if (i.deletedAt) return false;
+      const t = i.assignedTechId || UNASSIGNED_ID;
+      return t === techId;
+    });
+    const jobs = mine.filter(i => i.type !== "estimate" && i.date >= start && i.date <= end);
+    let billed = 0, paidOnCohort = 0;
+    jobs.forEach(i => {
+      const t = calcTotals(i);
+      billed += t.total;
+      // Clamp: an overpayment must not push paid rate past 100%.
+      paidOnCohort += Math.min(t.paid, t.total);
+    });
+    // Cash actually received inside the window, on any of their invoices,
+    // whenever those invoices were written. Deliberately a different cohort
+    // from `billed` — one is production, the other is collections.
+    const collected = mine.reduce((s, i) => i.type === "estimate" ? s
+      : s + (i.payments || []).filter(p => p.date >= start && p.date <= end).reduce((x, p) => x + p.amount, 0), 0);
+    const ests = mine.filter(i => i.type === "estimate" && i.date >= start && i.date <= end);
+    const won = ests.filter(e => e.convertedToId).length;
+    return {
+      jobs: jobs.length,
+      billed,
+      collected,
+      avgTicket: jobs.length ? billed / jobs.length : 0,
+      paidRate: billed > 0 ? paidOnCohort / billed : null,
+      ests: ests.length,
+      won,
+      closeRate: ests.length ? won / ests.length : null,
+    };
+  };
+
+  const rows = useMemo(() => {
+    const base = roster.map(t => ({ ...t, ...statsFor(t.id) }));
+    if (isAdmin) {
+      const un = statsFor(UNASSIGNED_ID);
+      if (un.jobs > 0 || un.ests > 0) {
+        base.push({ id: UNASSIGNED_ID, name: "Unassigned", role: "", color: "#8899bb", unassigned: true, ...un });
+      }
+    }
+    return base;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roster, invoices, start, end, isAdmin]);
+
+  // Score is relative on purpose: 100 means "exactly the team average".
+  // Fixed dollar targets would go stale the first time pricing moves, and
+  // there is no defensible target for a tech who has not started yet.
+  const scored = useMemo(() => {
+    const active = rows.filter(r => !r.unassigned && r.jobs > 0);
+    if (active.length < 2) return rows.map(r => ({ ...r, score: null }));
+    const avg = (fn) => active.reduce((s, r) => s + fn(r), 0) / active.length;
+    const aBilled = avg(r => r.billed), aTicket = avg(r => r.avgTicket);
+    const aJobs = avg(r => r.jobs), aPaid = avg(r => r.paidRate ?? 0);
+    const ratio = (v, a) => (a > 0 ? v / a : 0);
+    return rows.map(r => {
+      if (r.unassigned || r.jobs === 0) return { ...r, score: null };
+      const s = SCORE_WEIGHTS.billed * ratio(r.billed, aBilled)
+              + SCORE_WEIGHTS.avgTicket * ratio(r.avgTicket, aTicket)
+              + SCORE_WEIGHTS.jobs * ratio(r.jobs, aJobs)
+              + SCORE_WEIGHTS.paidRate * ratio(r.paidRate ?? 0, aPaid);
+      return { ...r, score: Math.round(s * 100) };
+    });
+  }, [rows]);
+
+  const board = useMemo(() => scored.slice().sort((a, b) => {
+    if (a.unassigned) return 1;
+    if (b.unassigned) return -1;
+    return b.billed - a.billed;
+  }), [scored]);
+
+  // One shared scale so bars are comparable across cards, not per-card.
+  const maxBilled = Math.max(...board.map(r => Math.max(r.billed, r.collected)), 1);
+  const teamBilled = board.reduce((s, r) => s + r.billed, 0);
+  const teamCollected = board.reduce((s, r) => s + r.collected, 0);
+  const anyData = board.some(r => r.jobs > 0 || r.ests > 0);
+
+  const pct = (v) => v == null ? "—" : `${Math.round(v * 100)}%`;
+  const compact = (n) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`;
+
+  const tile = (label, value, color, note) => (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 8, fontWeight: 700, color: "#8899bb", letterSpacing: 0.7, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 2, lineHeight: 1.2 }}>{label}</div>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, color, lineHeight: 1 }}>{value}</div>
+      {note && <div style={{ fontSize: 8, color: "#aaa", marginTop: 2, lineHeight: 1.2 }}>{note}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
+          {isAdmin ? "Tech Scorecard" : "My Scorecard"} — {periodLabel}
+        </div>
+        <div style={{ display: "flex", background: "#f0f2f8", borderRadius: 7, overflow: "hidden", flexShrink: 0 }}>
+          {[["mtd", "MTD"], ["ytd", "YTD"]].map(([k, lbl]) => (
+            <button key={k} onClick={() => setPeriod(k)} style={{ padding: "5px 12px", background: period === k ? NAVY : "transparent", color: period === k ? "#fff" : "#8899bb", border: "none", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 0.8, cursor: "pointer" }}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Legend. Two measures share one dollar axis, so they are labelled
+          rather than left to color alone. */}
+      <div style={{ display: "flex", gap: 14, marginBottom: 12 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#8899bb", fontWeight: 600 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: NAVY, display: "inline-block" }} />Billed
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#8899bb", fontWeight: 600 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: NAVY, opacity: 0.4, display: "inline-block" }} />Collected
+        </span>
+      </div>
+
+      {!anyData ? (
+        <div style={{ fontSize: 13, color: "#bbb", textAlign: "center", padding: "18px 0" }}>
+          No jobs assigned to a tech in {periodLabel}.
+        </div>
+      ) : board.map((r, idx) => (
+        <div key={r.id} style={{ padding: "10px 0", borderTop: idx > 0 ? "1px solid #f4f6fa" : "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: r.color, flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: r.unassigned ? "#8899bb" : "#1a1a1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+              {r.role === "admin" && <div style={{ fontSize: 9, color: "#aaa", letterSpacing: 0.5, textTransform: "uppercase" }}>Owner</div>}
+            </div>
+            {r.score != null && (
+              <div title="100 = team average" style={{ flexShrink: 0, background: r.score >= 100 ? "#eaf7ef" : "#fdf0ec", color: r.score >= 100 ? "#16a085" : "#cc4444", borderRadius: 6, padding: "3px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14 }}>
+                {r.score}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 9 }}>
+            {tile("Billed", compact(r.billed), r.color, `${r.jobs} job${r.jobs !== 1 ? "s" : ""}`)}
+            {tile("Collected", compact(r.collected), "#4ecb71", "received")}
+            {tile("Avg Ticket", compact(r.avgTicket), "#2980b9", "per job")}
+            {tile("Paid Rate", pct(r.paidRate), r.paidRate != null && r.paidRate >= 0.9 ? "#16a085" : "#e67e22", "of billed")}
+            {tile("Close", pct(r.closeRate), "#6B39A8", `${r.won}/${r.ests} est`)}
+          </div>
+
+          {/* Billed over Collected, on one shared scale across every tech.
+              4px rounded ends, 2px gap between the pair. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {[["Billed", r.billed, 1], ["Collected", r.collected, 0.4]].map(([lbl, val, op]) => (
+              <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 8, color: "#aaa", width: 46, flexShrink: 0, textTransform: "uppercase", letterSpacing: 0.5 }}>{lbl}</span>
+                <div style={{ flex: 1, height: 9, background: "#f0f2f8", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: 9, width: `${Math.max((val / maxBilled) * 100, val > 0 ? 1.5 : 0)}%`, background: r.color, opacity: op, borderRadius: 4 }} />
+                </div>
+                <span style={{ fontSize: 10, color: "#666", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, width: 50, textAlign: "right", flexShrink: 0 }}>{compact(val)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {isAdmin && board.filter(r => !r.unassigned && r.jobs > 0).length >= 2 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f4f6fa", display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8899bb" }}>
+          <span>Team total</span>
+          <span><b style={{ color: NAVY }}>{fmt(teamBilled)}</b> billed · <b style={{ color: "#4ecb71" }}>{fmt(teamCollected)}</b> collected</span>
+        </div>
+      )}
+
+      {isAdmin && board.filter(r => !r.unassigned && r.jobs > 0).length < 2 && anyData && (
+        <div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid #f4f6fa", fontSize: 10, color: "#aaa", lineHeight: 1.45 }}>
+          Score compares a tech against the team average, so it needs two techs with
+          jobs before it means anything. Assign jobs to your apprentice and it starts
+          scoring. Weights: billed 40%, avg ticket 20%, jobs 20%, paid rate 20%.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
-function ReportsTab({ invoices, expenses }) {
+function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName }) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
@@ -8900,6 +9151,17 @@ function ReportsTab({ invoices, expenses }) {
         {kpi(`Inv ${MONTHS_SHORT[currentMonth]}`, String(monthInvoiceCount), NAVY, "this month")}
         {kpi(`GET Q${currentQuarter}`, fmt(getOwed), "#6B39A8", "owed")}
       </div>
+      {/* Per-tech scorecard. Runs on `allInvoices`, NOT the View-as-filtered
+          set — narrowing to one user would collapse the board to one row and
+          silently make every comparison meaningless. */}
+      <TechScorecard
+        invoices={allInvoices || invoices}
+        users={users}
+        isAdmin={isAdmin}
+        myId={myId}
+        myName={myName}
+        selYear={selYear}
+      />
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
         <svg viewBox="0 0 340 115" style={{ width: "100%", height: 115, display: "block" }}>
@@ -11504,7 +11766,7 @@ export default function App() {
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
-        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} />}
+        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} />}
         {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} />}
         {tab === "recently-deleted" && (
@@ -11559,6 +11821,8 @@ export default function App() {
             isAdmin={isAdmin}
             isReadOnly={previewReadOnly}
             onRestore={restoreInvoice}
+            users={allUsers}
+            myId={session?.user?.id}
           />
         </div>
       )}

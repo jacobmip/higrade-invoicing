@@ -122,14 +122,17 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 052)
+## Database schema (current through migration 053)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
-`owner_id = auth.uid() OR is_admin()`.
+`owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
+migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
+so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 
 - `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), created_at
 - `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes
 - `client_versions` — full client snapshots, mirrors invoice_versions
-- `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, deleted_at, updated_at
+- `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, assigned_tech_id, deleted_at, updated_at
+  - **`owner_id` is not `assigned_tech_id`.** `owner_id` is whoever created the row, and the `on conflict` branch of `save_invoice_with_items` sets `owner_id = excluded.owner_id`, so it is restamped to whoever saved last — an admin editing a plumber's invoice takes ownership of it. `assigned_tech_id` (migration 053) is who *ran* the job, is set deliberately, and is never restamped by a save. Anything that pays or scores a tech must use `assigned_tech_id`.
 - `invoice_items` — invoice_id, name, description, qty, price, unit, discount, taxable, sort_order
 - `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
 - `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`
@@ -194,9 +197,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **049–050** — lead timestamps in Hawaii time, and a backfill of the ten rows already written wrong
 - **051** — inbound SMS media and alerts
 - **052** — `push_invoice_to_calendar()` rewritten to match `buildCalendarEvent()` in `src/App.jsx`: title `Work · Client · Document`, the whole job site in the location field, line-item names as a SCOPE block, the document's real type instead of a hardcoded "Estimate", and a `colorId` in the webhook payload
+- **053** — `assigned_tech_id` on invoices for the per-tech KPI scorecard: the column, a backfill from `owner_id`, a partial index, `save_invoice_with_items` taught to carry it, and `invoices_select` widened so a tech can see the jobs assigned to them. The update branch treats an absent or null key as "leave the assignment alone" and the literal string `'none'` as "clear it", so the AI receptionist's RPCs — which know nothing about the column — cannot blank out an assignment.
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `052_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `054_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids
