@@ -1,5 +1,7 @@
 export const config = { runtime: 'edge' };
 
+import { AGENT_MODEL, AGENT_SYSTEM, AGENT_TOOLS } from './_lib/agent-tools.js';
+
 const AI_SYSTEM = `You are the AI assistant built into HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You help Jake generate estimates, create invoice line items, and answer questions about jobs.
 
 Honolulu labor rate: $185–$225/hr journeyman. Prices are 40–60% higher than mainland US.
@@ -117,8 +119,19 @@ export default async function handler(req) {
     });
   }
 
+  let body;
+  try { body = await req.json(); }
+  catch (err) {
+    return new Response(JSON.stringify({ error: 'Bad request body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  if (body?.mode === 'agent') return agentTurn(apiKey, body.messages);
+
   try {
-    const { messages, systemPrompt, maxTokens } = await req.json();
+    const { messages, systemPrompt, maxTokens } = body;
 
     // Default 8000 (Haiku 4.5 supports up to 8192). Allow caller to override
     // (clamped) so bulk requests like "create 10 invoices" don't truncate.
@@ -162,4 +175,79 @@ export default async function handler(req) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+// ─── Agent mode ──────────────────────────────────────────────────────────────
+// One model turn of the app-wide chat agent. The browser runs the loop: it
+// executes any tool calls this returns and posts the results back as the next
+// turn. See api/_lib/agent-tools.js for why the tools live in the browser.
+//
+// A turn can think for longer than an edge function may sit silent before
+// sending its first byte, so the response starts immediately and a space is
+// written every few seconds until the real JSON is ready. JSON.parse ignores
+// leading whitespace, so the client just calls res.json() as usual. The status
+// is therefore always 200; failures arrive as { error } in the body.
+function agentTurn(apiKey, messages) {
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const beat = setInterval(() => {
+        try { controller.enqueue(enc.encode(' ')); } catch {}
+      }, 4000);
+      let out;
+      try {
+        out = await callAgentModel(apiKey, messages);
+      } catch (err) {
+        out = { error: { message: err?.message || String(err) } };
+      }
+      clearInterval(beat);
+      controller.enqueue(enc.encode(JSON.stringify(out)));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
+async function callAgentModel(apiKey, messages, withFallbacks = true) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      // Server-side fallback: if a safety classifier declines a turn (a false
+      // positive on, say, a gas line job), the API re-runs it on a fallback
+      // model inside the same call instead of returning nothing.
+      ...(withFallbacks ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
+    },
+    body: JSON.stringify({
+      model: AGENT_MODEL,
+      max_tokens: 16000,
+      thinking: { type: 'adaptive' },
+      // Medium is this model's default; stated so a future default change
+      // does not silently change cost or latency.
+      output_config: { effort: 'medium' },
+      // The system block's breakpoint caches tools + system. The top-level
+      // one caches the conversation so far, which grows append-only within a
+      // turn as tool results come back.
+      cache_control: { type: 'ephemeral' },
+      system: [{ type: 'text', text: AGENT_SYSTEM, cache_control: { type: 'ephemeral' } }],
+      tools: AGENT_TOOLS,
+      messages,
+      ...(withFallbacks ? { fallbacks: 'default' } : {}),
+    }),
+  });
+  const data = await res.json();
+  // If the fallback beta is ever withdrawn, fail open to a plain request
+  // rather than taking the chat down with it.
+  if (withFallbacks && res.status === 400 && /fallback/i.test(data?.error?.message || '')) {
+    return callAgentModel(apiKey, messages, false);
+  }
+  return data;
 }

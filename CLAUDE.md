@@ -84,6 +84,7 @@ src/
   billTo.js          — bill-to / job-site address resolution
   competencies.js    — apprentice skill catalog + graduation math (migration 054)
   backup.js          — manual backup export + restore
+  aiAgent.js         — app-wide AI chat agent: tool loop + every tool executor
   contacts.js        — phone contact import (iOS)
   googleCalendar.js  — gcal sync helpers
   apiBase.js         — API base URL helper (rewrites /api for native builds)
@@ -91,7 +92,7 @@ src/
   version.js         — APP_VERSION + APP_BUILD_DATE, see hard rule 13
   main.jsx           — entry
 api/                 — Vercel serverless functions, all nodejs runtime
-  ai.js                    — per-invoice + global AI chat
+  ai.js                    — per-invoice AI chat; `mode: 'agent'` relays one turn of the global chat agent
   ai-estimator.js          — structured estimate generation
   ai-extract-client.js     — screenshot to client records (vision)
   extract-receipt.js       — receipt OCR to expense
@@ -106,6 +107,7 @@ api/                 — Vercel serverless functions, all nodejs runtime
   _lib/notify.js           — APNs JWT + push fan-out
   _lib/sms.js              — Twilio send helper
   _lib/gcal.js             — Google token refresh + calendar helpers
+  _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
 public/
   estimator-test.html — standalone test harness for AI estimator + extractor
 supabase/migrations/ — numbered SQL, applied by hand in the SQL editor
@@ -212,10 +214,44 @@ below are the source of truth, and `ANTHROPIC_API_KEY` is the only AI key set).
 
 | Feature | Where | Model |
 |---|---|---|
-| Per-invoice chat (`AIChatPanel`) and global modal (`GlobalAIModal`) | `api/ai.js` | `claude-haiku-4-5-20251001` |
+| Per-invoice chat (`AIChatPanel`) | `api/ai.js` | `claude-haiku-4-5-20251001` |
+| Global chat agent (`GlobalAIModal`) | `api/ai.js` agent mode, `api/_lib/agent-tools.js`, `src/aiAgent.js` | `claude-opus-5-5`, effort medium, server-side fallback |
 | AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-sonnet-4-5-20250929` |
 | Screenshot-to-client extractor (vision) | `api/ai-extract-client.js` | `claude-sonnet-4-5-20250929` |
 | Receipt OCR to expense | `api/extract-receipt.js` | `claude-sonnet-4-6` |
+
+### Global chat agent (v1.14.0)
+The header's AI button runs a tool-use agent, the same shape as the HI Grade
+Manager Telegram bot in the AI-OS repo. `/api/ai` with `mode: 'agent'` relays
+one model turn; `runAgentMessage()` in `src/aiAgent.js` runs the loop in the
+browser, up to 12 model calls per message.
+
+- **Tools run in the browser, on purpose.** Reads use the data the app already
+  loaded plus the app's own `calcTotals`, so chat and screen always agree;
+  `query_database` is a GET-only PostgREST read under the user's own JWT (RLS
+  applies, fixed table allowlist). Writes go through `handleGlobalAIAction` in
+  strict mode, so numbering, the optimistic lock and the calendar builder are
+  the app's own. Do not move writes server-side; that would be a second writer
+  with its own rules.
+- **`handleGlobalAIAction` reads `dataRef.current`, not its closure,** and with
+  `{ strict: true }` it throws on a failed save and returns the updated record.
+  Without both, "create an estimate then add a line to it" in one message
+  silently did nothing on the second step.
+- **The system prompt and tool list are frozen** so they cache. Anything per
+  message (Hawaii date and time, who is signed in) goes in a `<context>` block
+  at the top of the user message, stored on the message as `agentCtx`.
+- **Within a message the conversation is append-only;** across messages only
+  text is replayed, plus an `agentTrace` line per reply recording what the
+  writes did. Never edit a `working` array mid-loop: it invalidates the
+  model's reasoning between steps.
+- The edge route writes a space every 4 seconds until the model answers, so a
+  long think never hits the edge first-byte timeout; the client just calls
+  `res.json()` (leading whitespace is legal JSON). Failures arrive as a 200
+  with `{ error }`.
+- A write to a document open in the form is refused (`openDocId`), because of
+  the open-form overwrite below.
+- Tool names and descriptions in `agent-tools.js` must match what the executors
+  in `aiAgent.js` actually do. The model believes the descriptions.
 
 ### AI receptionist ("Lisa")
 Answers the business line through **Vapi**, captures the lead, and files an
@@ -386,7 +422,7 @@ The session that produced most of the current state did the following, in order:
 - Jake's phone is the primary device. Test at mobile widths before declaring something fixed.
 - Pushing to `main` auto-deploys. Don't run `vercel` manually.
 - Jake must hard-reload on his phone to pick up a new build; the service worker caches.
-- The AI chat system prompt is near the top of `App.jsx` — search for `update_item` (~line 410).
+- The per-invoice AI chat's system prompt is near the top of `App.jsx` — search for `update_item`. The global chat's prompt is `AGENT_SYSTEM` in `api/_lib/agent-tools.js`.
 - If the AI claims it did something but nothing happened, add a regex guard + retry like the one around `extractActionsJSON` in `AIChatPanel`.
 - Another session may be pushing to `main` at the same time. Fetch before you start and rebase if the push is rejected.
 

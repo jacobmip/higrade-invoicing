@@ -43,3 +43,8 @@ function stubClient(reason) {
 export const supabase = key
   ? createClient(url, key)
   : (console.warn('[supabase] VITE_SUPABASE_ANON_KEY missing — using localStorage fallback only'), stubClient('Supabase not configured'))
+
+// For direct PostgREST reads under the user's own session (the chat agent's
+// query_database tool in aiAgent.js). The anon key is public by design.
+export const SUPABASE_URL = url
+export const SUPABASE_ANON_KEY = key

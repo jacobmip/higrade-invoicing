@@ -5,6 +5,45 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.14.0 — 2026-09-30
+
+### The app-wide AI chat is now a real agent
+The chat behind the header's AI button now works the way the Telegram agent
+does: it calls tools, sees what came back, and keeps going until the job is
+done. Before, it was one model call that had to type its "action" as JSON in
+its reply, looking at a pasted snapshot of 20 invoices; it could not look
+anything up, never learned whether an action worked, and could not chain
+steps.
+
+- **Looks things up before answering.** Search documents, read any document in
+  full, find a client (name, phone or email) with their open balance, search
+  the price book, read the schedule, and add up invoiced / collected / unpaid
+  for any date range. A live read-only database query covers the rest, e.g. a
+  lead the receptionist filed since the app loaded.
+- **Multi-step requests in one message.** "New client Mike Tanaka, 808-555-1234,
+  estimate for a water heater swap, book him Thursday 9am" runs find, create
+  client, price-book check, create estimate and schedule in a row.
+- **Honest results.** A failed save now reaches the model as an error (the
+  handler used to log and carry on), so it cannot report success on a write
+  that did not land. A document open in the editor is refused rather than
+  written and then overwritten by the form.
+- **Remembers what it did.** Each reply stores a one-line trace of its writes
+  (EST1043, $402.12), replayed on later messages.
+- **New:** edit or remove a line item by number, change status / notes /
+  discount / due date, record a payment, delete one document (with a confirm
+  dialog). Sending an email still stops at the Confirm Send card.
+- **Model:** `claude-opus-5-5` at medium effort, with server-side fallback so a
+  false-positive safety decline is retried on another model instead of
+  returning nothing. The per-invoice chat is unchanged (Haiku).
+- Shows what it is doing while it works ("Looking up Karen...").
+- Replies keep their line breaks.
+- Dates in the agent use Hawaii time, not UTC.
+
+Files: `src/aiAgent.js` (new), `api/_lib/agent-tools.js` (new), `api/ai.js`,
+`src/App.jsx`, `src/supabase.js`. No migration.
+
+---
+
 ## v1.13.0 — 2026-09-29
 
 ### Apprentice competency tracker
