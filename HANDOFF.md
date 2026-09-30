@@ -341,6 +341,17 @@ Anything that changes how documents are **numbered, identified, typed, or schedu
 | `push_invoice_to_calendar()` | reads `gcal_date`, posts to the calendar webhook | trigger on `ai_lead` insert |
 | `notify_owner_of_lead()` | inserts `notifications`, sends the lead email | trigger on `ai_lead` insert |
 
+#### Reader and sender outside the app: invoice follow-up
+
+`scripts/invoice_followup.py` in the **AI-OS** repo runs daily as a Hermes cron
+on the Mac mini. It reads overdue invoices with the service role key, texts or
+emails the customer, and records each send in `invoice_reminders` (migration
+055). It never writes `invoices`. It computes the balance itself with Python
+copies of `calcTotals` and `calcLateFee`, so **a change to either function in
+`src/App.jsx` must be mirrored there**, or reminders quote a different amount
+than the `/v/<token>` page the customer opens. Customer sends are gated by
+`settings.invoice_followup_live`; SMS additionally by `sms_outbound_enabled`.
+
 #### The Apps Script is mirrored in `apps-script/`
 
 The receptionist's calendar booking runs in a Google Apps Script web app in

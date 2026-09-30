@@ -125,7 +125,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 054)
+## Database schema (current through migration 055)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
@@ -147,7 +147,8 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `expenses` — receipt OCR output
 - `notifications` / `device_tokens` — in-app bell + APNs
 - `ai_chat_history` — user_id PK, messages jsonb (max 200); **RLS self-only, admins do NOT bypass**
-- `settings` — key/value. Counters live here: `next_doc_num` is live, `next_num` and `next_estimate_num` are retired.
+- `settings` — key/value. Counters live here: `next_doc_num` is live, `next_num` and `next_estimate_num` are retired. `invoice_followup_live` (migration 055) gates every customer reminder the follow-up script sends; anything but `'true'` means preview only.
+- `invoice_reminders` — invoice_id, tier (1/7/14/30), days_overdue, channel ('sms'|'email'), status ('sent'|'failed'), recipient, amount_due, message, provider_id, error, sent_at. Migration 055. Written only by `scripts/invoice_followup.py` in the AI-OS repo under the service role; admins read. A partial unique index on `(invoice_id, tier) where status = 'sent'` is the duplicate guard.
 - `google_credentials` — the app's server-side Google OAuth refresh token, plus `calendar_id` (the write target, must match the receptionist's Apps Script) and `read_calendar_ids` (every calendar the Calendar tab displays). Migration 045/046.
 
 ### Helper functions and RPCs
@@ -204,9 +205,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **052** — `push_invoice_to_calendar()` rewritten to match `buildCalendarEvent()` in `src/App.jsx`: title `Work · Client · Document`, the whole job site in the location field, line-item names as a SCOPE block, the document's real type instead of a hardcoded "Estimate", and a `colorId` in the webhook payload
 - **053** — `assigned_tech_id` on invoices for the per-tech KPI scorecard: the column, a backfill from `owner_id`, a partial index, `save_invoice_with_items` taught to carry it, and `invoices_select` widened so a tech can see the jobs assigned to them. The update branch treats an absent or null key as "leave the assignment alone" and the literal string `'none'` as "clear it", so the AI receptionist's RPCs — which know nothing about the column — cannot blank out an assignment.
 - **054** — apprentice competencies: `profiles.tier`, the `tech_competencies` table and its RLS. Pairs with `src/competencies.js`.
+- **055** — `invoice_reminders` and the `invoice_followup_live` setting, for the daily overdue-invoice reminder script in the AI-OS repo
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `055_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `056_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids

@@ -5,6 +5,19 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.15.2 — 2026-09-30
+
+### Database: invoice reminders (migration 055)
+- **New `invoice_reminders` table** for the automated overdue-invoice
+  reminders, which run as a daily script in the AI-OS repo rather than in the
+  app. One row per invoice per tier (1, 7, 14, 30 days past due); a tier can
+  only be recorded as sent once, so a double run cannot double-text anyone.
+- **New `invoice_followup_live` setting**, `false` by default. Until it is
+  flipped, the script sends Jake a Telegram preview of every message and
+  nothing reaches a customer.
+- No app code changed. Docs note that the script mirrors `calcTotals` and
+  `calcLateFee`, so the two must stay in step.
+
 ## v1.15.1 — 2026-09-30
 
 ### Chat agent: screenshots
