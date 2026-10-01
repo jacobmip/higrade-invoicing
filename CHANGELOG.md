@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.16.1 — 2026-10-01
+
+### Fix: editing a payment always showed Cash
+- The payment edit modal now pre-selects the saved method. Payments written by the
+  AI agent or outside writers can store the method in a different case (`"check"`),
+  which matched none of the select's options, so it fell back to Cash and a save
+  would have overwritten the real method. The match is now case-insensitive, and
+  an unrecognised method shows as its own option instead of being replaced.
+
 ## v1.16.0 — 2026-09-30
 
 ### Estimates can be marked declined (migration 056)

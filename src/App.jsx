@@ -1178,6 +1178,8 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
 }
 
 // ─── Payment Modal ────────────────────────────────────────────────────────────
+const PAYMENT_METHODS = ["Cash","Check","Venmo","Zelle","Credit Card","PayPal","Bank Transfer","Other"];
+
 function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
   const t = calcTotals(invoice);
   const isEstimate = invoice.type === "estimate";
@@ -1192,7 +1194,16 @@ function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
   // partial sum) — invoices default to the full remaining balance + late fee.
   // In edit mode, pre-populate from the existing payment instead.
   const [amount, setAmount] = useState(isEdit ? String(existingPayment.amount ?? "") : (isEstimate ? "" : owedWithFee.toFixed(2)));
-  const [method, setMethod] = useState(isEdit ? (existingPayment.method || "Cash") : "Cash");
+  // Stored methods are not always the option's exact spelling: the AI agent and
+  // outside writers pass through whatever they were given ("check"). Match
+  // case-insensitively, and keep an unknown value as its own option, so the
+  // select never falls back to its first option and a save rewrites it to Cash.
+  const [method, setMethod] = useState(() => {
+    const stored = isEdit ? String(existingPayment.method || "").trim() : "";
+    if (!stored) return "Cash";
+    return PAYMENT_METHODS.find(m => m.toLowerCase() === stored.toLowerCase()) || stored;
+  });
+  const methodOptions = PAYMENT_METHODS.includes(method) ? PAYMENT_METHODS : [...PAYMENT_METHODS, method];
   const [date, setDate] = useState(isEdit ? (existingPayment.date || today()) : today());
   const [note, setNote] = useState(isEdit ? (existingPayment.note || "") : (isEstimate ? "Down payment" : ""));
   const parsedAmt = parseFloat(amount) || 0;
@@ -1245,7 +1256,7 @@ function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
           <input type="number" style={{ ...S.input, borderColor: willOverpay ? "#cc4444" : undefined }} value={amount} onChange={e => setAmount(e.target.value)} onFocus={selectOnFocus} step="0.01" />
           {willOverpay && <div style={{ fontSize: 11, color: "#cc4444", marginTop: 3 }}>⚠ Overpayment — exceeds balance by {fmt(newPaid - (t.total + lateFee))}</div>}
         </div>
-        <div style={{ marginBottom: 12 }}><label style={S.label}>Method</label><select style={S.input} value={method} onChange={e => setMethod(e.target.value)}>{["Cash","Check","Venmo","Zelle","Credit Card","PayPal","Bank Transfer","Other"].map(m => <option key={m}>{m}</option>)}</select></div>
+        <div style={{ marginBottom: 12 }}><label style={S.label}>Method</label><select style={S.input} value={method} onChange={e => setMethod(e.target.value)}>{methodOptions.map(m => <option key={m}>{m}</option>)}</select></div>
         <div style={{ marginBottom: 12 }}><label style={S.label}>Date</label><input type="date" style={S.input} value={date} onChange={e => setDate(e.target.value)} /></div>
         <div style={{ marginBottom: 20 }}><label style={S.label}>Note <span style={{ fontWeight: 400, color: "#aaa", textTransform: "none", letterSpacing: 0 }}>(optional)</span></label><input style={S.input} value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. Check #1042" /></div>
         <div style={{ display: "flex", gap: 10 }}>
