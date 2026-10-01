@@ -341,6 +341,25 @@ Anything that changes how documents are **numbered, identified, typed, or schedu
 | `push_invoice_to_calendar()` | reads `gcal_date`, posts to the calendar webhook | trigger on `ai_lead` insert |
 | `notify_owner_of_lead()` | inserts `notifications`, sends the lead email | trigger on `ai_lead` insert |
 
+#### A declined estimate is written by its own RPC
+
+`set_estimate_declined(p_id, p_declined, p_reason)` (migration 056) is the only
+writer of `status = 'declined'`, `declined_at` and `declined_reason`. Those three
+columns are deliberately **not** in `save_invoice_with_items`: that function lists
+its columns and overwrites every one of them on each save, which is exactly how
+`owner_id` gets restamped to whoever saved last. Had declined gone in there, any
+later edit to the estimate would have quietly revived it. The RPC refuses an
+invoice, an unknown id, and an estimate already converted.
+
+Two readers care about the result: `estimateClosed()` in `src/App.jsx` keeps
+declined estimates off the open list, and `estimateWon()` keeps them out of the
+close rate, because closed-lost must not look like closed-won.
+
+`settings.estimate_valid_days` (30) is the shared definition of a stale estimate.
+`src/App.jsx` uses it for the "Expired" pill and `scripts/invoice_followup.py` in
+the AI-OS repo uses it to decide what to chase. Change it in one place, the
+settings table, never in either copy of the code.
+
 #### Reader and sender outside the app: invoice follow-up
 
 `scripts/invoice_followup.py` in the **AI-OS** repo runs daily as a Hermes cron

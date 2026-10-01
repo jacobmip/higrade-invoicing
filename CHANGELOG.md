@@ -5,6 +5,32 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.16.0 — 2026-09-30
+
+### Estimates can be marked declined (migration 056)
+- **"Customer declined" on the estimate long-press menu**, with a reason picker
+  (too expensive, went with someone else, job cancelled, never heard back,
+  doing it themselves, or skip). A declined estimate drops off the open list and
+  shows a red "Declined" pill. The same menu item becomes "Put back in play" to
+  undo it. Until now the only way to stop chasing an estimate was to type a
+  phrase into the notes for the follow-up script to grep.
+- **Declined does not count as closed-won.** The Close Rate and Closed figures
+  on the estimates KPI strip now use won (approved or converted) rather than
+  closed, so turning a job down can no longer raise the close rate.
+- **Written through a narrow RPC, `set_estimate_declined`, not
+  `save_invoice_with_items`.** That function enumerates and overwrites its
+  columns on every save, which is how `owner_id` ends up restamped to whoever
+  saved last. A dedicated RPC means an ordinary edit to a declined estimate
+  cannot silently revive it. It refuses an invoice, a missing id, and an
+  estimate already converted to an invoice.
+
+### Estimates expire after 30 days
+- **New `estimate_valid_days` setting, 30 by default.** Past that window an
+  estimate shows an orange "Expired" pill instead of "Open", because the price
+  is stale and the job wants redoing or repricing rather than another nudge.
+- The daily follow-up briefing in the AI-OS repo reads the same setting, so the
+  app and the morning list can never disagree about what has gone cold.
+
 ## v1.15.2 — 2026-09-30
 
 ### Database: invoice reminders (migration 055)

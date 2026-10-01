@@ -171,6 +171,43 @@ function calcTotals(inv) {
 }
 function fmt(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function today() { return new Date().toISOString().slice(0, 10); }
+// An estimate is good for a limited window — settings.estimate_valid_days,
+// 30 by default (migration 056). Past it the estimate is not something to
+// nudge, it is something to redo or reprice, so the list says "Expired"
+// instead of a plain "Open". scripts/invoice_followup.py in the AI-OS repo
+// reads the same setting, so the app and the morning briefing always agree.
+const DEFAULT_ESTIMATE_VALID_DAYS = 30;
+function estimateValidDays() {
+  const v = messageTemplates.estimate_valid_days;
+  return v != null ? v : DEFAULT_ESTIMATE_VALID_DAYS;
+}
+function estimateDeclined(inv) {
+  return inv.status === "declined" || !!inv.declinedAt;
+}
+// Closed means off the open list: sold, converted, or turned down.
+function estimateClosed(inv) {
+  return inv.status === "approved" || !!inv.convertedToId || estimateDeclined(inv);
+}
+// Won is the money side of closed. A declined estimate is closed but lost, so
+// the KPI strip has to use this and not estimateClosed, otherwise turning a job
+// down would raise the close rate.
+function estimateWon(inv) {
+  return !estimateDeclined(inv) && (inv.status === "approved" || !!inv.convertedToId);
+}
+function estimateDaysOld(inv) {
+  if (!inv.date) return 0;
+  return Math.floor((new Date(today()) - new Date(inv.date)) / 86400000);
+}
+function estimateExpired(inv) {
+  return !estimateClosed(inv) && estimateDaysOld(inv) > estimateValidDays();
+}
+function estimateDisplay(inv) {
+  if (inv.convertedToId) return { label: "\u2192 Invoice", color: "#27ae60", closed: true };
+  if (inv.status === "approved") return { label: "\u2713 Approved", color: "#27ae60", closed: true };
+  if (estimateDeclined(inv)) return { label: "Declined", color: "#e74c3c", closed: true };
+  if (estimateExpired(inv)) return { label: "Expired", color: "#f39c12", closed: false };
+  return { label: "Open", color: "#8899bb", closed: false };
+}
 function statusDisplay(inv) {
   if (inv.status === "paid") return { label: "Paid", color: "#4ecb71" };
   if (inv.status === "partial") return { label: "Partial", color: "#f39c12" };
@@ -1375,6 +1412,7 @@ const messageTemplates = {
   text_estimate:  null,
   payment_instructions: null,
   late_fee_rate:  null, // null = use DEFAULT_LATE_FEE_RATE
+  estimate_valid_days: null, // null = use DEFAULT_ESTIMATE_VALID_DAYS
   surcharge_enabled: null, // null = use DEFAULT_SURCHARGE_ENABLED
   surcharge_pct:     null, // null = use DEFAULT_SURCHARGE_PCT
   surcharge_flat:    null, // null = use DEFAULT_SURCHARGE_FLAT
@@ -1494,6 +1532,10 @@ function hydrateTemplatesFromSettings(settings) {
   // the built-in default so older backups still render correctly.
   const r = settings.late_fee_rate;
   messageTemplates.late_fee_rate = (r != null && r !== "" && !isNaN(Number(r))) ? Number(r) : null;
+  // How long an estimate stays valid. Same string-in-settings shape.
+  const evd = settings.estimate_valid_days;
+  messageTemplates.estimate_valid_days =
+    (evd != null && evd !== "" && !isNaN(Number(evd)) && Number(evd) > 0) ? Number(evd) : null;
   // Surcharge config — stored as strings ("true"/"false" or numeric).
   const se = settings.surcharge_enabled;
   messageTemplates.surcharge_enabled = (se == null || se === "") ? null : (se === "true" || se === true);
@@ -5353,10 +5395,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 //   estimate: Delete · Share · Send · Print · Get link · Convert to invoice · Duplicate
 // Stays a controlled component so the parent owns dismissal and can
 // chain follow-up UI (e.g. opening the form after Duplicate).
-function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onConvert, onDuplicate }) {
+function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onConvert, onDuplicate, onToggleDeclined }) {
   if (!inv) return null;
   const isEstimate = inv.type === 'estimate';
   const isPaid = inv.status === 'paid';
+  const declined = isEstimate && estimateDeclined(inv);
+  // A converted estimate is sold work, so it cannot be turned down.
+  const canDecline = isEstimate && !inv.convertedToId;
   // Each action wraps onClose so the sheet dismisses immediately on tap,
   // even if the underlying action does async work.
   const wrap = (fn) => () => { onClose?.(); setTimeout(() => fn?.(), 0); };
@@ -5399,9 +5444,53 @@ function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPr
           {isEstimate
             ? <button onClick={wrap(onConvert)} style={itemBase}>Convert to invoice</button>
             : <button onClick={wrap(onTogglePaid)} style={itemBase}>{isPaid ? 'Mark unpaid' : 'Mark paid'}</button>}
+          {canDecline && (
+            <button onClick={wrap(onToggleDeclined)} style={itemBase}>
+              {declined ? 'Put back in play' : 'Customer declined'}
+            </button>
+          )}
           <button onClick={wrap(onDuplicate)} style={itemBase}>Duplicate</button>
         </div>
         <button onClick={onClose} style={{ ...sheet, ...cancelBtn }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// Why an estimate was turned down. Presets rather than a text box because this
+// gets tapped on a phone, often standing in someone's driveway. The reason is
+// optional on the server, so "Skip" still records the decline.
+const DECLINE_REASONS = [
+  'Too expensive',
+  'Went with someone else',
+  'Job cancelled',
+  'Never heard back',
+  'Doing it themselves',
+];
+function DeclineReasonSheet({ inv, onClose, onPick }) {
+  if (!inv) return null;
+  const itemBase = {
+    width: '100%', background: '#fff', border: 'none', borderTop: '0.5px solid #e8ecf4',
+    padding: '16px 18px', fontSize: 17, fontFamily: "'Barlow', sans-serif", fontWeight: 600,
+    color: NAVY, textAlign: 'center', cursor: 'pointer', WebkitTapHighlightColor: 'rgba(0,0,0,0.06)',
+  };
+  const sheet = {
+    background: '#fff', borderRadius: 14, overflow: 'hidden',
+    width: 'min(360px, calc(100vw - 32px))', boxShadow: '0 24px 60px rgba(10,22,40,0.35)',
+  };
+  const heading = { ...itemBase, borderTop: 'none', color: '#888', fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', padding: '14px 18px 10px', cursor: 'default' };
+  const pick = (reason) => () => { onClose?.(); setTimeout(() => onPick?.(reason), 0); };
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,22,40,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2100, padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' }}>
+        <div style={sheet}>
+          <div style={heading}>{inv.id} — why?</div>
+          {DECLINE_REASONS.map(r => (
+            <button key={r} onClick={pick(r)} style={itemBase}>{r}</button>
+          ))}
+          <button onClick={pick(null)} style={{ ...itemBase, color: '#888' }}>Skip, just mark it declined</button>
+        </div>
+        <button onClick={onClose} style={{ ...sheet, ...itemBase, marginTop: 10, borderTop: 'none', borderRadius: 14, fontWeight: 700 }}>Cancel</button>
       </div>
     </div>
   );
@@ -5654,12 +5743,13 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
 }
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
-function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, setSubHeader }) {
+function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, onToggleDeclined, setSubHeader }) {
   const TABS = ["all", "open", "closed"];
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
   // Active estimate for the long-press quick-actions sheet. null means closed.
   const [menuInv, setMenuInv] = useState(null);
+  const [declineInv, setDeclineInv] = useState(null);
   const tabIndex = TABS.indexOf(tab);
   // Year filter for the KPI strip + list. Defaults to the current year so
   // the close-rate metric reflects this year's pipeline (years of historical
@@ -5708,7 +5798,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
   };
 
   // Closed = signed/approved OR converted to invoice (Jake's definition)
-  const isClosed = (inv) => inv.status === "approved" || !!inv.convertedToId;
+  const isClosed = estimateClosed;
   // Apply the year filter consistently to both the list and the KPI metrics
   // so the numbers always match what the user is currently looking at.
   const inYear = (inv) => yearFilter === "all" || yearOf(inv) === yearFilter;
@@ -5727,8 +5817,10 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
 
   const yearScoped = invoices.filter(inYear);
   const openTotal = yearScoped.filter(i => !isClosed(i)).reduce((s, i) => s + calcTotals(i).total, 0);
-  const closedTotal = yearScoped.filter(isClosed).reduce((s, i) => s + calcTotals(i).total, 0);
-  const closeRate = yearScoped.length === 0 ? 0 : Math.round(yearScoped.filter(isClosed).length / yearScoped.length * 100);
+  // Closed-won, not merely closed. Declined estimates are lost money and must
+  // not count toward either figure.
+  const closedTotal = yearScoped.filter(estimateWon).reduce((s, i) => s + calcTotals(i).total, 0);
+  const closeRate = yearScoped.length === 0 ? 0 : Math.round(yearScoped.filter(estimateWon).length / yearScoped.length * 100);
 
   // Render KPI strip + filter tabs into the App-level sticky slot. Slot is
   // keyed by tab name ("estimates") so stale pushes can't blank a new tab.
@@ -5788,9 +5880,9 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
         </div>
         {list.filter(i => (i.year || new Date(i.date).getFullYear()) === yr).map(inv => {
           const t = calcTotals(inv);
-          const closed = isClosed(inv);
-          const pillLabel = inv.convertedToId ? "→ Invoice" : inv.status === "approved" ? "✓ Approved" : "Open";
-          const pillColor = closed ? "#27ae60" : "#8899bb";
+          const pill = estimateDisplay(inv);
+          const pillLabel = pill.label;
+          const pillColor = pill.color;
           return (
             <EstimateListCard key={inv.id} inv={inv} onSelect={onSelect} onLongPress={setMenuInv} pillLabel={pillLabel} pillColor={pillColor} total={t.total} />
           );
@@ -5842,6 +5934,18 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
           onGetLink={() => onGetLink?.(menuInv)}
           onConvert={() => onConvert?.(menuInv)}
           onDuplicate={() => onDuplicate?.(menuInv)}
+          onToggleDeclined={() => {
+            // Already declined means this is an undo, which needs no reason.
+            if (estimateDeclined(menuInv)) onToggleDeclined?.(menuInv, false, null);
+            else setDeclineInv(menuInv);
+          }}
+        />
+      )}
+      {declineInv && (
+        <DeclineReasonSheet
+          inv={declineInv}
+          onClose={() => setDeclineInv(null)}
+          onPick={(reason) => onToggleDeclined?.(declineInv, true, reason)}
         />
       )}
     </div>
@@ -6549,9 +6653,9 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
               <div style={{ background: "#f4f6fa", borderRadius: 8, padding: "14px 12px", fontSize: 13, color: "#888" }}>No estimates yet for this client.</div>
             ) : realEstimates.map(inv => {
               const t = calcTotals(inv);
-              const closed = inv.status === "approved" || !!inv.convertedToId;
-              const pillLabel = inv.convertedToId ? "\u2192 Invoice" : inv.status === "approved" ? "\u2713 Approved" : "Open";
-              const pillColor = closed ? "#27ae60" : "#8899bb";
+              const pill = estimateDisplay(inv);
+              const pillLabel = pill.label;
+              const pillColor = pill.color;
               return (
                 <EstimateListCard key={inv.id} inv={inv} onSelect={onSelectInvoice} pillLabel={pillLabel} pillColor={pillColor} total={t.total} />
               );
@@ -11674,6 +11778,35 @@ export default function App() {
 
   // Convert estimate ↔ invoice. Creates a NEW document (separate ID) so the
   // original is preserved (change-order friendly).
+  // Turn an estimate down, or put it back in play. Goes through a narrow RPC,
+  // never saveInvoice, so a later ordinary edit cannot quietly revive it.
+  const toggleEstimateDeclined = async (inv, declined, reason) => {
+    if (!inv?.id) return;
+    const before = inv;
+    const stamp = declined ? new Date().toISOString() : null;
+    setData(d => ({
+      ...d,
+      invoices: d.invoices.map(i => i.id === inv.id
+        ? { ...i, status: declined ? 'declined' : 'outstanding',
+            declinedAt: stamp, declinedReason: declined ? (reason || null) : null }
+        : i),
+    }));
+    try {
+      const res = await db.setEstimateDeclined(inv.id, declined, reason);
+      // Keep the lock token current so the next edit to this estimate does not
+      // trip the concurrent-edit check.
+      if (res?.updatedAt) {
+        setData(d => ({
+          ...d,
+          invoices: d.invoices.map(i => i.id === inv.id ? { ...i, updatedAt: res.updatedAt } : i),
+        }));
+      }
+    } catch (e) {
+      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? before : i) }));
+      alert(`Could not update ${inv.id}.\n\n${e.message || e}`);
+    }
+  };
+
   const convertInvoice = async (form, targetType) => {
     const year = new Date(form.date || today()).getFullYear();
     const isEstTarget = targetType === "estimate";
@@ -12113,7 +12246,7 @@ export default function App() {
           </div>
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
-        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} />}
+        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}

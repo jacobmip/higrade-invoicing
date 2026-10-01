@@ -33,6 +33,11 @@ function toInvoice(row, items = [], payments = []) {
     signedAt: row.signed_at || null,
     clientInfo: row.client_info || null,
     convertedToId: row.converted_to_id || null,
+    // Declined estimate (migration 056). Set only through setEstimateDeclined,
+    // never through saveInvoice — save_invoice_with_items would overwrite it on
+    // the next ordinary edit the way it restamps owner_id.
+    declinedAt: row.declined_at || null,
+    declinedReason: row.declined_reason || null,
     viewToken: row.view_token || null,
     jobAddress: row.job_address || null,
     billingAddress: row.billing_address || null,
@@ -691,6 +696,19 @@ export async function upsertInvoice(inv, isNew) {
     id: savedId,
     updatedAt: data?.updated_at || null,
   }
+}
+
+// Mark an estimate declined, or put it back in play. A dedicated RPC, not part
+// of saveInvoice, so an ordinary edit to a declined estimate cannot silently
+// revive it. Returns the new updatedAt so the caller's lock token stays valid.
+export async function setEstimateDeclined(id, declined, reason) {
+  const { data, error } = await supabase.rpc('set_estimate_declined', {
+    p_id: id,
+    p_declined: !!declined,
+    p_reason: reason || null,
+  })
+  if (error) throw new Error(error.message || 'Could not update the estimate')
+  return { status: data?.status || null, updatedAt: data?.updated_at || null }
 }
 
 // ─── Invoice version snapshots ────────────────────────────────────────────────
