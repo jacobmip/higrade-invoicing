@@ -352,6 +352,13 @@ copies of `calcTotals` and `calcLateFee`, so **a change to either function in
 than the `/v/<token>` page the customer opens. Customer sends are gated by
 `settings.invoice_followup_live`; SMS additionally by `sms_outbound_enabled`.
 
+Migration 055 was applied 2026-09-30 and the cron is live (preview-only). The
+script resolves a customer's phone and email from the `clients` row **merged
+with the invoice's `client_info`**, because an invoice can be saved with
+`client_id = null` and its contact details inline — 5 open invoices are like
+that today. Anything in the app that stops writing `client_info`, or that starts
+relying on `client_id` always being set, has to be checked against that script.
+
 #### The Apps Script is mirrored in `apps-script/`
 
 The receptionist's calendar booking runs in a Google Apps Script web app in
