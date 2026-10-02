@@ -5,6 +5,62 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.17.0 — 2026-10-02
+
+### Document numbers are issued by the database, not the browser (migration 060)
+- **`mintDocId` now calls `allocate_doc_number()`** instead of incrementing a counter
+  seeded from the snapshot loaded at app start. That counter was only ever right for
+  a single tab, and the app is not the only writer: a second device, the Telegram
+  manager bot, the AI receptionist and direct SQL all create documents. Whoever read
+  it second issued a number the first had already taken.
+- **The damage was to estimate/invoice pairing, not to ids.** `convertInvoice` reuses
+  the estimate's number, so EST1040 becomes INV1040 — but only while INV1040 is free.
+  Once an unrelated job holds it, conversion mints a fresh number and that pair is
+  mismatched for good. EST1035 (took 1035, already held by INV1035) and EST1040
+  (re-issued to another client the next day) are both exactly this. Neither can be
+  repaired: INV1035, INV1036 and INV1040 have all been sent and opened.
+- **The allocator takes a row lock on `settings.next_doc_num`**, so callers queue
+  instead of each reading the same value, and it is clamped to one above the highest
+  number in use — soft-deleted rows included — so a stale or hand-edited counter
+  cannot re-issue a number already printed on something a customer has seen.
+  `SECURITY DEFINER` with a pinned `search_path`, and `EXECUTE` revoked from `anon`,
+  which Supabase grants by default and `REVOKE FROM PUBLIC` does not take back.
+- **Falls back to the local counter if the call fails.** A plumber under a house with
+  no signal still has to be able to write an invoice, and a rare collision beats a
+  blocked job. The local ref is advanced past whatever the server issued.
+- Still outstanding: `create_estimate_from_lead` mints by scanning `max(id)` rather
+  than calling the allocator, so the AI receptionist remains an independent writer.
+
+### Fix: a billing address that only restates the job site is no longer kept
+- A client created with the complex **name** in `billing_address` ("Makani Kai") had
+  it inherited onto a document by the autosave, and the PDF then split in two and
+  printed "Billing Address: Makani Kai" — a building name, not somewhere a cheque can
+  go. The lines differ as strings, so the old equality check for "same place typed
+  twice" never caught it. `isJobSiteEcho()` now recognises both shapes.
+- Applied at save, so one is never written onto a document again, **and** at render,
+  so documents already carrying one stop printing the block without anyone having to
+  go repair the data. A real billing address at a different street still splits.
+- **New "Clear billing address" button** next to the Show billing address checkbox.
+  The checkbox only ever hid the block while the value stayed on the document and in
+  the client record, so a wrong billing address could not be removed from that screen
+  at all — which is how EST1040 got fixed by hand in SQL five times, each one
+  overwritten by the open form's next autosave.
+
+### Fix: saving a document no longer drops internal notes (migration 059)
+- `internal_notes` has been a column on `invoices` for a while but was never in
+  `save_invoice_with_items`'s insert column list, so every caller that passed it lost
+  the value with no error and no warning. Found while writing EST1040: the
+  assumptions behind a ballpark quote went in, the RPC returned success, and the
+  field came back null.
+- An absent key preserves, an explicit empty string clears. The app's editor sends
+  the whole document so it can still clear the field by saving an empty box; the
+  manager bot patches a few fields at a time and must not wipe notes typed on the
+  phone.
+
+### Competency catalog wording
+- A skill label no longer carries an owner's name. The apprentice sees this catalog
+  in the app, and the hire-facing docs are written in company voice.
+
 ## v1.16.2 — 2026-10-02
 
 ### New documents default the assigned tech to whoever created them (migration 058)
