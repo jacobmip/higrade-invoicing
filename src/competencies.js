@@ -147,7 +147,7 @@ export const DOMAINS = [
       { key: "cust.explain",  label: "Explain the problem and the fix in plain language", gate: true },
       { key: "cust.pricing",  label: "Never quotes or discounts pricing on their own", gate: true },
       { key: "cust.hard",     label: "Handles an unhappy customer without escalating", gate: true },
-      { key: "cust.upsell",   label: "Flags additional work for Jake to quote" },
+      { key: "cust.upsell",   label: "Flags additional work for the office to quote" },
     ],
   },
   {
