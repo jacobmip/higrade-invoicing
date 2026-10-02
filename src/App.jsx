@@ -10,7 +10,7 @@ import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import PriceBook from './PriceBook.jsx';
-import { resolveBillTo } from './billTo.js';
+import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
@@ -3884,7 +3884,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // embedded id so reopened invoices pick the right address, not the first.
       const effJobId = f.jobAddressId || f.jobAddress?.id || null;
       const pickedJob = (effJobId && cAddrs.find(a => a.id === effJobId)) || f.jobAddress || cAddrs[0] || null;
-      const billing = f.billingAddress || c?.billingAddress || null;
+      // Never inherit, or keep, a "billing address" that is just the job site
+      // restated -- the site name alone is the usual shape. Storing one makes
+      // the document split into two blocks and print a complex name under
+      // "Billing Address", and there is no way to take it off again from the
+      // document screen. Checked against the job site being saved, not the
+      // stale one on the form.
+      const rawBilling = f.billingAddress || c?.billingAddress || null;
+      const billing = isJobSiteEcho(rawBilling, pickedJob) ? null : rawBilling;
       // Invariant: an EST#### row is an estimate and an INV#### row is an
       // invoice. Nothing in the app is allowed to break that -- the save RPC
       // upserts on id with `type = excluded.type`, so one bad write silently
@@ -4671,15 +4678,30 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               </div>
             )}
             {selectedClient && !editingClient && clientAddresses.length >= 1 && (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, cursor: "pointer", userSelect: "none" }}>
-                <input
-                  type="checkbox"
-                  checked={form.showBillingAddress ?? true}
-                  onChange={e => setForm(f => ({ ...f, showBillingAddress: e.target.checked }))}
-                  style={{ width: 16, height: 16, accentColor: NAVY, cursor: "pointer" }}
-                />
-                <span style={{ fontSize: 13, color: "#555" }}>Show billing address</span>
-              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.showBillingAddress ?? true}
+                    onChange={e => setForm(f => ({ ...f, showBillingAddress: e.target.checked }))}
+                    style={{ width: 16, height: 16, accentColor: NAVY, cursor: "pointer" }}
+                  />
+                  <span style={{ fontSize: 13, color: "#555" }}>Show billing address</span>
+                </label>
+                {/* The checkbox only hides the block; the value stays on the
+                    document and in the client record. Without this there is no
+                    way to REMOVE a wrong billing address from this screen. */}
+                {bill.billing.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!confirm("Remove the billing address from this document?\n\n" + bill.billing.join(", ") + "\n\nThe job site address is not affected.")) return;
+                      setForm(f => ({ ...f, billingAddress: null, showBillingAddress: true }));
+                    }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: 0 }}
+                  >Clear billing address</button>
+                )}
+              </div>
             )}
             {selectedClient && !editingClient && clientAddresses.length >= 1 && !addingProperty && (
               <div style={{ marginTop: 8 }}>

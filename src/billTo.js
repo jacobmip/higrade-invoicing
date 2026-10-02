@@ -21,6 +21,30 @@ function normAddr(lines) {
   return lines.join(" ").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// True when a "billing address" is really just the job site wearing a
+// different hat, and so should never have been stored as a billing address.
+//
+// Two shapes, both seen in real data:
+//   - the same place typed twice (identical lines)
+//   - the SITE NAME on its own, e.g. billing line1 "Makani Kai" against a job
+//     site labelled "Makani Kai" at 45-995 Wailele Rd
+//
+// The second is the one that bites: the lines differ as strings, so resolveBillTo
+// splits the document and prints "Billing Address: Makani Kai", which is not an
+// address anyone can post a cheque to. A billing address is only real when it
+// points somewhere else, like a property manager's office.
+export function isJobSiteEcho(billing, jobAddress) {
+  const b = linesOf(billing);
+  if (!b.length) return false;
+  const j = linesOf(jobAddress);
+  if (j.length && normAddr(b) === normAddr(j)) return true;
+  const label = (jobAddress?.label || "").trim().toLowerCase();
+  if (!label) return false;
+  // Just the site name, with or without the city/zip line repeated.
+  const first = (b[0] || "").trim().toLowerCase();
+  return first === label;
+}
+
 // form: the invoice form snapshot (jobAddress, billingAddress, clientInfo).
 // clientRecord: the matched live client row (billingAddress, address1/2/3) —
 //   optional; supplies the flat-field fallback for the billing address.
@@ -37,9 +61,14 @@ export function resolveBillTo(form = {}, clientRecord = {}) {
   // here: those fields contain job-site addresses for property-manager clients,
   // not billing addresses. Using them caused a job-site address to appear
   // labeled "Billing Address" whenever no real billing address was on file.
+  // A billing address that is only the job site restated is dropped here as
+  // well as at the point it would be saved, so documents that already carry
+  // one stop printing a bogus "Billing Address" block without needing a data fix.
+  const formBilling = isJobSiteEcho(form.billingAddress, form.jobAddress) ? [] : linesOf(form.billingAddress);
+  const clientBilling = isJobSiteEcho(clientRecord.billingAddress, form.jobAddress) ? [] : linesOf(clientRecord.billingAddress);
   const billingLines =
-    (linesOf(form.billingAddress).length && linesOf(form.billingAddress)) ||
-    (linesOf(clientRecord.billingAddress).length && linesOf(clientRecord.billingAddress)) ||
+    (formBilling.length && formBilling) ||
+    (clientBilling.length && clientBilling) ||
     [];
 
   const haveJob = jobLines.length > 0;
