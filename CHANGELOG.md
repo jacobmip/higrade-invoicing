@@ -5,6 +5,18 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.17.1 — 2026-10-02
+
+### Fix: opening an invoice blanked the whole app
+- The Clear billing address button added in v1.17.0 read `bill`, a variable that only
+  exists in `PDFPreview`, not in `InvoiceForm`. Opening any document whose client has
+  at least one property threw a ReferenceError on render and React unmounted the app,
+  leaving a white screen. `InvoiceForm` now resolves its own billing lines
+  (`formBill`, via `resolveBillTo`). The build did not catch it because esbuild does not
+  scope-check; an eslint `no-undef` pass over `src/App.jsx` now comes back clean.
+
+---
+
 ## v1.17.0 — 2026-10-02
 
 ### Document numbers are issued by the database, not the browser (migration 060)
