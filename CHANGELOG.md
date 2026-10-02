@@ -5,6 +5,18 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.17.2 — 2026-10-02
+
+### Fix: job photos missing from the customer link on desktop
+- `PublicViewerPage` has two layouts. The mobile one renders through `PDFPreview` and
+  showed photos; the desktop one (900px and wider) builds its own sheet and had no photo
+  section at all, so a customer opening their link on a computer never saw them.
+- The desktop sheet now has a Job Photos section after Notes: Before and After side by
+  side, everything else under Additional Photos in a two-column grid. Untyped photos are
+  shown there rather than dropped.
+
+---
+
 ## v1.17.1 — 2026-10-02
 
 ### Fix: opening an invoice blanked the whole app

@@ -8440,6 +8440,50 @@ function PublicViewerPage({ token }) {
             </div>
           )}
 
+          {/* Job Photos (desktop) — the mobile layout gets these through
+              PDFPreview; this branch builds its own sheet, so it needs its
+              own copy. Anything not typed before/after lands under
+              Additional Photos rather than being dropped. */}
+          {(() => {
+            const photos = state.photos || [];
+            if (!photos.length) return null;
+            const beforePhotos = photos.filter(p => p.type === 'before');
+            const afterPhotos  = photos.filter(p => p.type === 'after');
+            const otherPhotos  = photos.filter(p => p.type !== 'before' && p.type !== 'after');
+            const subHead = { color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 };
+            const photo = (p, alt) => (
+              <div key={p.id} style={{ marginBottom: 12 }}>
+                <img src={p.url} alt={p.caption || alt} style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }} />
+                {p.caption && <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>{p.caption}</div>}
+              </div>
+            );
+            return (
+              <div style={{ padding: '8px 40px 24px', borderTop: '1px solid #eef0f5', marginTop: 8 }}>
+                <div style={{ color: NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: 1.5, marginBottom: 12, marginTop: 12 }}>JOB PHOTOS</div>
+                {(beforePhotos.length > 0 || afterPhotos.length > 0) && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 12 }}>
+                    <div>
+                      <div style={subHead}>Before</div>
+                      {beforePhotos.map(p => photo(p, 'before'))}
+                    </div>
+                    <div>
+                      <div style={subHead}>After</div>
+                      {afterPhotos.map(p => photo(p, 'after'))}
+                    </div>
+                  </div>
+                )}
+                {otherPhotos.length > 0 && (
+                  <div>
+                    <div style={subHead}>Additional Photos</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                      {otherPhotos.map(p => photo(p, 'photo'))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Payment History (desktop) — only on fully-paid invoices.
               Renders one row per recorded payment with method, date, and
               amount so the customer has a clear receipt. */}
