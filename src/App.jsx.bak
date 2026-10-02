@@ -4097,6 +4097,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
   const selectedClient = clients.find(c => c.name === form.client);
   const clientAddresses = Array.isArray(selectedClient?.addresses) ? selectedClient.addresses : [];
+  // What the document would print under "Billing Address", for the Clear
+  // billing address button. PDFPreview has its own `bill`; this component did
+  // not, and referencing it here threw on render and blanked the whole app.
+  const formBill = resolveBillTo(form, selectedClient || {});
   // Resolve which job-site address applies to this invoice.
   // jobAddressId is a session-only field — it is never stored in the DB;
   // only the full jobAddress snapshot is persisted. So on load, jobAddressId
@@ -4691,11 +4695,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 {/* The checkbox only hides the block; the value stays on the
                     document and in the client record. Without this there is no
                     way to REMOVE a wrong billing address from this screen. */}
-                {bill.billing.length > 0 && (
+                {formBill.billing.length > 0 && (
                   <button
                     type="button"
                     onClick={() => {
-                      if (!confirm("Remove the billing address from this document?\n\n" + bill.billing.join(", ") + "\n\nThe job site address is not affected.")) return;
+                      if (!confirm("Remove the billing address from this document?\n\n" + formBill.billing.join(", ") + "\n\nThe job site address is not affected.")) return;
                       setForm(f => ({ ...f, billingAddress: null, showBillingAddress: true }));
                     }}
                     style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: 0 }}
