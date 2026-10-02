@@ -10,7 +10,7 @@ import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import PriceBook from './PriceBook.jsx';
-import { resolveBillTo } from './billTo.js';
+import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
@@ -3595,7 +3595,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
   const [activeTab, setActiveTab] = useState(isReadOnly ? "preview" : "edit");
@@ -3830,7 +3830,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // await, so it still sees the outgoing document.
     flushAutoSaveRef.current();
     formEpochRef.current += 1;
-    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
+    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
     setAutoSavedId(null);
     updatedAtRef.current = null;
     skipFirstRef.current = true;
@@ -3884,7 +3884,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // embedded id so reopened invoices pick the right address, not the first.
       const effJobId = f.jobAddressId || f.jobAddress?.id || null;
       const pickedJob = (effJobId && cAddrs.find(a => a.id === effJobId)) || f.jobAddress || cAddrs[0] || null;
-      const billing = f.billingAddress || c?.billingAddress || null;
+      // Never inherit, or keep, a "billing address" that is just the job site
+      // restated -- the site name alone is the usual shape. Storing one makes
+      // the document split into two blocks and print a complex name under
+      // "Billing Address", and there is no way to take it off again from the
+      // document screen. Checked against the job site being saved, not the
+      // stale one on the form.
+      const rawBilling = f.billingAddress || c?.billingAddress || null;
+      const billing = isJobSiteEcho(rawBilling, pickedJob) ? null : rawBilling;
       // Invariant: an EST#### row is an estimate and an INV#### row is an
       // invoice. Nothing in the app is allowed to break that -- the save RPC
       // upserts on id with `type = excluded.type`, so one bad write silently
@@ -4671,15 +4678,30 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               </div>
             )}
             {selectedClient && !editingClient && clientAddresses.length >= 1 && (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, cursor: "pointer", userSelect: "none" }}>
-                <input
-                  type="checkbox"
-                  checked={form.showBillingAddress ?? true}
-                  onChange={e => setForm(f => ({ ...f, showBillingAddress: e.target.checked }))}
-                  style={{ width: 16, height: 16, accentColor: NAVY, cursor: "pointer" }}
-                />
-                <span style={{ fontSize: 13, color: "#555" }}>Show billing address</span>
-              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.showBillingAddress ?? true}
+                    onChange={e => setForm(f => ({ ...f, showBillingAddress: e.target.checked }))}
+                    style={{ width: 16, height: 16, accentColor: NAVY, cursor: "pointer" }}
+                  />
+                  <span style={{ fontSize: 13, color: "#555" }}>Show billing address</span>
+                </label>
+                {/* The checkbox only hides the block; the value stays on the
+                    document and in the client record. Without this there is no
+                    way to REMOVE a wrong billing address from this screen. */}
+                {bill.billing.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!confirm("Remove the billing address from this document?\n\n" + bill.billing.join(", ") + "\n\nThe job site address is not affected.")) return;
+                      setForm(f => ({ ...f, billingAddress: null, showBillingAddress: true }));
+                    }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: ORANGE, fontSize: 12, fontWeight: 700, padding: 0 }}
+                  >Clear billing address</button>
+                )}
+              </div>
             )}
             {selectedClient && !editingClient && clientAddresses.length >= 1 && !addingProperty && (
               <div style={{ marginTop: 8 }}>
@@ -10946,11 +10968,34 @@ export default function App() {
   // reissue a number that is already on a customer's PDF.
   const nextDocNumRef = useRef(1000);
   const bumpDocNum = (n) => { if (typeof n === "number" && n > nextDocNumRef.current) nextDocNumRef.current = n; };
-  // Reserve the next document number synchronously. Synchronous matters: state
-  // updates are deferred, so a bulk create looping 20 times would otherwise
-  // hand the same number to every document. Returns e.g. "EST1000".
-  const mintDocId = (type) => {
-    const num = nextDocNumRef.current++;
+  // Reserve the next document number.
+  //
+  // The number now comes from allocate_doc_number() in the database, under a
+  // row lock, because computing it here was only ever correct for one tab. This
+  // app is not the only writer: a second device, the Telegram manager bot, the
+  // AI receptionist and direct SQL all create documents. Whoever read the
+  // counter second issued a number the first had already taken, and the losing
+  // write does not fail -- the id is free, so both documents exist and the
+  // estimate/invoice PAIR is broken forever. EST1035 and EST1040 are both this.
+  //
+  // Falls back to the local counter when the call fails, because a plumber
+  // under a house with no signal still has to be able to write an invoice. The
+  // fallback can collide, exactly as before; it is the lesser of the two
+  // failures, and it stays rare instead of being the normal path.
+  //
+  // The local ref is still advanced past whatever the server issued, so a
+  // subsequent offline mint does not land on top of it.
+  const mintDocId = async (type) => {
+    let num = null;
+    try {
+      const { data: allocated, error } = await supabase.rpc("allocate_doc_number");
+      if (error) throw error;
+      if (typeof allocated === "number" && allocated > 0) num = allocated;
+    } catch (e) {
+      console.warn("[docnum] allocator unreachable, using local counter:", e?.message || e);
+    }
+    if (num == null) num = nextDocNumRef.current;
+    bumpDocNum(num + 1);
     return { num, id: `${type === "estimate" ? "EST" : "INV"}${String(num).padStart(4, "0")}` };
   };
   // Keep the synchronous counter aligned with state whenever state advances
@@ -11127,11 +11172,14 @@ export default function App() {
       const isEst = docType === "estimate";
       // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
       // create) don't collide. One shared sequence across both types.
-      const { num, id } = mintDocId(docType);
+      const { num, id } = await mintDocId(docType);
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
       const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+        // The RPC assigns a new document to whoever saves it; mirror that here
+        // so the form shows it before the next reload (migration 053/058).
+        ...(session?.user?.id ? { assignedTechId: session.user.id } : {}),
         // The chat agent passes these so a document it creates carries its
         // client link and job site the way one picked in the form does.
         ...(inv.client_id ? { client_id: inv.client_id } : {}),
@@ -11407,7 +11455,7 @@ export default function App() {
       catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     } else {
       const isEst = form.type === "estimate";
-      const { num, id } = mintDocId(form.type);
+      const { num, id } = await mintDocId(form.type);
       const newInv = { ...form, id, year };
       setData(d => ({
         ...d,
@@ -11587,7 +11635,7 @@ export default function App() {
     const isEst = inv.type === 'estimate';
     // A duplicate is a new job, so it always takes a fresh number -- never the
     // source document's.
-    const { num, id: newId } = mintDocId(inv.type);
+    const { num, id: newId } = await mintDocId(inv.type);
     const copy = {
       ...inv,
       id: newId,
@@ -11862,7 +11910,7 @@ export default function App() {
       newId = pairedId;
       bumpDocNum(sourceNum + 1);
     } else {
-      ({ num, id: newId } = mintDocId(targetType));
+      ({ num, id: newId } = await mintDocId(targetType));
       if (pairedId) console.warn(`Cannot reuse ${pairedId} (already exists); minted ${newId} instead.`);
     }
     // Carry payments forward (e.g. a down payment recorded on an estimate
@@ -12057,7 +12105,7 @@ export default function App() {
     }
     // New record — mint an ID from the shared sequence.
     const isEst = form.type === "estimate";
-    const { num, id } = mintDocId(form.type);
+    const { num, id } = await mintDocId(form.type);
     const created = { ...form, id, year };
     setData(d => ({
       ...d,
