@@ -10968,11 +10968,34 @@ export default function App() {
   // reissue a number that is already on a customer's PDF.
   const nextDocNumRef = useRef(1000);
   const bumpDocNum = (n) => { if (typeof n === "number" && n > nextDocNumRef.current) nextDocNumRef.current = n; };
-  // Reserve the next document number synchronously. Synchronous matters: state
-  // updates are deferred, so a bulk create looping 20 times would otherwise
-  // hand the same number to every document. Returns e.g. "EST1000".
-  const mintDocId = (type) => {
-    const num = nextDocNumRef.current++;
+  // Reserve the next document number.
+  //
+  // The number now comes from allocate_doc_number() in the database, under a
+  // row lock, because computing it here was only ever correct for one tab. This
+  // app is not the only writer: a second device, the Telegram manager bot, the
+  // AI receptionist and direct SQL all create documents. Whoever read the
+  // counter second issued a number the first had already taken, and the losing
+  // write does not fail -- the id is free, so both documents exist and the
+  // estimate/invoice PAIR is broken forever. EST1035 and EST1040 are both this.
+  //
+  // Falls back to the local counter when the call fails, because a plumber
+  // under a house with no signal still has to be able to write an invoice. The
+  // fallback can collide, exactly as before; it is the lesser of the two
+  // failures, and it stays rare instead of being the normal path.
+  //
+  // The local ref is still advanced past whatever the server issued, so a
+  // subsequent offline mint does not land on top of it.
+  const mintDocId = async (type) => {
+    let num = null;
+    try {
+      const { data: allocated, error } = await supabase.rpc("allocate_doc_number");
+      if (error) throw error;
+      if (typeof allocated === "number" && allocated > 0) num = allocated;
+    } catch (e) {
+      console.warn("[docnum] allocator unreachable, using local counter:", e?.message || e);
+    }
+    if (num == null) num = nextDocNumRef.current;
+    bumpDocNum(num + 1);
     return { num, id: `${type === "estimate" ? "EST" : "INV"}${String(num).padStart(4, "0")}` };
   };
   // Keep the synchronous counter aligned with state whenever state advances
@@ -11149,7 +11172,7 @@ export default function App() {
       const isEst = docType === "estimate";
       // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
       // create) don't collide. One shared sequence across both types.
-      const { num, id } = mintDocId(docType);
+      const { num, id } = await mintDocId(docType);
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
@@ -11432,7 +11455,7 @@ export default function App() {
       catch (e) { console.error('Save failed (kept local copy):', e); alert('Saved locally. Cloud sync failed: ' + (e.message || e)); }
     } else {
       const isEst = form.type === "estimate";
-      const { num, id } = mintDocId(form.type);
+      const { num, id } = await mintDocId(form.type);
       const newInv = { ...form, id, year };
       setData(d => ({
         ...d,
@@ -11612,7 +11635,7 @@ export default function App() {
     const isEst = inv.type === 'estimate';
     // A duplicate is a new job, so it always takes a fresh number -- never the
     // source document's.
-    const { num, id: newId } = mintDocId(inv.type);
+    const { num, id: newId } = await mintDocId(inv.type);
     const copy = {
       ...inv,
       id: newId,
@@ -11887,7 +11910,7 @@ export default function App() {
       newId = pairedId;
       bumpDocNum(sourceNum + 1);
     } else {
-      ({ num, id: newId } = mintDocId(targetType));
+      ({ num, id: newId } = await mintDocId(targetType));
       if (pairedId) console.warn(`Cannot reuse ${pairedId} (already exists); minted ${newId} instead.`);
     }
     // Carry payments forward (e.g. a down payment recorded on an estimate
@@ -12082,7 +12105,7 @@ export default function App() {
     }
     // New record — mint an ID from the shared sequence.
     const isEst = form.type === "estimate";
-    const { num, id } = mintDocId(form.type);
+    const { num, id } = await mintDocId(form.type);
     const created = { ...form, id, year };
     setData(d => ({
       ...d,
