@@ -5,6 +5,18 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.16.2 — 2026-10-02
+
+### New documents default the assigned tech to whoever created them (migration 058)
+- A new invoice or estimate opens with the Assigned Tech set to you instead of
+  Unassigned. Documents made by the chat agent show it right away too.
+- Lisa's leads and the PayPal down-payment invoice used to land Unassigned,
+  because they bypass the app's save. A new database trigger fills a missing
+  assigned tech from the document's owner on insert, so they now default to
+  Jake. A plumber's own documents default to that plumber.
+- The PayPal down-payment invoice carries the estimate's assigned tech.
+- Existing jobs are untouched; one set to Unassigned on purpose stays that way.
+
 ## v1.16.1 — 2026-10-01
 
 ### Fix: editing a payment always showed Cash

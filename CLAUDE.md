@@ -125,7 +125,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 055)
+## Database schema (current through migration 058)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
@@ -156,6 +156,7 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `admin_owner_ids()` — SECURITY DEFINER, migration 043. Admin user ids, used by the shared price book policy. Reading `profiles` under RLS from another table's policy can silently return nothing, hence the definer.
 - `set_owner_id()` — trigger, stamps owner_id on insert. **Returns NULL under the service-role key** (`auth.uid()` is null), which is how down-payment invoices ended up invisible — see migration 037.
 - `save_invoice_with_items(...)` — the main upsert. Redefined by seven migrations; rebuild it from its live definition, never from an old file.
+- `default_assigned_tech()` — trigger, migration 058. A new invoice row with no `assigned_tech_id` gets its `owner_id`, so every document starts assigned to whoever created it (Jake for his own and for Lisa's leads, a plumber for theirs).
 - `enforce_invoice_id_type()` — trigger, migration 039. An `EST` row is an estimate and an `INV` row is an invoice; blocks any write that would introduce a mismatch, grandfathers rows already mismatched.
 - `bump_doc_num(n)` — advance-only shared counter, migration 040
 - `visits[]` entries are `{ id, start, minutes, label, kind, eventId, builtBy, pending? }`. `kind` is `job` / `estimate` / `emergency` and drives the Google event colour; absent, it falls back to the document type, so nothing needed backfilling when it was added. `builtBy: "app"` marks an event this app created — only those get their description and location patched on a reschedule, so a booking from Lisa keeps the caller's own words. Both live in the jsonb, so neither cost a migration.
@@ -206,9 +207,12 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **053** — `assigned_tech_id` on invoices for the per-tech KPI scorecard: the column, a backfill from `owner_id`, a partial index, `save_invoice_with_items` taught to carry it, and `invoices_select` widened so a tech can see the jobs assigned to them. The update branch treats an absent or null key as "leave the assignment alone" and the literal string `'none'` as "clear it", so the AI receptionist's RPCs — which know nothing about the column — cannot blank out an assignment.
 - **054** — apprentice competencies: `profiles.tier`, the `tech_competencies` table and its RLS. Pairs with `src/competencies.js`.
 - **055** — `invoice_reminders` and the `invoice_followup_live` setting, for the daily overdue-invoice reminder script in the AI-OS repo
+- **056** — declined estimates: `invoices.declined_at` / `declined_reason`, `set_estimate_declined()`, and the `estimate_valid_days` setting (30)
+- **057** — the `bot_outbound_send_enabled` setting, the gate on the AI-OS bot sending a customer follow-up
+- **058** — `default_assigned_tech()`, a BEFORE INSERT trigger (`zz_invoices_default_assigned_tech`, named to fire last) that fills a null `assigned_tech_id` from `owner_id`. Covers the writers that bypass `save_invoice_with_items`: the receptionist's RPCs, the PayPal down-payment insert, and converting an unassigned estimate. Insert only, so a job deliberately set to Unassigned stays that way.
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `056_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `059_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids

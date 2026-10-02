@@ -178,6 +178,8 @@ async function convertEstimateToInvoice(estimateId) {
       // invoice would exist in the DB but never show up in the app, so the
       // estimate looked like it had never converted at all.
       owner_id: est.owner_id || null,
+      // Whoever ran the estimate runs the invoice (migration 053).
+      assigned_tech_id: est.assigned_tech_id || est.owner_id || null,
     }),
   });
   if (!insertRes.ok) {

@@ -3595,7 +3595,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
   const [activeTab, setActiveTab] = useState(isReadOnly ? "preview" : "edit");
@@ -3830,7 +3830,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // await, so it still sees the outgoing document.
     flushAutoSaveRef.current();
     formEpochRef.current += 1;
-    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true });
+    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
     setAutoSavedId(null);
     updatedAtRef.current = null;
     skipFirstRef.current = true;
@@ -11132,6 +11132,9 @@ export default function App() {
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
       const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+        // The RPC assigns a new document to whoever saves it; mirror that here
+        // so the form shows it before the next reload (migration 053/058).
+        ...(session?.user?.id ? { assignedTechId: session.user.id } : {}),
         // The chat agent passes these so a document it creates carries its
         // client link and job site the way one picked in the form does.
         ...(inv.client_id ? { client_id: inv.client_id } : {}),
