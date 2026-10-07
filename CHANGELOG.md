@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.18.1 — 2026-10-07
+
+### Fix: GE number label read "GE GE-..."
+- The GE half tax line printed the label and the number's own prefix back to
+  back. It now reads "Tax ID GE-187-330-7136-01" on the preview, customer link
+  and PDF.
+
+---
+
 ## v1.18.0 — 2026-10-07
 
 ### GE half tax per client
@@ -17,7 +26,7 @@ Each entry is tagged with its version number and date so incidents can be traced
 - The invoice form shows a **GE half tax** toggle under Tax % when the client
   has it on (or the invoice is already at 0.5%), so one invoice can go back to
   4.712%.
-- A 0.5% invoice prints the GE license number (GE-187-330-7136-01) on the
+- A 0.5% invoice prints the GE license number (GE-187-330-7136-01, labelled "Tax ID") on the
   in-app preview, the customer link (both layouts) and the PDF.
 - AI-created documents for a GE client default to 0.5% too.
 - No invoice column: an invoice is GE half tax exactly when its rate is 0.5

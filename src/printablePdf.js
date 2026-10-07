@@ -111,7 +111,7 @@ function drawHeader(doc, form) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text(isGeHalfTax(form)
-    ? `License #PJ-13579 · GE ${GE_LICENSE} · (808) 393-0015`
+    ? `License #PJ-13579 · Tax ID ${GE_LICENSE} · (808) 393-0015`
     : "License #PJ-13579 · (808) 393-0015", MARGIN, 73);
   doc.text("higradeplumbing.com · higradeplumbing@gmail.com", MARGIN, 86);
 

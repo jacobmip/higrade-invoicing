@@ -2973,7 +2973,7 @@ function PDFPreview({ form, clients, photos = [] }) {
             <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
             <div style={{ color: ORANGE, fontSize: 10, letterSpacing: 2.5, fontWeight: 700, marginTop: 2, fontFamily: "'Barlow Condensed', sans-serif" }}>LLC · HONOLULU, HI</div>
             <div style={{ color: "#6677aa", fontSize: 11, marginTop: 6 }}>License #PJ-13579</div>
-            {isGeHalfTax(form) && <div style={{ color: "#6677aa", fontSize: 11, marginTop: 2 }}>GE {GE_LICENSE}</div>}
+            {isGeHalfTax(form) && <div style={{ color: "#6677aa", fontSize: 11, marginTop: 2 }}>Tax ID {GE_LICENSE}</div>}
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 26, letterSpacing: 1, lineHeight: 1 }}>{isEstimate ? "ESTIMATE" : "INVOICE"}</div>
@@ -6143,7 +6143,7 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       <div onClick={() => setField("geHalfTax", !form.geHalfTax)} style={{ marginTop: compact ? 14 : 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: "10px 12px", cursor: "pointer", userSelect: "none" }}>
         <div>
           <div style={{ fontSize: 14, color: "#444", fontWeight: 600 }}>GE half tax (0.5%)</div>
-          <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Subcontract work. New invoices default to 0.5% and show GE {GE_LICENSE}.</div>
+          <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Subcontract work. New invoices default to 0.5% and show Tax ID {GE_LICENSE}.</div>
         </div>
         <div style={{ width: 44, height: 24, borderRadius: 12, background: form.geHalfTax ? ORANGE : "#dde2ee", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
           <div style={{ position: "absolute", top: 3, left: form.geHalfTax ? 23 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left 0.2s" }} />
@@ -8262,7 +8262,7 @@ function PublicViewerPage({ token }) {
         <div style={{ background: NAVY, padding: '22px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 24, letterSpacing: 2.5 }}>HI GRADE PLUMBING LLC</div>
-            <div style={{ color: '#8899bb', fontSize: 12, letterSpacing: 1.5, marginTop: 3 }}>HONOLULU, HAWAII · LIC PJ-13579 · {isGeHalfTax(invForm) ? `GE ${GE_LICENSE} · GET 0.5%` : `GET ${TAX_RATE}%`}</div>
+            <div style={{ color: '#8899bb', fontSize: 12, letterSpacing: 1.5, marginTop: 3 }}>HONOLULU, HAWAII · LIC PJ-13579 · {isGeHalfTax(invForm) ? `TAX ID ${GE_LICENSE} · GET 0.5%` : `GET ${TAX_RATE}%`}</div>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             {isEstimate && (
@@ -8341,7 +8341,7 @@ function PublicViewerPage({ token }) {
               <div style={{ color: '#fff', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 30, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
               <div style={{ color: ORANGE, fontSize: 12, letterSpacing: 2, marginTop: 4, fontWeight: 600 }}>LLC · HONOLULU, HI</div>
               <div style={{ color: '#8899bb', fontSize: 12, marginTop: 6 }}>License #PJ-13579</div>
-              {isGeHalfTax(invForm) && <div style={{ color: '#8899bb', fontSize: 12, marginTop: 2 }}>GE {GE_LICENSE}</div>}
+              {isGeHalfTax(invForm) && <div style={{ color: '#8899bb', fontSize: 12, marginTop: 2 }}>Tax ID {GE_LICENSE}</div>}
             </div>
             <div style={{ textAlign: 'right' }}>
               <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 3 }}>{isEstimate ? 'ESTIMATE' : 'INVOICE'}</div>
