@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.19.1 — 2026-10-07
+
+### Unsent tab on the estimate list
+- Estimates get the same **Unsent** tab, between Open and Closed, using the
+  same rules as the invoice list (`unsentIdsFor`). An estimate whose converted
+  invoice was sent does not show. The year filter still applies.
+
+---
+
 ## v1.19.0 — 2026-10-07
 
 ### Unsent tab on the invoice list
