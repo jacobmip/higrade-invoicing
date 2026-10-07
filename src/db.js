@@ -384,6 +384,15 @@ async function fetchAllRows(buildQuery) {
   return { data: out, error: null }
 }
 
+// Ids of every document with a 'sent' row in invoice_events, for the
+// invoice list's Unsent tab. Filled by loadAll, added to by
+// recordInvoiceEvent so a send drops the document out of Unsent without a
+// reload. null until loaded, or when the read failed: Unsent then shows
+// nothing rather than claiming every document was never sent.
+let sentIdSet = null
+export const sentIdsLoaded = () => sentIdSet !== null
+export const wasSent = (id) => !!sentIdSet && sentIdSet.has(id)
+
 export async function loadAll() {
   const [
     { data: clientRows, error: e1 },
@@ -409,6 +418,13 @@ export async function loadAll() {
     supabase.from('expenses').select('*').order('date', { ascending: false }),
     supabase.from('settings').select('*'),
   ])
+
+  // Separate from the batch above on purpose: a failure here should cost the
+  // Unsent tab, not the whole app load.
+  const { data: sentRows, error: sentErr } = await fetchAllRows(() =>
+    supabase.from('invoice_events').select('invoice_id').eq('kind', 'sent').order('invoice_id'))
+  if (sentErr) console.warn('[db] sent events not loaded:', sentErr.message || sentErr)
+  sentIdSet = sentErr ? null : new Set((sentRows || []).map(r => r.invoice_id))
 
   const err = e1 || e2 || e3 || e4 || e5 || e6 || e7
   if (err) throw err
@@ -825,6 +841,7 @@ export async function recordInvoiceEvent(invoiceId, kind, recipient, meta) {
     meta: meta || null,
   });
   if (error) throw error;
+  if (kind === 'sent' && sentIdSet) sentIdSet.add(invoiceId);
 }
 
 export async function loadInvoiceEvents(invoiceId) {

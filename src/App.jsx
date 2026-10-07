@@ -5607,10 +5607,29 @@ function EstimateListCard({ inv, onSelect, onLongPress, pillLabel, pillColor, to
   );
 }
 
-function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onRecordPayment, onDuplicate, setSubHeader }) {
-  const TABS = ["all", "outstanding", "paid"];
+// Never sent to the client, by the same rules as the Unsent query Jake runs
+// in SQL: no 'sent' event, not paid or void, no payments, not an invoice
+// that some estimate converted into, and not an estimate whose converted
+// invoice was sent. `allDocs` is both types, for the conversion checks.
+function unsentIdsFor(allDocs) {
+  if (!db.sentIdsLoaded()) return new Set();
+  const convertedInto = new Set(allDocs.map(d => d.convertedToId).filter(Boolean));
+  return new Set(allDocs.filter(d =>
+    !d.deletedAt
+    && (d.type === "invoice" || d.type === "estimate")
+    && d.status !== "paid" && d.status !== "void"
+    && !db.wasSent(d.id)
+    && !convertedInto.has(d.id)
+    && !(d.convertedToId && db.wasSent(d.convertedToId))
+    && !(d.payments || []).length
+  ).map(d => d.id));
+}
+
+function InvoiceList({ invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onRecordPayment, onDuplicate, setSubHeader }) {
+  const TABS = ["all", "outstanding", "unsent", "paid"];
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
+  const unsentIds = unsentIdsFor(allDocs || invoices);
   // Active invoice for the long-press quick-actions sheet. null means closed.
   const [menuInv, setMenuInv] = useState(null);
   // When set, opens the PaymentModal so the user can pick a payment method
@@ -5673,7 +5692,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
     return (a.id || "") < (b.id || "") ? 1 : -1;
   };
   const filterFor = (key) => invoices
-    .filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30" || inv.status === "partial") : inv.status === key)
+    .filter(inv => key === "all" ? true : key === "outstanding" ? (inv.status === "outstanding" || inv.status === "net30" || inv.status === "partial") : key === "unsent" ? unsentIds.has(inv.id) : inv.status === key)
     .filter(inv => matchesSearch(inv, search))
     .sort(byDateDesc);
   const outstanding = invoices.filter(i => i.status === "outstanding" || i.status === "net30" || i.status === "partial").reduce((s, i) => s + calcTotals(i).balance, 0);
@@ -5710,7 +5729,7 @@ function InvoiceList({ invoices, onNew, onSelect, onDelete, onShare, onSend, onP
         <div style={{ padding: "48px 24px", textAlign: "center" }}>
           <Icon name="invoice" size={48} color="#dde2ee" />
           <div style={{ fontSize: 16, fontWeight: 600, color: "#888", marginTop: 16, marginBottom: 8 }}>No {key === "all" ? "" : key + " "}invoices</div>
-          <div style={{ fontSize: 13, color: "#aaa" }}>{key === "paid" ? "Paid invoices will show up here." : key === "outstanding" ? "Unpaid invoices will show up here." : "Tap + to create your first invoice"}</div>
+          <div style={{ fontSize: 13, color: "#aaa" }}>{key === "paid" ? "Paid invoices will show up here." : key === "outstanding" ? "Unpaid invoices will show up here." : key === "unsent" ? "Invoices never sent to the client show up here." : "Tap + to create your first invoice"}</div>
         </div>
       );
     }
@@ -12390,7 +12409,7 @@ export default function App() {
             {subHeader.content}
           </div>
         )}
-        {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
+        {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}

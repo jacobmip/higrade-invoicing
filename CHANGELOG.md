@@ -5,6 +5,19 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.19.0 — 2026-10-07
+
+### Unsent tab on the invoice list
+- New **Unsent** tab between Outstanding and Paid: invoices never sent to the
+  client. Same rules as the SQL Jake uses: no `sent` row in `invoice_events`,
+  not paid or void, no payments, not converted from an estimate, and (for an
+  estimate) its converted invoice was not sent.
+- `loadAll` reads the ids of every sent document once, separately from the
+  main load so a failure only empties this tab. Sending a document removes it
+  from Unsent right away, no reload needed.
+
+---
+
 ## v1.18.1 — 2026-10-07
 
 ### Fix: GE number label read "GE GE-..."
