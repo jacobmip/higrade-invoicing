@@ -4,7 +4,7 @@ Read this file first. It captures everything an AI agent needs to safely continu
 
 ## Owner
 - **Jacob "Jake" Petersen** — jacobmip@gmail.com
-- HI Grade Plumbing LLC, Honolulu HI · GET tax 4.712%
+- HI Grade Plumbing LLC, Honolulu HI · GET tax 4.712% (0.5% for GE half tax clients) · GE license GE-187-330-7136-01
 - Mac mini + Windows keyboard + Safari; iPhone for live testing
 - Jake's auth UUID: `0a3bcefd-6faf-4bae-b43b-cd4492dd9938`
 - Test journeyman UUID: `fbf88c7c-ae9c-4601-af22-d0959d59a040` (test@higradeplumbing.com)
@@ -83,6 +83,7 @@ src/
   PriceBook.jsx      — price book picker
   billTo.js          — bill-to / job-site address resolution
   competencies.js    — apprentice skill catalog + graduation math (migration 054)
+  geTax.js           — GE license number, 0.5% GE half tax rate, isGeHalfTax() (migration 059)
   backup.js          — manual backup export + restore
   aiAgent.js         — app-wide AI chat agent: tool loop + every tool executor
   contacts.js        — phone contact import (iOS)
@@ -125,7 +126,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 058)
+## Database schema (current through migration 059)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
@@ -134,7 +135,8 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('apprentice'|'technician'|'admin'), created_at
   - **`tier` is not `role`.** `role` drives `is_admin()` and therefore every RLS policy; `tier` (migration 054) is pay band and which Reports scorecard the person gets, and touches no policy. Never fold one into the other.
 - `tech_competencies` — tech_id, skill_key, level 0–4, note, updated_at, updated_by. Unique on `(tech_id, skill_key)`. Admin-only writes; a tech may read their own rows. `skill_key` matches a `key` in `src/competencies.js` — the catalog is code, not a table, so it is versioned. A stored row whose skill has been removed from the catalog is orphaned and ignored, never deleted.
-- `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes
+- `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes, ge_half_tax (migration 059)
+  - **GE half tax has no invoice column.** A client with `ge_half_tax` is a GC we sub for: picking them sets a new document's tax to 0.5%. An invoice is GE half tax exactly when `tax = 0.5` (`isGeHalfTax()` in `src/geTax.js`), and that alone decides whether the preview, customer link and PDF print the GE license number. The per-invoice toggle just flips the rate.
 - `client_versions` — full client snapshots, mirrors invoice_versions
 - `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, assigned_tech_id, deleted_at, updated_at
   - **`owner_id` is not `assigned_tech_id`.** `owner_id` is whoever created the row, and the `on conflict` branch of `save_invoice_with_items` sets `owner_id = excluded.owner_id`, so it is restamped to whoever saved last — an admin editing a plumber's invoice takes ownership of it. `assigned_tech_id` (migration 053) is who *ran* the job, is set deliberately, and is never restamped by a save. Anything that pays or scores a tech must use `assigned_tech_id`.
@@ -210,9 +212,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **056** — declined estimates: `invoices.declined_at` / `declined_reason`, `set_estimate_declined()`, and the `estimate_valid_days` setting (30)
 - **057** — the `bot_outbound_send_enabled` setting, the gate on the AI-OS bot sending a customer follow-up
 - **058** — `default_assigned_tech()`, a BEFORE INSERT trigger (`zz_invoices_default_assigned_tech`, named to fire last) that fills a null `assigned_tech_id` from `owner_id`. Covers the writers that bypass `save_invoice_with_items`: the receptionist's RPCs, the PayPal down-payment insert, and converting an unassigned estimate. Insert only, so a job deliberately set to Unassigned stays that way.
+- **059** — `clients.ge_half_tax`: per-client GE half tax (0.5%) default, see `src/geTax.js`
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `059_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `060_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids

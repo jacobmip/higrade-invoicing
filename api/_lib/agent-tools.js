@@ -330,7 +330,7 @@ export const AGENT_TOOLS = [
             status: { type: 'string', enum: ['outstanding', 'paid', 'partial', 'net30'] },
             notes: { type: 'string' },
             discount: { type: 'number' },
-            tax: { type: 'number', description: 'Percent, normally 4.712.' },
+            tax: { type: 'number', description: 'Percent, normally 4.712. 0.5 for a GE half tax client (a general contractor we sub for), which the app sets on its own.' },
             dueDate: { type: 'string', description: 'YYYY-MM-DD' },
             client: { type: 'string', description: 'Exact client name.' },
             job_site: { type: 'string', description: "One of the client's saved job sites: name, nickname, street or site_id." },

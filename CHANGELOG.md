@@ -5,6 +5,26 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.18.0 — 2026-10-07
+
+### GE half tax per client
+- New **GE half tax (0.5%)** switch on the client edit screen, for general
+  contractors we sub for. Needs migration 059 (`clients.ge_half_tax`); until it
+  runs, client saves still work and the switch just doesn't stick.
+- Picking a GE client on a new invoice sets tax to 0.5%. Moving to a non-GE
+  client puts 4.712% back. Turning the switch on or off while editing the
+  client from inside an invoice applies to that invoice too.
+- The invoice form shows a **GE half tax** toggle under Tax % when the client
+  has it on (or the invoice is already at 0.5%), so one invoice can go back to
+  4.712%.
+- A 0.5% invoice prints the GE license number (GE-187-330-7136-01) on the
+  in-app preview, the customer link (both layouts) and the PDF.
+- AI-created documents for a GE client default to 0.5% too.
+- No invoice column: an invoice is GE half tax exactly when its rate is 0.5
+  (`src/geTax.js`).
+
+---
+
 ## v1.17.2 — 2026-10-02
 
 ### Fix: job photos missing from the customer link on desktop

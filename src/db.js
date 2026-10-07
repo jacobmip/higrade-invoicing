@@ -168,6 +168,7 @@ function toClient(row) {
     // New structured addresses
     addresses,
     billingAddress: normalizeAddr(row.billing_address),
+    geHalfTax: row.ge_half_tax === true,
     ownerId: row.owner_id || null,
   }
 }
@@ -937,12 +938,24 @@ function clientPayload(client) {
     address3: zip || null,
     addresses: serializedAddresses,
     billing_address: serializedBilling,
+    // Only when the caller knows it, so a partial client object (an AI
+    // update, a quick-add) never clears the flag by omission.
+    ...(typeof client.geHalfTax === 'boolean' ? { ge_half_tax: client.geHalfTax } : {}),
   }
 }
 
+// Until migration 059 runs, clients has no ge_half_tax column. Retry the
+// write without it rather than failing the whole client save.
+const missingGeColumn = (error) => /ge_half_tax/.test(error?.message || '')
+
 export async function insertClient(client) {
-  const payload = clientPayload(client)
-  const { data, error } = await supabase.from('clients').insert(payload).select().single()
+  let payload = clientPayload(client)
+  let { data, error } = await supabase.from('clients').insert(payload).select().single()
+  if (error && missingGeColumn(error)) {
+    const { ge_half_tax, ...rest } = payload
+    payload = rest
+    ;({ data, error } = await supabase.from('clients').insert(payload).select().single())
+  }
   if (error) {
     // If the new columns don't exist yet (migration 008 not applied), retry
     // without them so the app stays usable.
@@ -974,8 +987,13 @@ function buildClientInfoForInvoices(client) {
 }
 
 export async function updateClient(client) {
-  const payload = clientPayload(client)
-  const { error } = await supabase.from('clients').update(payload).eq('id', client.id)
+  let payload = clientPayload(client)
+  let { error } = await supabase.from('clients').update(payload).eq('id', client.id)
+  if (error && missingGeColumn(error)) {
+    const { ge_half_tax, ...rest } = payload
+    payload = rest
+    ;({ error } = await supabase.from('clients').update(payload).eq('id', client.id))
+  }
   if (error) {
     if (/column .*(addresses|billing_address)/.test(error.message || '')) {
       const { addresses, billing_address, ...legacy } = payload
