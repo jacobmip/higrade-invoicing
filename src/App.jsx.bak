@@ -13,6 +13,7 @@ import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
+import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -2972,6 +2973,7 @@ function PDFPreview({ form, clients, photos = [] }) {
             <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 21, letterSpacing: 1.5, lineHeight: 1.1 }}>HI GRADE PLUMBING</div>
             <div style={{ color: ORANGE, fontSize: 10, letterSpacing: 2.5, fontWeight: 700, marginTop: 2, fontFamily: "'Barlow Condensed', sans-serif" }}>LLC · HONOLULU, HI</div>
             <div style={{ color: "#6677aa", fontSize: 11, marginTop: 6 }}>License #PJ-13579</div>
+            {isGeHalfTax(form) && <div style={{ color: "#6677aa", fontSize: 11, marginTop: 2 }}>GE {GE_LICENSE}</div>}
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 26, letterSpacing: 1, lineHeight: 1 }}>{isEstimate ? "ESTIMATE" : "INVOICE"}</div>
@@ -4629,6 +4631,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     jobAddressId: defaultAddr?.id || null,
                     jobAddress: defaultAddr || billing || null,
                     billingAddress: billing,
+                    // GE half tax follows the client. Moving off a GE client
+                    // puts the standard rate back; any other custom rate stays.
+                    ...(c.geHalfTax ? { tax: GE_HALF_RATE } : isGeHalfTax(f) ? { tax: TAX_RATE } : {}),
                   }));
                   setEditingClient(false);
                   setClientDraft(null);
@@ -4974,6 +4979,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 <label style={S.label}>Tax %</label>
               </div>
               <input type="number" style={S.input} value={form.tax} onChange={e => setField("tax", parseFloat(e.target.value) || 0)} onFocus={selectOnFocus} step={0.001} />
+              {/* GE half tax: offered when the client is set up for it, or
+                  the invoice already uses it. Off puts the standard rate back. */}
+              {(isGeHalfTax(form) || clients.find(c => (form.client_id && c.id === form.client_id) || (!form.client_id && c.name === form.client))?.geHalfTax) && (
+                <div onClick={() => setField("tax", isGeHalfTax(form) ? TAX_RATE : GE_HALF_RATE)} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, cursor: "pointer", userSelect: "none" }}>
+                  <div style={{ width: 36, height: 20, borderRadius: 10, background: isGeHalfTax(form) ? ORANGE : "#dde2ee", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                    <div style={{ position: "absolute", top: 2, left: isGeHalfTax(form) ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left 0.2s" }} />
+                  </div>
+                  <span style={{ fontSize: 12, color: "#444", fontWeight: 600 }}>GE half tax (0.5%)</span>
+                </div>
+              )}
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", height: 24, marginBottom: 4 }}>
@@ -5399,6 +5414,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   jobAddressId: pickedJob?.id || null,
                   jobAddress: pickedJob || null,
                   billingAddress: saved.billingAddress || null,
+                  // GE half tax switched in this edit: carry it to this
+                  // document. An untouched flag leaves the rate alone.
+                  ...(!!saved.geHalfTax !== !!selectedClient?.geHalfTax
+                    ? (saved.geHalfTax ? { tax: GE_HALF_RATE } : isGeHalfTax(f) ? { tax: TAX_RATE } : {})
+                    : {}),
                   clientInfo: {
                     name: saved.name || f.clientInfo?.name || "",
                     email: saved.email || "",
@@ -6115,6 +6135,18 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
           <input style={{ ...S.input, flex: 1 }} value={billing.city || ""} onChange={e => setBillingField("city", e.target.value)} placeholder="City" />
           <input style={{ ...S.input, width: 58, textTransform: "uppercase" }} value={billing.state || ""} onChange={e => setBillingField("state", e.target.value.toUpperCase().slice(0, 2))} placeholder="ST" maxLength={2} />
           <input style={{ ...S.input, width: 80 }} value={billing.zip || ""} onChange={e => setBillingField("zip", e.target.value)} placeholder="ZIP" maxLength={10} />
+        </div>
+      </div>
+
+      {/* GE half tax: this client is a GC we sub for. New invoices default to
+          0.5% and print the GE license number; each invoice can switch it off. */}
+      <div onClick={() => setField("geHalfTax", !form.geHalfTax)} style={{ marginTop: compact ? 14 : 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: "10px 12px", cursor: "pointer", userSelect: "none" }}>
+        <div>
+          <div style={{ fontSize: 14, color: "#444", fontWeight: 600 }}>GE half tax (0.5%)</div>
+          <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Subcontract work. New invoices default to 0.5% and show GE {GE_LICENSE}.</div>
+        </div>
+        <div style={{ width: 44, height: 24, borderRadius: 12, background: form.geHalfTax ? ORANGE : "#dde2ee", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+          <div style={{ position: "absolute", top: 3, left: form.geHalfTax ? 23 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left 0.2s" }} />
         </div>
       </div>
 
@@ -8230,7 +8262,7 @@ function PublicViewerPage({ token }) {
         <div style={{ background: NAVY, padding: '22px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 24, letterSpacing: 2.5 }}>HI GRADE PLUMBING LLC</div>
-            <div style={{ color: '#8899bb', fontSize: 12, letterSpacing: 1.5, marginTop: 3 }}>HONOLULU, HAWAII · LIC PJ-13579 · GET 4.712%</div>
+            <div style={{ color: '#8899bb', fontSize: 12, letterSpacing: 1.5, marginTop: 3 }}>HONOLULU, HAWAII · LIC PJ-13579 · {isGeHalfTax(invForm) ? `GE ${GE_LICENSE} · GET 0.5%` : `GET ${TAX_RATE}%`}</div>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             {isEstimate && (
@@ -8309,6 +8341,7 @@ function PublicViewerPage({ token }) {
               <div style={{ color: '#fff', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 30, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
               <div style={{ color: ORANGE, fontSize: 12, letterSpacing: 2, marginTop: 4, fontWeight: 600 }}>LLC · HONOLULU, HI</div>
               <div style={{ color: '#8899bb', fontSize: 12, marginTop: 6 }}>License #PJ-13579</div>
+              {isGeHalfTax(invForm) && <div style={{ color: '#8899bb', fontSize: 12, marginTop: 2 }}>GE {GE_LICENSE}</div>}
             </div>
             <div style={{ textAlign: 'right' }}>
               <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 38, letterSpacing: 3 }}>{isEstimate ? 'ESTIMATE' : 'INVOICE'}</div>
@@ -11221,10 +11254,15 @@ export default function App() {
       // Reserve a unique ID synchronously so rapid back-to-back calls (bulk
       // create) don't collide. One shared sequence across both types.
       const { num, id } = await mintDocId(docType);
+      // A GE half tax client gets 0.5% unless the caller set something else.
+      // The per-invoice chat's JSON template always says 4.712, so that
+      // value counts as "not set" here.
+      const taxClient = (data.clients || []).find(c => (inv.client_id && c.id === inv.client_id) || (!inv.client_id && c.name === inv.client));
+      const docTax = (inv.tax == null || (taxClient?.geHalfTax && inv.tax === TAX_RATE)) ? defaultTaxFor(taxClient) : inv.tax;
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: inv.tax ?? TAX_RATE, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
         // The RPC assigns a new document to whoever saves it; mirror that here
         // so the form shows it before the next reload (migration 053/058).
         ...(session?.user?.id ? { assignedTechId: session.user.id } : {}),
