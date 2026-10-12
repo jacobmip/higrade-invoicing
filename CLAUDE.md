@@ -282,6 +282,16 @@ browser, up to 12 model calls per message.
   function's request body limit.
 - Tool names and descriptions in `agent-tools.js` must match what the executors
   in `aiAgent.js` actually do. The model believes the descriptions.
+- **`web_search` is the one tool with no browser executor.** It is a
+  server-side tool (`web_search_20260209`) that runs inside the model call,
+  for the Honolulu market check in the pricing rules (v1.20.0). The loop skips
+  its blocks and resumes a `pause_turn` by re-sending `working` unchanged.
+  Results stay in `working`, which the browser re-sends every step, so keep
+  `max_uses` low for the same body-limit reason as the photo cap.
+- **Pricing order in `AGENT_SYSTEM`:** price book (always wins) -> materials
+  plus 35% or the labor floor -> travel zone -> market check -> position in
+  the upper part of the Honolulu range, never the cheapest. Same method as
+  `api/ai-estimator.js`; change both together.
 
 ### AI receptionist ("Lisa")
 Answers the business line through **Vapi**, captures the lead, and files an

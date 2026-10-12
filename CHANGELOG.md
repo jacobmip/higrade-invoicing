@@ -5,6 +5,27 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.20.0 — 2026-10-12
+
+### AI chat prices estimates from the book, then checks the market
+- The chat agent can search the web (`web_search`, server-side, up to 4
+  searches per call, located in Honolulu). It uses it to check what Oahu
+  plumbers charge for a job with no saved price over about $500, for any
+  multi-line job, and when asked whether a price is right.
+- Pricing rules in `AGENT_SYSTEM`: price book first and always wins; then
+  materials plus 35% or the labor floor ($185 / $400 / $800); travel zones
+  rolled in; then a market check. Target is the upper part of the Honolulu
+  range, never below the middle and never the cheapest. A saved price that
+  looks low against the market is kept but flagged to Jake.
+- Bigger jobs get one line item per distinct piece of work instead of a
+  single flat line. Simple jobs stay one line. Assumptions go in the reply,
+  not on the customer's document.
+- `search_price_book` matches on any word, best match first, instead of
+  requiring every word. "toilet angle stop" now finds "Toilet Repair".
+- The agent loop resumes a `pause_turn` from the server-side search.
+
+---
+
 ## v1.19.2 — 2026-10-12
 
 ### AI chat bookings show on the job right away

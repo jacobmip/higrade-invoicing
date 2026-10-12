@@ -196,11 +196,20 @@ function findClient(input, ctx) {
 function searchPriceBook(input, ctx) {
   const q = lc(input.query).trim();
   const items = ctx.getData().savedItems || [];
-  const words = q.split(/\s+/).filter(Boolean);
-  const hits = items.filter(i => !q || words.every(w => lc(`${i.name} ${i.category}`).includes(w)));
+  // Any word counts, ranked by how many match. Requiring every word meant
+  // "toilet angle stop" found nothing when the book says "Toilet Repair", and
+  // the agent then priced from its fallback ranges instead of Jake's book.
+  const words = q.split(/\s+/).filter(w => w.length > 2);
+  const scored = items
+    .map(i => {
+      const hay = lc(`${i.name} ${i.category}`);
+      return { i, score: words.length ? words.filter(w => hay.includes(w.replace(/s$/, ''))).length : 1 };
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score);
   return {
-    matched: hits.length,
-    items: hits.slice(0, 60).map(i => ({ name: i.name, category: i.category, price: i.price })),
+    matched: scored.length,
+    items: scored.slice(0, q ? 40 : 200).map(({ i }) => ({ name: i.name, category: i.category, price: i.price })),
   };
 }
 
@@ -727,6 +736,10 @@ export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx,
       reply = said || 'I can\'t help with that one.';
       break;
     }
+    // Web search runs on Anthropic's side and can hit its per-call iteration
+    // limit. The paused turn is already on `working`; sending it back as is
+    // resumes it, with no extra user message.
+    if (resp.stop_reason === 'pause_turn') continue;
     if (resp.stop_reason !== 'tool_use') {
       reply = said || 'Done.';
       if (resp.stop_reason === 'max_tokens') reply += '\n\n(Cut off. Ask me to continue.)';
