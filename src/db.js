@@ -674,6 +674,12 @@ export async function upsertInvoice(inv, isNew) {
         minutes: Number(v.minutes) > 0 ? Number(v.minutes) : 90,
         label: typeof v.label === 'string' ? v.label : '',
         eventId: v.eventId || null,
+        // Carried through so a full save does not quietly turn an Emergency
+        // visit back into the document's default colour, or make the app
+        // forget which events it built itself (see visits[] in CLAUDE.md).
+        ...(v.kind ? { kind: v.kind } : {}),
+        ...(v.builtBy ? { builtBy: v.builtBy } : {}),
+        ...(v.pending ? { pending: true } : {}),
       }))
       .sort((a, b) => a.start.localeCompare(b.start))
     const { error: visitErr } = await supabase

@@ -245,7 +245,11 @@ browser, up to 12 model calls per message.
 - **`handleGlobalAIAction` reads `dataRef.current`, not its closure,** and with
   `{ strict: true }` it throws on a failed save and returns the updated record.
   Without both, "create an estimate then add a line to it" in one message
-  silently did nothing on the second step.
+  silently did nothing on the second step. Its writes go through
+  `setDataNow`, which updates `dataRef` immediately: the agent runs a turn's
+  tool calls back to back, before React re-renders, so a plain `setData` left
+  the next call reading the pre-write copy and undoing the first write in
+  state (v1.19.2, a booked visit vanishing from the Calendar tab).
 - **The system prompt and tool list are frozen** so they cache. Anything per
   message (Hawaii date and time, who is signed in) goes in a `<context>` block
   at the top of the user message, stored on the message as `agentCtx`.

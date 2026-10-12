@@ -5,6 +5,22 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.19.2 — 2026-10-12
+
+### AI chat bookings show on the job right away
+- When the assistant booked a visit and made another change to the same
+  document in the same step (set the job site, for one), the second change
+  started from a copy taken before the booking and put the document back
+  into the app without its visit. The Calendar tab then showed the Google
+  event as "Other" instead of on the estimate until the next reload. The
+  database had the visit the whole time. `handleGlobalAIAction` now updates
+  `dataRef` the moment it writes, so each step sees the one before it.
+- A full save of a document no longer drops a visit's `kind`, `builtBy` or
+  `pending` (`upsertInvoice` in `src/db.js`). An Emergency visit kept its
+  colour only until the next edit.
+
+---
+
 ## v1.19.1 — 2026-10-07
 
 ### Unsent tab on the estimate list

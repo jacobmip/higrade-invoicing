@@ -11265,6 +11265,15 @@ export default function App() {
   const handleGlobalAIAction = async (parsed, opts = {}) => {
     console.log('[handleGlobalAIAction]', parsed.action, parsed);
     const data = dataRef.current;
+    // Every write here also lands in dataRef at once. React only re-renders
+    // (and so only refreshes dataRef) on a later task, and the chat agent runs
+    // a turn's tool calls back to back inside one promise chain. Without this,
+    // a second write in the same turn (book a visit, then set the job site)
+    // started from the copy read before the first and put the document back
+    // into state without its visits: the job vanished from the Calendar tab,
+    // its Google event showed as "Other", until the next reload. The database
+    // kept the visit throughout, which is why it looked like a delay.
+    const setDataNow = (fn) => { dataRef.current = fn(dataRef.current); setData(fn); };
     const fail = (e) => { console.error(e); if (opts.strict) throw e; };
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
@@ -11306,7 +11315,7 @@ export default function App() {
         throw e;
       }
       const stamped = { ...newInvoice, updatedAt: saveResult?.updatedAt || null };
-      setData(d => ({
+      setDataNow(d => ({
         ...d,
         invoices: [stamped, ...d.invoices],
         nextNum: isEst ? d.nextNum : Math.max(d.nextNum, num + 1),
@@ -11318,7 +11327,7 @@ export default function App() {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       if (inv) {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
-        setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
+        setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
         await db.upsertInvoice(updated, false);
         return updated;
       }
@@ -11332,11 +11341,11 @@ export default function App() {
         i.name.toLowerCase() === item.name.toLowerCase() && (!myId || !i.ownerId || i.ownerId === myId));
       if (existing) {
         const updated = { ...existing, price: item.price, category: item.category || existing.category };
-        setData(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
+        setDataNow(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
         await db.updateSavedItem(updated);
       } else {
         const id = await db.insertSavedItem({ category: item.category || "Custom", name: item.name, price: item.price });
-        setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] }));
+        setDataNow(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] }));
       }
     }
     if (parsed.action === "create_client") {
@@ -11351,7 +11360,7 @@ export default function App() {
       const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", unit: c.unit || "", address2: c.address2 || "", address3: c.address3 || "", addresses };
       const id = await db.insertClient(form);
       const newClient = { ...form, id };
-      setData(d => ({ ...d, clients: [...d.clients, newClient] }));
+      setDataNow(d => ({ ...d, clients: [...d.clients, newClient] }));
       return newClient;
     }
     if (parsed.action === "update_invoice") {
@@ -11369,7 +11378,7 @@ export default function App() {
         ...(typeof c.discount === "number" ? { discount: c.discount } : {}),
         ...(typeof c.tax === "number" ? { tax: c.tax } : {}),
       };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11377,7 +11386,7 @@ export default function App() {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       if (!inv) return;
       try { await db.deleteInvoice(parsed.invoiceId); } catch (e) { fail(e); return; }
-      setData(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
     }
     if (parsed.action === "add_payment") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
@@ -11389,7 +11398,7 @@ export default function App() {
       // both (mirrors the per-invoice chat handler so both AI paths agree).
       const netBalance = totals.balance + (calcLateFee({ ...inv, payments }, totals).fee || 0);
       const updated = { ...inv, payments, status: netBalance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : inv.status) };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11398,7 +11407,7 @@ export default function App() {
       const idx = (parsed.itemIndex || 0) - 1;
       if (!inv || idx < 0) return;
       const updated = { ...inv, items: inv.items.filter((_, i) => i !== idx) };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11418,7 +11427,7 @@ export default function App() {
           ...(typeof c.taxable === "boolean" ? { taxable: c.taxable } : {}),
         } : it),
       };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11437,7 +11446,7 @@ export default function App() {
         ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
       };
       try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { fail(e); }
-      setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
+      setDataNow(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
       return updated;
     }
     if (parsed.action === "add_job_site") {
@@ -11461,7 +11470,7 @@ export default function App() {
       const updated = { ...target, addresses: [...(target.addresses || []), site] };
       try { await db.updateClient(updated); } catch (e) { fail(e); return; }
       db.recordClientVersion(updated, "AI added job site").catch(() => {});
-      setData(d => ({
+      setDataNow(d => ({
         ...d,
         clients: d.clients.map(c => c.id === target.id ? updated : c),
         invoices: refreshInvoicesForClient(d.invoices, updated),
@@ -11479,7 +11488,7 @@ export default function App() {
         jobAddress: addr,
         clientInfo: { ...(inv.clientInfo || {}), address1: addr.line1 || "", address2: addr.line2 || "", address3: addr.line3 || "" },
       };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11530,14 +11539,14 @@ export default function App() {
       try { await db.updateInvoiceVisits(inv.id, visits); } catch (e) { fail(e); return; }
       const first = [...visits].sort((a, b) => a.start.localeCompare(b.start))[0];
       const updated = { ...inv, visits, gcalDate: first.start, gcalEventId: first.eventId || null, gcalDurationMinutes: Number(first.minutes) || null };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       return { invoice: updated, visit: v, calendarError, calendarConnected: gcalAuthed && GCal.isConfigured() };
     }
     if (parsed.action === "delete_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);
       if (!target) return;
       try { await db.deleteClient(target.id); } catch (e) { fail(e); return; }
-      setData(d => ({ ...d, clients: d.clients.filter(cc => cc.id !== target.id) }));
+      setDataNow(d => ({ ...d, clients: d.clients.filter(cc => cc.id !== target.id) }));
     }
   };
 
