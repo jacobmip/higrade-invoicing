@@ -5819,9 +5819,10 @@ function InvoiceList({ invoices, allDocs, onNew, onSelect, onDelete, onShare, on
 }
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
-function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, onToggleDeclined, setSubHeader }) {
-  const TABS = ["all", "open", "closed"];
+function EstimatesTab({ invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, onToggleDeclined, setSubHeader }) {
+  const TABS = ["all", "open", "unsent", "closed"];
   const [tab, setTab] = useState("all");
+  const unsentIds = unsentIdsFor(allDocs || invoices);
   const [search, setSearch] = useState("");
   // Active estimate for the long-press quick-actions sheet. null means closed.
   const [menuInv, setMenuInv] = useState(null);
@@ -5887,7 +5888,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
   };
   const filterFor = (key) => invoices
     .filter(inYear)
-    .filter(inv => key === "all" ? true : key === "open" ? !isClosed(inv) : isClosed(inv))
+    .filter(inv => key === "all" ? true : key === "open" ? !isClosed(inv) : key === "unsent" ? unsentIds.has(inv.id) : isClosed(inv))
     .filter(inv => matchesSearch(inv, search))
     .sort(byDateDescEst);
 
@@ -5944,7 +5945,7 @@ function EstimatesTab({ invoices, onNew, onSelect, onDelete, onShare, onSend, on
         <div style={{ padding: "48px 24px", textAlign: "center" }}>
           <Icon name="estimates" size={48} color="#dde2ee" />
           <div style={{ fontSize: 16, fontWeight: 600, color: "#888", marginTop: 16, marginBottom: 8 }}>No {key === "all" ? "" : key + " "}estimates</div>
-          <div style={{ fontSize: 13, color: "#aaa" }}>{key === "closed" ? "Approved or converted estimates will show up here." : key === "open" ? "Pending estimates will show up here." : "Tap + to create your first estimate"}</div>
+          <div style={{ fontSize: 13, color: "#aaa" }}>{key === "closed" ? "Approved or converted estimates will show up here." : key === "open" ? "Pending estimates will show up here." : key === "unsent" ? "Estimates never sent to the client show up here." : "Tap + to create your first estimate"}</div>
         </div>
       );
     }
@@ -12410,7 +12411,7 @@ export default function App() {
           </div>
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
-        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
+        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
