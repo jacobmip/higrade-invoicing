@@ -7138,6 +7138,11 @@ function PaymentsTab({ invoices }) {
 
   const allPayments = [];
   invoices.forEach(inv => {
+    // Skip estimates, same guard the Reports tab uses in sumPayments. A down
+    // payment recorded on an estimate is copied onto the invoice it converts
+    // into, so counting both sides double-counted the money: "Total Received"
+    // read $613,050.40 against a true $594,390.72 (audit 2026-10-16).
+    if (inv.type === "estimate") return;
     (inv.payments || []).forEach(p => allPayments.push({ ...p, invoiceId: inv.id, client: inv.client }));
   });
   allPayments.sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -10672,17 +10677,23 @@ export default function App() {
       const ownerId = effectiveOwnerId || session?.user?.id;
       if (ownerId) {
         db.loadDeletedInvoices(ownerId).then(items => {
-          // Auto-purge anything past the 30-day window, then show the rest.
-          const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-          const toDelete = items.filter(i =>
-            i.deletedAt && new Date(i.deletedAt).getTime() < cutoff
-          );
-          toDelete.forEach(i => db.permanentlyDeleteInvoice(i.id).catch(() => {}));
-          setDeletedInvoices(
-            items.filter(i =>
-              !i.deletedAt || new Date(i.deletedAt).getTime() >= cutoff
-            )
-          );
+          // Show everything. Do NOT auto-purge.
+          //
+          // This used to hard-delete every row past a 30-day cutoff the moment
+          // the tab was opened. loadDeletedInvoices is scoped only by owner_id,
+          // so "past 30 days" meant every soft-deleted document Jake owns, not
+          // the ones he was looking at. On 2026-10-16 that was 28 invoices,
+          // $30,554.95 of payment rows and 73 line items, 24 of them belonging
+          // to clients unrelated to whatever prompted the visit, four marked
+          // paid. permanentlyDeleteInvoice is a bare delete and cascades to
+          // payments, events and versions, so a single tab click was
+          // unrecoverable from the app.
+          //
+          // Purging stays a deliberate act: the row's own Delete button still
+          // calls permanentlyDeleteInvoice. If an automatic retention sweep is
+          // wanted later it belongs in a server-side job with its own log, not
+          // on a render path.
+          setDeletedInvoices(items);
         }).catch(e => console.error('loadDeletedInvoices failed:', e));
       }
     }
@@ -12028,10 +12039,16 @@ export default function App() {
       ({ num, id: newId } = await mintDocId(targetType));
       if (pairedId) console.warn(`Cannot reuse ${pairedId} (already exists); minted ${newId} instead.`);
     }
-    // Carry payments forward (e.g. a down payment recorded on an estimate
-    // becomes the opening paid balance on the new invoice). Stamp each
-    // copied payment with a fresh id so the DB doesn't see a primary-key
-    // collision against the source document's payment rows.
+    // MOVE payments forward, do not copy them. A down payment recorded on an
+    // estimate becomes the opening paid balance on the new invoice, and the
+    // estimate must then stop carrying it, or the same money exists on two
+    // documents at once with nothing to reconcile them. That is what put one
+    // $10,062.82 transfer on five rows for Filippo Cortivo and left $18,293.19
+    // double-booked across five clients (audit 2026-10-16). The source
+    // estimate is cleared below, where convertedToId is stamped.
+    //
+    // Each row still gets a fresh id so the insert cannot collide with the
+    // source document's rows before they are removed.
     const carriedPayments = (form.payments || []).map(p => ({
       ...p,
       id: Date.now() + Math.floor(Math.random() * 100000),
@@ -12091,7 +12108,13 @@ export default function App() {
         nextEstimateNum: isEstTarget ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
     } else {
-      const sourceUpdated = { ...form, convertedToId: newId };
+      // payments: [] is the other half of the move. The save RPC
+      // (migrations/059) deletes and reinserts a document's payment rows on
+      // every save, so persisting an empty list removes them from the estimate.
+      // Hand-keyed rows have a null paypal_capture_id and so are not protected
+      // by that RPC's PayPal clause; a genuine PayPal down payment never lands
+      // on an estimate anyway, because paypal-capture-order.js converts first.
+      const sourceUpdated = { ...form, convertedToId: newId, payments: [] };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
@@ -12114,7 +12137,7 @@ export default function App() {
             setData(d => ({ ...d, invoices: d.invoices.filter(inv => !orphanIds.includes(inv.id)) }));
           }
         }
-        await db.upsertInvoice({ ...form, convertedToId: newId }, false);
+        await db.upsertInvoice({ ...form, convertedToId: newId, payments: [] }, false);
       }
     } catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
     // Open the new doc immediately.
