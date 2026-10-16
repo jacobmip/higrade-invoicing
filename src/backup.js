@@ -25,10 +25,34 @@ const TABLES = [
 ]
 
 // Pull every row from every table. Returns { schemaVersion, exportedAt, tables: { name: rows[] } }.
+const PAGE = 1000
+
+// Read one table completely, a page at a time.
+//
+// A bare .select('*') silently returns only the first 1,000 rows, which is
+// Supabase's default ceiling, and reports no error. invoice_items alone holds
+// over 1,900 rows, so an unpaginated export dropped roughly 900 line items
+// while appearing to succeed — and importBackup's 'replace' mode deletes every
+// row before inserting the file, so restoring such a backup destroyed the data
+// it was supposed to protect. The nightly job in AI-OS/scripts/backup-supabase.js
+// has always paged correctly; this is the in-app export catching up.
+async function selectAllRows(table) {
+  const rows = []
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .range(offset, offset + PAGE - 1)
+    if (error) return { rows: null, error }
+    rows.push(...(data || []))
+    if (!data || data.length < PAGE) return { rows, error: null }
+  }
+}
+
 export async function exportAll() {
   const tables = {}
   for (const t of TABLES) {
-    const { data, error } = await supabase.from(t).select('*')
+    const { rows, error } = await selectAllRows(t)
     if (error) {
       // Some tables (invoice_versions, invoice_events) may not exist in older
       // installs. Don't abort — just skip and continue.
@@ -36,7 +60,7 @@ export async function exportAll() {
       tables[t] = []
       continue
     }
-    tables[t] = data || []
+    tables[t] = rows || []
   }
   return {
     schemaVersion: BACKUP_SCHEMA_VERSION,
@@ -95,6 +119,24 @@ export async function importBackup(snapshot, { mode = 'merge' } = {}) {
   const errors = []
 
   if (mode === 'replace') {
+    // A snapshot written by the old unpaginated exportAll has exactly 1,000 rows
+    // in a table that really had more. Replacing from one of those deletes
+    // everything and restores a truncated copy, so refuse rather than destroy.
+    const suspect = Object.entries(snapshot.tables || {})
+      .filter(([, rows]) => Array.isArray(rows) && rows.length === PAGE)
+      .map(([t]) => t)
+    if (suspect.length) {
+      return {
+        restored: {},
+        errors: [{
+          table: suspect.join(', '),
+          message:
+            `Refusing to replace: ${suspect.join(', ')} holds exactly ${PAGE} rows, which ` +
+            `means this backup was written before export pagination was fixed and is ` +
+            `probably truncated. Use merge mode, or take a fresh export first.`,
+        }],
+      }
+    }
     for (const t of deleteOrder) {
       // Use a non-null filter that always matches every row (id IS NOT NULL).
       // Supabase requires a where clause on delete().

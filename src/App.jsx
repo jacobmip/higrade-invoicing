@@ -4284,12 +4284,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   };
 
   // Convert estimate ↔ invoice (creates a copy, doesn't replace original).
-  const handleConvert = () => {
+  const handleConvert = async () => {
     const targetType = isEstimate ? "invoice" : "estimate";
     const msg = targetType === "estimate"
       ? `Convert this invoice back to an estimate? The original invoice will be DELETED — only the new estimate will remain.`
       : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
     if (!confirm(msg)) return;
+    // Flush the pending auto-save first, the same as handleOpenLinked does.
+    // confirm() blocks the event loop, so a debounce timer armed within 800ms
+    // of the tap fires the instant it returns — writing the estimate with its
+    // ORIGINAL payments and bumping updated_at, which then makes the
+    // conversion's own write to that estimate fail the optimistic lock. Since
+    // that write is what moves the payments off the estimate, losing it puts
+    // the same money on both documents: the exact bug this flow was fixed for.
+    try { await flushAutoSaveRef.current(); } catch (e) { console.warn('flush before convert failed:', e); }
     onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
   };
 
@@ -12012,6 +12020,15 @@ export default function App() {
         setTab(existing.type === "estimate" ? "estimates" : "invoices");
         return;
       }
+      // The counterpart is not in live data, so it was deleted. Falling through here
+      // would mint a SECOND invoice carrying another copy of this estimate's payments,
+      // which is how duplicates multiply. Stop and say what happened.
+      alert(
+        `${form.id} was already converted to ${existingId}, but that document is not in ` +
+        `the active list — it is most likely in Recently Deleted. Restore it instead of ` +
+        `converting again, or the payment would be copied onto a second invoice.`
+      );
+      return;
     }
 
     // ── The number ────────────────────────────────────────────────────────────
@@ -12029,7 +12046,26 @@ export default function App() {
     const pairedId = Number.isFinite(sourceNum)
       ? `${idPrefix}${String(sourceNum).padStart(4, "0")}`
       : null;
-    const pairedIsFree = !!pairedId && !data.invoices.some(d => d.id === pairedId);
+    // data.invoices holds only live rows (db.loadAll filters deleted_at is null), so a
+    // soft-deleted EST/INV carrying this number looks free. Upserting onto it would
+    // revive nothing: migrations/059 does `on conflict (id) do update` and never clears
+    // deleted_at, so the result is an invoice invisible in the app and a 404 on the
+    // customer's link — and the RPC's payment delete-and-reinsert would wipe the deposit
+    // this flow just moved, with no copy left on the estimate. fetchInvoiceUpdatedAt has
+    // no deleted_at filter, so it sees trashed rows too.
+    let pairedIsFree = !!pairedId && !data.invoices.some(d => d.id === pairedId);
+    if (pairedIsFree) {
+      try {
+        if (await db.fetchInvoiceUpdatedAt(pairedId)) {
+          console.warn(`${pairedId} exists but is soft-deleted; minting a fresh id instead.`);
+          pairedIsFree = false;
+        }
+      } catch (e) {
+        // Fail safe: mint a fresh id rather than risk writing onto a trashed row.
+        console.warn(`Could not confirm ${pairedId} is free; minting a fresh id:`, e);
+        pairedIsFree = false;
+      }
+    }
     let num, newId;
     if (pairedIsFree) {
       num = sourceNum;
@@ -12137,9 +12173,33 @@ export default function App() {
             setData(d => ({ ...d, invoices: d.invoices.filter(inv => !orphanIds.includes(inv.id)) }));
           }
         }
-        await db.upsertInvoice({ ...form, convertedToId: newId, payments: [] }, false);
+        // This write is the second half of the payment move, so it must not be
+        // allowed to fail quietly: the payments are already on the new invoice
+        // by now, and if the estimate keeps its copies the money is
+        // double-booked again. Self-heal on a stale token exactly as
+        // autoSaveInvoice does, and let a genuine second failure reach the
+        // outer catch.
+        const sourcePayload = { ...form, convertedToId: newId, payments: [] };
+        try {
+          await db.upsertInvoice(sourcePayload, false);
+        } catch (e) {
+          if (e?.code === 'CONCURRENT_EDIT') {
+            const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(form.id);
+            await db.upsertInvoice({ ...sourcePayload, updatedAt: freshUpdatedAt }, false);
+          } else {
+            throw e;
+          }
+        }
       }
-    } catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
+    } catch (e) {
+      console.error('Convert/save failed (kept local copy):', e);
+      alert(
+        'Conversion saved locally but the cloud sync failed: ' + (e.message || e) +
+        '\n\nRefresh before carrying on. If a payment was recorded on the estimate it may ' +
+        'now exist on both documents, so check the new invoice and the estimate before ' +
+        'treating either total as correct.'
+      );
+    }
     // Open the new doc immediately.
     setSelected(copy);
     setView("form");
