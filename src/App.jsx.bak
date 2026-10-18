@@ -4284,12 +4284,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   };
 
   // Convert estimate ↔ invoice (creates a copy, doesn't replace original).
-  const handleConvert = () => {
+  const handleConvert = async () => {
     const targetType = isEstimate ? "invoice" : "estimate";
     const msg = targetType === "estimate"
       ? `Convert this invoice back to an estimate? The original invoice will be DELETED — only the new estimate will remain.`
       : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
     if (!confirm(msg)) return;
+    // Flush the pending auto-save first, the same as handleOpenLinked does.
+    // confirm() blocks the event loop, so a debounce timer armed within 800ms
+    // of the tap fires the instant it returns — writing the estimate with its
+    // ORIGINAL payments and bumping updated_at, which then makes the
+    // conversion's own write to that estimate fail the optimistic lock. Since
+    // that write is what moves the payments off the estimate, losing it puts
+    // the same money on both documents: the exact bug this flow was fixed for.
+    try { await flushAutoSaveRef.current(); } catch (e) { console.warn('flush before convert failed:', e); }
     onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
   };
 
@@ -7138,6 +7146,11 @@ function PaymentsTab({ invoices }) {
 
   const allPayments = [];
   invoices.forEach(inv => {
+    // Skip estimates, same guard the Reports tab uses in sumPayments. A down
+    // payment recorded on an estimate is copied onto the invoice it converts
+    // into, so counting both sides double-counted the money: "Total Received"
+    // read $613,050.40 against a true $594,390.72 (audit 2026-10-16).
+    if (inv.type === "estimate") return;
     (inv.payments || []).forEach(p => allPayments.push({ ...p, invoiceId: inv.id, client: inv.client }));
   });
   allPayments.sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -10672,17 +10685,23 @@ export default function App() {
       const ownerId = effectiveOwnerId || session?.user?.id;
       if (ownerId) {
         db.loadDeletedInvoices(ownerId).then(items => {
-          // Auto-purge anything past the 30-day window, then show the rest.
-          const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-          const toDelete = items.filter(i =>
-            i.deletedAt && new Date(i.deletedAt).getTime() < cutoff
-          );
-          toDelete.forEach(i => db.permanentlyDeleteInvoice(i.id).catch(() => {}));
-          setDeletedInvoices(
-            items.filter(i =>
-              !i.deletedAt || new Date(i.deletedAt).getTime() >= cutoff
-            )
-          );
+          // Show everything. Do NOT auto-purge.
+          //
+          // This used to hard-delete every row past a 30-day cutoff the moment
+          // the tab was opened. loadDeletedInvoices is scoped only by owner_id,
+          // so "past 30 days" meant every soft-deleted document Jake owns, not
+          // the ones he was looking at. On 2026-10-16 that was 28 invoices,
+          // $30,554.95 of payment rows and 73 line items, 24 of them belonging
+          // to clients unrelated to whatever prompted the visit, four marked
+          // paid. permanentlyDeleteInvoice is a bare delete and cascades to
+          // payments, events and versions, so a single tab click was
+          // unrecoverable from the app.
+          //
+          // Purging stays a deliberate act: the row's own Delete button still
+          // calls permanentlyDeleteInvoice. If an automatic retention sweep is
+          // wanted later it belongs in a server-side job with its own log, not
+          // on a render path.
+          setDeletedInvoices(items);
         }).catch(e => console.error('loadDeletedInvoices failed:', e));
       }
     }
@@ -11265,6 +11284,15 @@ export default function App() {
   const handleGlobalAIAction = async (parsed, opts = {}) => {
     console.log('[handleGlobalAIAction]', parsed.action, parsed);
     const data = dataRef.current;
+    // Every write here also lands in dataRef at once. React only re-renders
+    // (and so only refreshes dataRef) on a later task, and the chat agent runs
+    // a turn's tool calls back to back inside one promise chain. Without this,
+    // a second write in the same turn (book a visit, then set the job site)
+    // started from the copy read before the first and put the document back
+    // into state without its visits: the job vanished from the Calendar tab,
+    // its Google event showed as "Other", until the next reload. The database
+    // kept the visit throughout, which is why it looked like a delay.
+    const setDataNow = (fn) => { dataRef.current = fn(dataRef.current); setData(fn); };
     const fail = (e) => { console.error(e); if (opts.strict) throw e; };
     if (parsed.action === "create_invoice" || parsed.action === "create_estimate") {
       const inv = parsed.invoice || {};
@@ -11306,7 +11334,7 @@ export default function App() {
         throw e;
       }
       const stamped = { ...newInvoice, updatedAt: saveResult?.updatedAt || null };
-      setData(d => ({
+      setDataNow(d => ({
         ...d,
         invoices: [stamped, ...d.invoices],
         nextNum: isEst ? d.nextNum : Math.max(d.nextNum, num + 1),
@@ -11318,7 +11346,7 @@ export default function App() {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       if (inv) {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
-        setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
+        setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
         await db.upsertInvoice(updated, false);
         return updated;
       }
@@ -11332,11 +11360,11 @@ export default function App() {
         i.name.toLowerCase() === item.name.toLowerCase() && (!myId || !i.ownerId || i.ownerId === myId));
       if (existing) {
         const updated = { ...existing, price: item.price, category: item.category || existing.category };
-        setData(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
+        setDataNow(d => ({ ...d, savedItems: d.savedItems.map(i => i.id === existing.id ? updated : i) }));
         await db.updateSavedItem(updated);
       } else {
         const id = await db.insertSavedItem({ category: item.category || "Custom", name: item.name, price: item.price });
-        setData(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] }));
+        setDataNow(d => ({ ...d, savedItems: [...d.savedItems, { id, category: item.category || "Custom", name: item.name, price: item.price }] }));
       }
     }
     if (parsed.action === "create_client") {
@@ -11351,7 +11379,7 @@ export default function App() {
       const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", unit: c.unit || "", address2: c.address2 || "", address3: c.address3 || "", addresses };
       const id = await db.insertClient(form);
       const newClient = { ...form, id };
-      setData(d => ({ ...d, clients: [...d.clients, newClient] }));
+      setDataNow(d => ({ ...d, clients: [...d.clients, newClient] }));
       return newClient;
     }
     if (parsed.action === "update_invoice") {
@@ -11369,7 +11397,7 @@ export default function App() {
         ...(typeof c.discount === "number" ? { discount: c.discount } : {}),
         ...(typeof c.tax === "number" ? { tax: c.tax } : {}),
       };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11377,7 +11405,7 @@ export default function App() {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       if (!inv) return;
       try { await db.deleteInvoice(parsed.invoiceId); } catch (e) { fail(e); return; }
-      setData(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
     }
     if (parsed.action === "add_payment") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
@@ -11389,7 +11417,7 @@ export default function App() {
       // both (mirrors the per-invoice chat handler so both AI paths agree).
       const netBalance = totals.balance + (calcLateFee({ ...inv, payments }, totals).fee || 0);
       const updated = { ...inv, payments, status: netBalance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : inv.status) };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11398,7 +11426,7 @@ export default function App() {
       const idx = (parsed.itemIndex || 0) - 1;
       if (!inv || idx < 0) return;
       const updated = { ...inv, items: inv.items.filter((_, i) => i !== idx) };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11418,7 +11446,7 @@ export default function App() {
           ...(typeof c.taxable === "boolean" ? { taxable: c.taxable } : {}),
         } : it),
       };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11437,7 +11465,7 @@ export default function App() {
         ...(typeof c.address3 === "string" ? { address3: c.address3 } : {}),
       };
       try { await db.updateClient(updated); db.recordClientVersion(updated, "AI updated").catch(() => {}); } catch (e) { fail(e); }
-      setData(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
+      setDataNow(d => ({ ...d, clients: d.clients.map(cc => cc.id === target.id ? updated : cc) }));
       return updated;
     }
     if (parsed.action === "add_job_site") {
@@ -11461,7 +11489,7 @@ export default function App() {
       const updated = { ...target, addresses: [...(target.addresses || []), site] };
       try { await db.updateClient(updated); } catch (e) { fail(e); return; }
       db.recordClientVersion(updated, "AI added job site").catch(() => {});
-      setData(d => ({
+      setDataNow(d => ({
         ...d,
         clients: d.clients.map(c => c.id === target.id ? updated : c),
         invoices: refreshInvoicesForClient(d.invoices, updated),
@@ -11479,7 +11507,7 @@ export default function App() {
         jobAddress: addr,
         clientInfo: { ...(inv.clientInfo || {}), address1: addr.line1 || "", address2: addr.line2 || "", address3: addr.line3 || "" },
       };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
@@ -11530,14 +11558,14 @@ export default function App() {
       try { await db.updateInvoiceVisits(inv.id, visits); } catch (e) { fail(e); return; }
       const first = [...visits].sort((a, b) => a.start.localeCompare(b.start))[0];
       const updated = { ...inv, visits, gcalDate: first.start, gcalEventId: first.eventId || null, gcalDurationMinutes: Number(first.minutes) || null };
-      setData(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       return { invoice: updated, visit: v, calendarError, calendarConnected: gcalAuthed && GCal.isConfigured() };
     }
     if (parsed.action === "delete_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);
       if (!target) return;
       try { await db.deleteClient(target.id); } catch (e) { fail(e); return; }
-      setData(d => ({ ...d, clients: d.clients.filter(cc => cc.id !== target.id) }));
+      setDataNow(d => ({ ...d, clients: d.clients.filter(cc => cc.id !== target.id) }));
     }
   };
 
@@ -11992,6 +12020,15 @@ export default function App() {
         setTab(existing.type === "estimate" ? "estimates" : "invoices");
         return;
       }
+      // The counterpart is not in live data, so it was deleted. Falling through here
+      // would mint a SECOND invoice carrying another copy of this estimate's payments,
+      // which is how duplicates multiply. Stop and say what happened.
+      alert(
+        `${form.id} was already converted to ${existingId}, but that document is not in ` +
+        `the active list — it is most likely in Recently Deleted. Restore it instead of ` +
+        `converting again, or the payment would be copied onto a second invoice.`
+      );
+      return;
     }
 
     // ── The number ────────────────────────────────────────────────────────────
@@ -12009,7 +12046,26 @@ export default function App() {
     const pairedId = Number.isFinite(sourceNum)
       ? `${idPrefix}${String(sourceNum).padStart(4, "0")}`
       : null;
-    const pairedIsFree = !!pairedId && !data.invoices.some(d => d.id === pairedId);
+    // data.invoices holds only live rows (db.loadAll filters deleted_at is null), so a
+    // soft-deleted EST/INV carrying this number looks free. Upserting onto it would
+    // revive nothing: migrations/059 does `on conflict (id) do update` and never clears
+    // deleted_at, so the result is an invoice invisible in the app and a 404 on the
+    // customer's link — and the RPC's payment delete-and-reinsert would wipe the deposit
+    // this flow just moved, with no copy left on the estimate. fetchInvoiceUpdatedAt has
+    // no deleted_at filter, so it sees trashed rows too.
+    let pairedIsFree = !!pairedId && !data.invoices.some(d => d.id === pairedId);
+    if (pairedIsFree) {
+      try {
+        if (await db.fetchInvoiceUpdatedAt(pairedId)) {
+          console.warn(`${pairedId} exists but is soft-deleted; minting a fresh id instead.`);
+          pairedIsFree = false;
+        }
+      } catch (e) {
+        // Fail safe: mint a fresh id rather than risk writing onto a trashed row.
+        console.warn(`Could not confirm ${pairedId} is free; minting a fresh id:`, e);
+        pairedIsFree = false;
+      }
+    }
     let num, newId;
     if (pairedIsFree) {
       num = sourceNum;
@@ -12019,10 +12075,16 @@ export default function App() {
       ({ num, id: newId } = await mintDocId(targetType));
       if (pairedId) console.warn(`Cannot reuse ${pairedId} (already exists); minted ${newId} instead.`);
     }
-    // Carry payments forward (e.g. a down payment recorded on an estimate
-    // becomes the opening paid balance on the new invoice). Stamp each
-    // copied payment with a fresh id so the DB doesn't see a primary-key
-    // collision against the source document's payment rows.
+    // MOVE payments forward, do not copy them. A down payment recorded on an
+    // estimate becomes the opening paid balance on the new invoice, and the
+    // estimate must then stop carrying it, or the same money exists on two
+    // documents at once with nothing to reconcile them. That is what put one
+    // $10,062.82 transfer on five rows for Filippo Cortivo and left $18,293.19
+    // double-booked across five clients (audit 2026-10-16). The source
+    // estimate is cleared below, where convertedToId is stamped.
+    //
+    // Each row still gets a fresh id so the insert cannot collide with the
+    // source document's rows before they are removed.
     const carriedPayments = (form.payments || []).map(p => ({
       ...p,
       id: Date.now() + Math.floor(Math.random() * 100000),
@@ -12082,7 +12144,13 @@ export default function App() {
         nextEstimateNum: isEstTarget ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
     } else {
-      const sourceUpdated = { ...form, convertedToId: newId };
+      // payments: [] is the other half of the move. The save RPC
+      // (migrations/059) deletes and reinserts a document's payment rows on
+      // every save, so persisting an empty list removes them from the estimate.
+      // Hand-keyed rows have a null paypal_capture_id and so are not protected
+      // by that RPC's PayPal clause; a genuine PayPal down payment never lands
+      // on an estimate anyway, because paypal-capture-order.js converts first.
+      const sourceUpdated = { ...form, convertedToId: newId, payments: [] };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
@@ -12105,9 +12173,33 @@ export default function App() {
             setData(d => ({ ...d, invoices: d.invoices.filter(inv => !orphanIds.includes(inv.id)) }));
           }
         }
-        await db.upsertInvoice({ ...form, convertedToId: newId }, false);
+        // This write is the second half of the payment move, so it must not be
+        // allowed to fail quietly: the payments are already on the new invoice
+        // by now, and if the estimate keeps its copies the money is
+        // double-booked again. Self-heal on a stale token exactly as
+        // autoSaveInvoice does, and let a genuine second failure reach the
+        // outer catch.
+        const sourcePayload = { ...form, convertedToId: newId, payments: [] };
+        try {
+          await db.upsertInvoice(sourcePayload, false);
+        } catch (e) {
+          if (e?.code === 'CONCURRENT_EDIT') {
+            const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(form.id);
+            await db.upsertInvoice({ ...sourcePayload, updatedAt: freshUpdatedAt }, false);
+          } else {
+            throw e;
+          }
+        }
       }
-    } catch (e) { console.error('Convert/save failed (kept local copy):', e); alert('Conversion saved locally. Cloud sync failed: ' + (e.message || e)); }
+    } catch (e) {
+      console.error('Convert/save failed (kept local copy):', e);
+      alert(
+        'Conversion saved locally but the cloud sync failed: ' + (e.message || e) +
+        '\n\nRefresh before carrying on. If a payment was recorded on the estimate it may ' +
+        'now exist on both documents, so check the new invoice and the estimate before ' +
+        'treating either total as correct.'
+      );
+    }
     // Open the new doc immediately.
     setSelected(copy);
     setView("form");
