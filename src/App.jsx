@@ -10914,6 +10914,15 @@ export default function App() {
       if (e.touches.length !== 1) { active = false; return; }
       // A swipe inside a modal should not navigate the app backwards.
       if (touchInOverlay(e.target, rootRef.current)) { active = false; return; }
+      // A touch that lands in a text field is not a gesture. The user is
+      // tapping to focus, dragging the caret, or pulling a selection handle,
+      // and iOS keeps sending touchmove throughout. This is the same guard the
+      // tab swiper got in 404696e ("Fix iPhone text-selection drag in inputs",
+      // bug #6) after it was seen shoving the page on a real device; that fix
+      // was only ever applied to the carousel, and these two handlers, which
+      // are also document-level and also non-passive, never got it.
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) { active = false; return; }
       const t = e.touches[0];
       if (t.clientX > EDGE_PX) { active = false; return; }
       startX = t.clientX;
@@ -11009,6 +11018,15 @@ export default function App() {
       // The page being at the top says nothing about what the finger is on. A
       // modal, or any area with its own scrollbar, owns this gesture.
       if (touchInOverlay(e.target, rootRef.current) || touchInScroller(e.target)) { active = false; return; }
+      // A touch that lands in a text field is not a gesture. The user is
+      // tapping to focus, dragging the caret, or pulling a selection handle,
+      // and iOS keeps sending touchmove throughout. This is the same guard the
+      // tab swiper got in 404696e ("Fix iPhone text-selection drag in inputs",
+      // bug #6) after it was seen shoving the page on a real device; that fix
+      // was only ever applied to the carousel, and these two handlers, which
+      // are also document-level and also non-passive, never got it.
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) { active = false; return; }
       const t = e.touches[0];
       startX = t.clientX;
       startY = t.clientY;

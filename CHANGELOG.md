@@ -5,6 +5,44 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.21.1 — 2026-10-18
+
+### Pull-to-refresh and edge-swipe no longer arm inside a text field
+
+Likely the long-standing "iPhone customer-info text-selection drags the page"
+bug, open and unreproduced since 2026-08-26. **Not confirmed on a device** —
+see the caveat below — but correct on its own merits either way.
+
+- **Two document-level, non-passive touch handlers had no text-field guard.**
+  Pull-to-refresh (`onStart`) armed on any single-finger touch while the page
+  was at scroll top in the list view, checking only for modals and nested
+  scrollers. Clients > a client > Edit is the one screen where customer-info
+  inputs are plain page content, at scroll top, with `view` still `'list'` —
+  `ClientsTab` is mounted ungated, so editing a client never changes `view`.
+  A long-press in Name/Email/Phone and any downward drag past 8px therefore
+  locked the gesture, ran `preventDefault()` on every subsequent move, and
+  pulled the refresh spinner down while the user was trying to extend a
+  selection.
+- **The same guard was added to the edge-swipe-back handler**, which arms
+  within 22px of the left edge. The edit page's inputs start at x=16, so a
+  touch in an input's left padding could arm it, and a rightward drag fires
+  app-back, which `ClientsTab` handles by clearing the draft. Less likely to
+  trigger, worse when it does.
+- **This is not a new idea.** Commit `404696e` ("Fix iPhone text-selection drag
+  in inputs", bug #6) added exactly this guard to the tab swiper in May, after
+  the same behaviour was seen on a real device shoving the chat box around. It
+  was never applied to these two handlers. The code added here is that guard.
+
+**Caveat, stated plainly.** No device was available, so this was found by
+reading. The arming conditions, the missing guard and the field positions are
+all verified in the source, but two things are inferred: whether iOS keeps
+dispatching cancelable `touchmove` through a long-press selection rather than
+firing `touchcancel`, and the report's literal wording — the handler moves the
+fixed spinner and cancels the native gesture rather than translating page
+content. To confirm or kill it: long-press the Name field in Clients > a client
+> Edit at scroll top and drag down. The bug stays open in `CLAUDE.md` until
+that is done.
+
 ## v1.21.0 — 2026-10-18
 
 ### One spelling per payment method, everywhere (migration 061)

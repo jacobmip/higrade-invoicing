@@ -373,11 +373,27 @@ were already done and were sending agents chasing work that did not exist.
 
 ### Open
 
-1. **iPhone customer-info text-selection drags the page** — needs checking on a
-   real device before anyone writes code. `index.html` already sets
-   `touch-action: pan-y` globally and the list cards set
-   `userSelect/WebkitUserSelect/WebkitTouchCallout: none`, so some of this was
-   addressed already. Reproduce it first and find which input still misbehaves.
+1. **iPhone customer-info text-selection drags the page** — **a candidate fix
+   shipped in v1.21.1, unconfirmed.** Still open because nobody has tested it
+   on the phone.
+   **To close it:** long-press the Name field in Clients > a client > Edit with
+   the page at scroll top, and drag down. If the orange refresh spinner no
+   longer follows your finger and the selection behaves, this is fixed.
+   **What was found and changed.** Pull-to-refresh (`onStart`, the effect near
+   `TOP_TOLERANCE`) and the edge-swipe-back handler are both document-level and
+   non-passive, and neither checked `e.target.tagName`. The client edit page is
+   the only screen where customer-info inputs are plain page content at scroll
+   top with `view` still `'list'` (`ClientsTab` is mounted ungated, so editing a
+   client never changes `view`), which is why that screen and not the modals.
+   Both now carry the same `INPUT`/`TEXTAREA`/`SELECT`/`isContentEditable` bail
+   that commit `404696e` gave the tab swiper for this exact bug class in May.
+   **Ruled out, so nobody re-hunts them:** the global `touch-action: pan-y` in
+   `index.html`, `S.input`'s `touchAction: "manipulation"`, the portaled
+   `ClientPickerModal`, the invoice-form client-edit overlay, and
+   `printablePdf.js` (it never references a touch handler). Fourteen other
+   candidates were raised and refuted.
+   **If it is still broken**, the next thing to check is whether iOS fires
+   `touchcancel` on a long-press selection, since the guard assumes it may not.
 
 ### Fixed 2026-10-18 — do not re-open
 
