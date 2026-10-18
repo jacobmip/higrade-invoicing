@@ -5,6 +5,56 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.21.0 — 2026-10-18
+
+### One spelling per payment method, everywhere (migration 061)
+
+`payments.method` is plain text with no constraint, and until 2026-10-16 the
+table held fifteen spellings of eight methods — "CHECK" on 207 rows, "Check"
+on 41, "check" on 1, plus "PAYPAL", "CASH", "OTHER", "CREDIT CARD" and three
+labels inherited from the old app. Those rows were repaired on 2026-10-16, but
+every reader in the app was still case-sensitive, so the defect was latent
+rather than gone: one free-text write and the same mess came back.
+
+- **New `src/paymentMethods.js`** — one canonical vocabulary, one
+  `canonicalMethod()`, one colour-and-glyph table. Two rules, in order: fold
+  case against the eight methods, then leave an unrecognised value alone.
+  Passing an unknown value through is deliberate — relabelling a method we do
+  not recognise would quietly rewrite what was actually recorded, and a
+  payment is money. The case-insensitive match that v1.16.1 added inside the
+  payment modal is now the shared rule instead of a local one.
+- **Revenue by Method was splitting one method across several rows.** The
+  Reports tab grouped on the raw stored string, so "CHECK", "Check" and
+  "check" were three rows that each understated their total and their
+  percentage, and the chart's ordering was wrong. Replayed against the
+  pre-repair snapshot, the fix collapses 15 rows to 10 and consolidates Check
+  from three rows into one, with the overall total unchanged.
+- **Three colour palettes collapsed into one.** The invoice form, the Payments
+  tab and the Reports tab each carried a near-duplicate map. This changes no
+  pixel — only the Reports copy had an explicit `Other` key, but the other two
+  fell through to the same grey and the same glyph — so it is a
+  one-place-to-add-a-method change, not a rendering fix.
+- **The AI chat was being told to write an invalid value.** The
+  `record_payment` tool described its method as "Cash, Check, Venmo, Zelle,
+  Card, PayPal, ..." — and "Card" is not a method the app knows. It is now an
+  enum of the eight real ones, which was the only method vocabulary any model
+  ever saw. `recordPayment` canonicalizes what comes back regardless.
+- **Normalized at the chokepoints**, not at each render: both payment mappings
+  in `db.js`, and the public-viewer mapping that feeds the customer-facing
+  PAYMENT HISTORY block in both the desktop and mobile layouts. The paid-in-full
+  receipt email no longer says "Paid by CHECK".
+- **A backup restore can no longer undo the repair.** `importBackup` upserts
+  raw snapshot rows straight past `db.js` and the save RPC, and the pre-repair
+  snapshots are still on disk — one restore would have put all fifteen
+  spellings back. It canonicalizes payment rows on the way in now.
+- **Migration 061 makes it durable below the app**: a `before insert or update`
+  trigger on `payments` mirroring `canonicalMethod()` exactly, so the Telegram
+  manager, a REST write and a restore all land canonical. A trigger rather than
+  a check constraint, so an unrecognised label is kept rather than rejected.
+  Deliberately not `initcap()`, which turns 'PAYPAL' into 'Paypal'.
+- Also fixed: the invoice history timeline rendered "undefined payment
+  received" for a payment with no method.
+
 ## v1.20.0 — 2026-10-12
 
 ### AI chat prices estimates from the book, then checks the market

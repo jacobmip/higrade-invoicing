@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js'
+import { canonicalMethod } from './paymentMethods.js'
 
 // ─── Shape helpers ────────────────────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ function toInvoice(row, items = [], payments = []) {
         id: p.id,
         amount: parseFloat(p.amount),
         surcharge: parseFloat(p.surcharge ?? 0),
-        method: p.method || '',
+        method: canonicalMethod(p.method),
         date: p.date,
         note: p.note || '',
         paypal_order_id: p.paypal_order_id || null,
@@ -590,7 +591,7 @@ export async function upsertInvoice(inv, isNew) {
     payments: (inv.payments || []).map(p => ({
       amount: p.amount ?? 0,
       surcharge: p.surcharge ?? 0,
-      method: p.method || '',
+      method: canonicalMethod(p.method),
       date: p.date || null,
       note: p.note || '',
       // Round-trip PayPal identifiers so the save_invoice_with_items RPC

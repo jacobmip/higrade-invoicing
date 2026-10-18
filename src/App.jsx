@@ -14,6 +14,7 @@ import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
+import { PAYMENT_METHODS, canonicalMethod, methodStyle } from './paymentMethods.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -622,7 +623,7 @@ async function sendInvoiceEmail(invoice, client, message, viewLink, toAddresses 
   if (isPaidInFull && Array.isArray(invoice.payments) && invoice.payments.length > 0) {
     const sorted = [...invoice.payments].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
     const p = sorted[0];
-    lastPayment = { method: p.method || 'payment', date: p.date || null };
+    lastPayment = { method: canonicalMethod(p.method) || 'payment', date: p.date || null };
   }
   // Link-only email: server renders a Review & Pay button and minimal
   // summary. We no longer pass a full items table so the customer is
@@ -1179,8 +1180,6 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
 }
 
 // ─── Payment Modal ────────────────────────────────────────────────────────────
-const PAYMENT_METHODS = ["Cash","Check","Venmo","Zelle","Credit Card","PayPal","Bank Transfer","Other"];
-
 function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
   const t = calcTotals(invoice);
   const isEstimate = invoice.type === "estimate";
@@ -1196,14 +1195,10 @@ function PaymentModal({ invoice, onClose, onSave, existingPayment }) {
   // In edit mode, pre-populate from the existing payment instead.
   const [amount, setAmount] = useState(isEdit ? String(existingPayment.amount ?? "") : (isEstimate ? "" : owedWithFee.toFixed(2)));
   // Stored methods are not always the option's exact spelling: the AI agent and
-  // outside writers pass through whatever they were given ("check"). Match
-  // case-insensitively, and keep an unknown value as its own option, so the
-  // select never falls back to its first option and a save rewrites it to Cash.
-  const [method, setMethod] = useState(() => {
-    const stored = isEdit ? String(existingPayment.method || "").trim() : "";
-    if (!stored) return "Cash";
-    return PAYMENT_METHODS.find(m => m.toLowerCase() === stored.toLowerCase()) || stored;
-  });
+  // outside writers pass through whatever they were given ("check"). canonicalMethod
+  // folds the casing and keeps an unknown value as-is, so the select never falls
+  // back to its first option and a save rewrites a real method to Cash.
+  const [method, setMethod] = useState(() => canonicalMethod(isEdit ? existingPayment.method : "") || "Cash");
   const methodOptions = PAYMENT_METHODS.includes(method) ? PAYMENT_METHODS : [...PAYMENT_METHODS, method];
   const [date, setDate] = useState(isEdit ? (existingPayment.date || today()) : today());
   const [note, setNote] = useState(isEdit ? (existingPayment.note || "") : (isEstimate ? "Down payment" : ""));
@@ -4059,7 +4054,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         const p = a.payment;
         if (!p || typeof p.amount !== "number") return false;
         setForm(f => {
-          const payments = [...(f.payments || []), { amount: p.amount, method: p.method || "Cash", date: p.date || today() }];
+          const payments = [...(f.payments || []), { amount: p.amount, method: canonicalMethod(p.method) || "Cash", date: p.date || today(), note: p.note || "" }];
           const totals = calcTotals({ ...f, payments });
           // Total owed = principal + late fee. Mark paid only when payments
           // cover both, consistent with the overpaid/balance-due display.
@@ -4390,7 +4385,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const dayMs = (d) => d ? new Date(d + (d.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
   const historyEvents = [
     { date: form.date, label: isEstimate ? "Estimate created" : "Invoice created", type: "created", amount: null, sortKey: dayMs(form.date) },
-    ...(form.payments || []).map(p => ({ date: p.date, label: `${p.method} payment received`, type: "payment", amount: p.amount, sortKey: dayMs(p.date) + 1 })),
+    ...(form.payments || []).map(p => {
+      const m = canonicalMethod(p.method);
+      return { date: p.date, label: m ? `${m} payment received` : "Payment received", type: "payment", amount: p.amount, sortKey: dayMs(p.date) + 1 };
+    }),
     ...events.map(ev => {
       const when = ev.created_at;
       if (ev.kind === 'sent') {
@@ -5142,8 +5140,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 {(form.payments || []).length > 0 && (
                   <div style={{ marginTop: 10, borderTop: "1px solid #eee", paddingTop: 8 }}>
                     {form.payments.map((p, i) => {
-                      const methodColors = { Cash: "#27ae60", Check: "#2980b9", Venmo: "#3D95CE", Zelle: "#6B39A8", PayPal: "#0070ba", "Credit Card": ORANGE, "Bank Transfer": "#16a085" };
-                      const mc = methodColors[p.method] || "#888";
+                      const mc = methodStyle(p.method).color;
                       // PayPal payments are real captured transactions — lock them
                       // from edit/delete. Everything else is tappable to edit.
                       const isPayPal = !!p.paypal_capture_id;
@@ -5154,7 +5151,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                           style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, cursor: isPayPal ? "default" : "pointer" }}>
                           <div style={{ width: 6, height: 6, borderRadius: "50%", background: mc, flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: mc }}>{p.method}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: mc }}>{canonicalMethod(p.method)}</span>
                             <span style={{ fontSize: 12, color: "#aaa", marginLeft: 6 }}>{fmtDate(p.date)}</span>
                             {isPayPal && <span style={{ fontSize: 10, fontWeight: 700, color: "#0070ba", background: "#e6f0fa", borderRadius: 4, padding: "1px 5px", marginLeft: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>PayPal</span>}
                             {p.note && <div style={{ fontSize: 11, color: "#999", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.note}</div>}
@@ -7142,7 +7139,6 @@ function NotificationsBell({ onOpenInvoice }) {
 }
 
 function PaymentsTab({ invoices }) {
-  const methodInfo = (m) => ({ Cash: ["$", "#27ae60"], Check: ["✓", "#2980b9"], Venmo: ["V", "#3D95CE"], Zelle: ["Z", "#6B39A8"], PayPal: ["P", "#0070ba"], "Credit Card": ["CC", ORANGE], "Bank Transfer": ["B", "#16a085"] }[m] || ["•", "#888"]);
 
   const allPayments = [];
   invoices.forEach(inv => {
@@ -7171,7 +7167,7 @@ function PaymentsTab({ invoices }) {
             <div style={{ fontSize: 13, color: "#aaa", marginTop: 8 }}>Payments recorded on invoices will appear here</div>
           </div>
         ) : allPayments.map((p, i) => {
-          const [char, color] = methodInfo(p.method);
+          const { glyph: char, color } = methodStyle(p.method);
           return (
             <div key={i} style={{ ...S.card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ width: 42, height: 42, borderRadius: "50%", background: color + "18", border: `2px solid ${color}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -7183,7 +7179,7 @@ function PaymentsTab({ invoices }) {
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
                 <div style={{ fontSize: 12, color: "#aaa" }}>{fmtDate(p.date)}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#666", marginTop: 2 }}>{p.method}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#666", marginTop: 2 }}>{canonicalMethod(p.method)}</div>
               </div>
             </div>
           );
@@ -8188,7 +8184,7 @@ function PublicViewerPage({ token }) {
       taxable: it.taxable !== false,
     })),
     payments: (state.payments || []).map(p => ({
-      id: p.id, amount: parseFloat(p.amount), method: p.method || '', date: p.date, note: p.note || '',
+      id: p.id, amount: parseFloat(p.amount), method: canonicalMethod(p.method), date: p.date, note: p.note || '',
       surcharge: parseFloat(p.surcharge || 0),
     })),
   };
@@ -9498,12 +9494,13 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
   });
   const topClients = Object.entries(clientData).map(([n,d]) => ({ name: n, jobs: d.jobs.size, total: d.total })).sort((a,b) => b.total-a.total).slice(0, 5);
 
-  const methodColors = { Cash: "#27ae60", Check: "#2980b9", Venmo: "#3D95CE", Zelle: "#6B39A8", PayPal: "#0070ba", "Credit Card": ORANGE, "Bank Transfer": "#16a085", Other: "#888" };
   const methodTotals = {};
   invoices.forEach(inv => {
     if (inv.type === "estimate") return;
     (inv.payments||[]).forEach(p => {
-      if (p.date >= yearStart && p.date <= yearEnd) { const m = p.method || "Other"; methodTotals[m] = (methodTotals[m]||0) + p.amount; }
+      // Key on the canonical spelling: keying on the raw string split one
+      // method across several rows, each with an understated total and percentage.
+      if (p.date >= yearStart && p.date <= yearEnd) { const m = canonicalMethod(p.method) || "Other"; methodTotals[m] = (methodTotals[m]||0) + p.amount; }
     });
   });
   const methodEntries = Object.entries(methodTotals).sort((a,b) => b[1]-a[1]);
@@ -9621,7 +9618,7 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         {methodEntries.length === 0 ? <div style={{ fontSize: 13, color: "#bbb", textAlign: "center", padding: "14px 0" }}>No payments for {selYear}</div>
           : methodEntries.map(([method, amount]) => {
             const pct = ytdCollected > 0 ? amount / ytdCollected * 100 : 0;
-            const color = methodColors[method] || "#888";
+            const color = methodStyle(method).color;
             return (
               <div key={method} style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -11411,7 +11408,7 @@ export default function App() {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       const p = parsed.payment;
       if (!inv || !p || typeof p.amount !== "number") return;
-      const payments = [...(inv.payments || []), { amount: p.amount, method: p.method || "Cash", date: p.date || today() }];
+      const payments = [...(inv.payments || []), { amount: p.amount, method: canonicalMethod(p.method) || "Cash", date: p.date || today(), note: p.note || "" }];
       const totals = calcTotals({ ...inv, payments });
       // Total owed = principal + late fee; mark paid only when payments cover
       // both (mirrors the per-invoice chat handler so both AI paths agree).

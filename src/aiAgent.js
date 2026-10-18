@@ -21,6 +21,7 @@
 
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
+import { canonicalMethod } from './paymentMethods.js';
 
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
@@ -484,7 +485,7 @@ async function recordPayment(input, ctx) {
   if (!(amount > 0)) return { error: 'Payment amount must be more than zero.' };
   const updated = await ctx.onAction({
     action: 'add_payment', invoiceId: inv.id,
-    payment: { amount, method: input.method || 'Cash', date: input.date || hawaiiToday() },
+    payment: { amount, method: canonicalMethod(input.method) || 'Cash', date: input.date || hawaiiToday(), note: input.note || '' },
   });
   const u = updated || inv;
   const t = ctx.calcTotals(u);

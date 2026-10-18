@@ -9,6 +9,7 @@
 // older snapshots into the current schema.
 
 import { supabase } from './supabase.js'
+import { canonicalMethod } from './paymentMethods.js'
 
 export const BACKUP_SCHEMA_VERSION = 1
 
@@ -146,8 +147,14 @@ export async function importBackup(snapshot, { mode = 'merge' } = {}) {
   }
 
   for (const t of insertOrder) {
-    const rows = snapshot.tables[t]
+    let rows = snapshot.tables[t]
     if (!rows || rows.length === 0) { restored[t] = 0; continue }
+    // A restore writes raw snapshot rows straight past db.js and the save RPC,
+    // so an older snapshot would put the pre-2026-10-16 payment spellings back
+    // ("CHECK", "MOBILE PAYMENT APP") in one click. Canonicalize on the way in.
+    if (t === 'payments') {
+      rows = rows.map(r => (r && r.method ? { ...r, method: canonicalMethod(r.method) } : r))
+    }
     const { error } = await supabase.from(t).upsert(rows)
     if (error) {
       errors.push({ table: t, message: error.message })

@@ -369,7 +369,15 @@ export const AGENT_TOOLS = [
       properties: {
         document_id: { type: 'string' },
         amount: { type: 'number' },
-        method: { type: 'string', description: 'Cash, Check, Venmo, Zelle, Card, PayPal, ...' },
+        // Keep this enum in step with PAYMENT_METHODS in src/paymentMethods.js.
+        // api/ does not import from src/, so this is a deliberate second copy —
+        // it is the only place any model learns which spellings are valid.
+        method: {
+          type: 'string',
+          enum: ['Cash', 'Check', 'Venmo', 'Zelle', 'Credit Card', 'PayPal', 'Bank Transfer', 'Other'],
+          description: 'Defaults to Cash when omitted. For anything outside this list — a money order, a wire, a trade — use Other and put what it actually was in note, so the detail is not lost.',
+        },
+        note: { type: 'string', description: 'Optional. Free text kept on the payment, e.g. a check number or what an Other payment really was.' },
         date: { type: 'string', description: 'YYYY-MM-DD, default today.' },
       },
       required: ['document_id', 'amount'],
