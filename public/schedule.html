@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schedule an Appointment | HI Grade Plumbing</title>
+<meta name="description" content="Tell us about the job and pick a time. Licensed plumbing across Oahu.">
+<meta name="robots" content="index,follow">
+<style>
+  /* Self-contained on purpose: no fonts, no CDNs, nothing that can fail or
+     slow down a customer standing in a flooding bathroom on cell data. */
+  :root{
+    --ink:#11171f; --muted:#5a6675; --line:#dde3ea; --bg:#f5f7f9; --card:#fff;
+    --brand:#0b5fa5; --brand-dark:#084a82; --urgent:#a8200d; --ok:#17733f;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink); line-height:1.5;
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:640px; margin:0 auto; padding:16px 16px 56px}
+  header{padding:8px 0 4px}
+  .brand{font-weight:700; letter-spacing:.01em}
+  .brand span{color:var(--brand)}
+  h1{font-size:26px; line-height:1.25; margin:18px 0 6px}
+  .sub{color:var(--muted); margin:0 0 18px}
+
+  .urgent{
+    display:block; background:#fff3f1; border:1px solid #f3c9c2; color:var(--urgent);
+    border-radius:var(--radius); padding:12px 14px; margin:0 0 18px;
+    text-decoration:none; font-weight:600;
+  }
+  .urgent small{display:block; font-weight:400; color:#8a3626; margin-top:2px}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px}
+  fieldset{border:0; padding:0; margin:0 0 4px}
+  legend{font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.06em;
+         color:var(--muted); padding:0; margin:14px 0 10px}
+  label{display:block; font-weight:600; margin:14px 0 6px; font-size:15px}
+  .opt{font-weight:400; color:var(--muted)}
+  input,select,textarea{
+    width:100%; font:inherit; color:inherit; background:#fff;
+    border:1px solid #c6cfd9; border-radius:8px; padding:12px 12px; /* 44px tap target */
+  }
+  textarea{min-height:120px; resize:vertical}
+  input:focus,select:focus,textarea:focus{
+    outline:2px solid var(--brand); outline-offset:1px; border-color:var(--brand);
+  }
+  .row{display:flex; gap:12px}
+  .row>*{flex:1 1 0; min-width:0}
+  .hint{color:var(--muted); font-size:13.5px; margin:6px 0 0}
+
+  .consent{display:flex; gap:10px; align-items:flex-start; margin:18px 0 0}
+  .consent input{width:20px; height:20px; flex:0 0 auto; margin-top:2px}
+  .consent span{font-size:13.5px; color:var(--muted); line-height:1.45}
+  .consent a{color:var(--brand)}
+
+  button{
+    width:100%; margin-top:20px; padding:15px 16px; font:600 17px/1 inherit;
+    color:#fff; background:var(--brand); border:0; border-radius:8px; cursor:pointer;
+  }
+  button:hover{background:var(--brand-dark)}
+  button[disabled]{background:#9bb3c8; cursor:default}
+
+  .err{background:#fff3f1; border:1px solid #f3c9c2; color:var(--urgent);
+       border-radius:8px; padding:12px 14px; margin-top:16px; font-size:14.5px}
+  .hp{position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden}
+
+  .done h2{font-size:22px; margin:4px 0 10px}
+  .done .tick{width:44px;height:44px;border-radius:50%;background:#e6f4ec;color:var(--ok);
+    display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700}
+  .done p{margin:10px 0}
+  footer{color:var(--muted); font-size:13px; text-align:center; margin-top:22px}
+  footer a{color:var(--brand)}
+  @media (min-width:560px){ h1{font-size:30px} .wrap{padding-top:28px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="brand">HI Grade <span>Plumbing</span> LLC</div></header>
+
+  <h1>Schedule an appointment</h1>
+  <p class="sub">Tell us about the job and pick a time that works. We are licensed and we cover all of Oahu.</p>
+
+  <a class="urgent" href="tel:+18084445450">
+    Water actively leaking or no water? Call (808) 444-5450
+    <small>An emergency should be a phone call, not a form.</small>
+  </a>
+
+  <div class="card" id="card">
+    <form id="f" novalidate>
+      <fieldset>
+        <legend>Your details</legend>
+        <label for="name">Name</label>
+        <input id="name" name="name" autocomplete="name" required>
+
+        <div class="row">
+          <div>
+            <label for="phone">Phone</label>
+            <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required>
+          </div>
+          <div>
+            <label for="email">Email <span class="opt">optional</span></label>
+            <input id="email" name="email" type="email" inputmode="email" autocomplete="email">
+          </div>
+        </div>
+
+        <label for="address">Service address <span class="opt">optional</span></label>
+        <input id="address" name="address" autocomplete="street-address" placeholder="Street, unit, city">
+        <p class="hint">Helps us plan the route. You can give it later if you prefer.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>The job</legend>
+        <label for="service">What do you need?</label>
+        <select id="service" name="service" required>
+          <option value="">Choose one</option>
+          <option>Water heater</option>
+          <option>Drain or clog</option>
+          <option>Toilet</option>
+          <option>Faucet</option>
+          <option>Shower or tub</option>
+          <option>Leak</option>
+          <option>Garbage disposal</option>
+          <option>Supply line or angle stop</option>
+          <option>Hose bib</option>
+          <option>Sewer line</option>
+          <option>Whole-house repipe</option>
+          <option>Water softener or filtration</option>
+          <option>Sump or ejector pump</option>
+          <option>Backflow</option>
+          <option>Something else</option>
+        </select>
+
+        <label for="description">Describe the problem</label>
+        <textarea id="description" name="description" required
+          placeholder="What is happening, how long it has been going on, and anything you have already tried. The more specific you are, the more accurate our number will be."></textarea>
+        <p class="hint">Make, model or age of the fixture helps if you know it.</p>
+
+        <label for="urgency">How soon?</label>
+        <select id="urgency" name="urgency">
+          <option value="">Choose one</option>
+          <option>As soon as possible</option>
+          <option>Within a few days</option>
+          <option>Within a couple of weeks</option>
+          <option>Just planning ahead</option>
+        </select>
+      </fieldset>
+
+      <fieldset>
+        <legend>Preferred time</legend>
+        <div class="row">
+          <div>
+            <label for="preferred_date">Date</label>
+            <input id="preferred_date" name="preferred_date" type="date">
+          </div>
+          <div>
+            <label for="preferred_window">Window</label>
+            <select id="preferred_window" name="preferred_window">
+              <option value="">Any time</option>
+              <option value="morning">Morning, 8 to 11</option>
+              <option value="midday">Midday, 11 to 1</option>
+              <option value="afternoon">Afternoon, 1 to 4</option>
+              <option value="evening">Late afternoon, 4 to 6</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint">We will confirm the exact time with you. Nothing is booked until we do.</p>
+
+        <div class="row">
+          <div>
+            <label for="owner_or_tenant">Are you the</label>
+            <select id="owner_or_tenant" name="owner_or_tenant">
+              <option value="">Choose one</option>
+              <option>Owner</option>
+              <option>Tenant</option>
+              <option>Property manager</option>
+              <option>Contractor</option>
+            </select>
+          </div>
+          <div>
+            <label for="new_or_existing">Worked with us before?</label>
+            <select id="new_or_existing" name="new_or_existing">
+              <option value="">Choose one</option>
+              <option>New customer</option>
+              <option>Existing customer</option>
+            </select>
+          </div>
+        </div>
+      </fieldset>
+
+      <label class="consent" for="sms_consent">
+        <input type="checkbox" id="sms_consent" name="sms_consent" value="yes">
+        <span>
+          Text me at this number about this job. HI Grade Plumbing LLC may send
+          messages about scheduling and this estimate. Message frequency varies by
+          job. Message and data rates may apply. Reply STOP any time to opt out.
+          See our <a href="https://higradeplumbing.com/sms-terms/" target="_blank" rel="noopener">SMS Terms</a>
+          and <a href="https://higradeplumbing.com/privacy-policy/" target="_blank" rel="noopener">Privacy Policy</a>.
+          Leave this unchecked and we will call or email instead.
+        </span>
+      </label>
+
+      <!-- Honeypot. A person never sees this; a bot fills it. -->
+      <div class="hp" aria-hidden="true">
+        <label for="company_website">Company website</label>
+        <input id="company_website" name="company_website" tabindex="-1" autocomplete="off">
+      </div>
+
+      <button type="submit" id="go">Request this appointment</button>
+      <div id="err" class="err" hidden role="alert"></div>
+      <p class="hint" style="margin-top:14px">
+        Submitting this does not charge you anything and does not book a time on its own.
+        We review it and come back to you to confirm.
+      </p>
+    </form>
+  </div>
+
+  <footer>
+    HI Grade Plumbing LLC &middot; Oahu, Hawaii &middot;
+    <a href="tel:+18084445450">(808) 444-5450</a>
+  </footer>
+</div>
+
+<script>
+  var loadedAt = Date.now();
+
+  // Carry the marketing source across from the website. This page is on a
+  // different origin, so the sessionStorage the homepage keeps cannot reach
+  // here: the link has to pass it, e.g. /schedule?src=yelp.
+  var qs = new URLSearchParams(location.search);
+  var channel = qs.get('src') || qs.get('utm_source') || '';
+  var form = document.getElementById('f');
+  var btn  = document.getElementById('go');
+  var err  = document.getElementById('err');
+  var card = document.getElementById('card');
+
+  // No date in the past; a customer picking yesterday is a confusing error later.
+  var d = document.getElementById('preferred_date');
+  d.min = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+            .toISOString().slice(0, 10);
+
+  function fail(msg) {
+    err.textContent = msg;
+    err.hidden = false;
+    btn.disabled = false;
+    btn.textContent = 'Request this appointment';
+    err.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    err.hidden = true;
+
+    var data = {};
+    new FormData(form).forEach(function (v, k) { data[k] = v; });
+    data.elapsed_ms = Date.now() - loadedAt;
+    data.channel = channel;
+    data.sms_consent = document.getElementById('sms_consent').checked;
+
+    if (!data.name || !data.phone || !data.service || !data.description) {
+      return fail('Please fill in your name, phone, what you need and a description.');
+    }
+    if (String(data.phone).replace(/\D/g, '').length < 10) {
+      return fail('That phone number looks short. Please include the area code.');
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+
+    fetch('/api/schedule-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        return { ok: r.ok, body: b };
+      });
+    }).then(function (res) {
+      if (!res.ok || !res.body.ok) {
+        if (res.body.error === 'missing_fields') return fail('Please check the required fields.');
+        return fail('Something went wrong on our end. Please call us at (808) 444-5450 and we will sort it out.');
+      }
+      // Deliberately no price and no estimate number here. The draft goes to
+      // the office for review; quoting on this page would put an unreviewed
+      // number in front of the customer.
+      var when = data.preferred_date ? (' for ' + data.preferred_date) : '';
+      card.className = 'card done';
+      card.innerHTML =
+        '<div class="tick" aria-hidden="true">&#10003;</div>' +
+        '<h2>Got it, ' + String(data.name).split(' ')[0].replace(/[<>&"]/g, '') + '.</h2>' +
+        '<p>We have your request for <strong>' + String(data.service).replace(/[<>&"]/g, '') +
+        '</strong>' + when.replace(/[<>&"]/g, '') + '.</p>' +
+        '<p>We will review it and get back to you to confirm a time' +
+        (data.sms_consent ? ' by text or phone' : ' by phone or email') + '.</p>' +
+        '<p class="hint">If it turns into an emergency before you hear from us, ' +
+        'call <a href="tel:+18084445450">(808) 444-5450</a>.</p>';
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }).catch(function () {
+      fail('Could not reach us just now. Please call (808) 444-5450.');
+    });
+  });
+</script>
+</body>
+</html>
