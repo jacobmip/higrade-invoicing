@@ -5,6 +5,33 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.21.2 — 2026-10-20
+
+### Migrations 061 and 062 applied, and the canonicalizer now matches the app exactly
+
+The v1.21.0 trigger finally ran, and testing it against the JS turned up one
+real divergence, fixed in 062.
+
+- **061 applied and verified.** `trg_payments_canonical_method` is present in
+  `pg_trigger`, and it was proven to actually fire rather than merely exist: an
+  `update` setting a method to `'  cHeCk  '` inside a rolled-back transaction
+  came back as `'Check'`. Its repair `update` touched 0 rows, as expected.
+- **062 fixes a blank-handling bug in 061.**
+  `canonical_payment_method('   ')` returned `'   '`, where the JS returns `''`.
+  061 detected the blank correctly and then returned its argument instead of
+  the trimmed value. Three spaces is strictly worse to store than an empty
+  string: it is falsy in neither SQL nor JS, so it survives every `<> ''` guard
+  while rendering as nothing at all.
+- **Parity is now proven, not asserted.** All 28 inputs — the eight labels, the
+  three aliases, the uppercase legacy spellings, the pass-through values, blank
+  and whitespace-only — produce byte-identical output from
+  `canonical_payment_method()` and `canonicalMethod()`. `null` still comes back
+  as `null` from SQL and `''` from JS, which is deliberate: the column stays
+  honestly null while the app hands callers a string to apply their own
+  fallback wording to.
+- No app code changed. The version moves because `supabase/migrations/` is in
+  the release-check path set.
+
 ## v1.21.1 — 2026-10-18
 
 ### Pull-to-refresh and edge-swipe no longer arm inside a text field

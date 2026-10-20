@@ -127,7 +127,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 060. **061 is written but NOT applied** — see Migrations applied)
+## Database schema (current through migration 062)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
@@ -162,7 +162,7 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `default_assigned_tech()` — trigger, migration 058. A new invoice row with no `assigned_tech_id` gets its `owner_id`, so every document starts assigned to whoever created it (Jake for his own and for Lisa's leads, a plumber for theirs).
 - `enforce_invoice_id_type()` — trigger, migration 039. An `EST` row is an estimate and an `INV` row is an invoice; blocks any write that would introduce a mismatch, grandfathers rows already mismatched.
 - `bump_doc_num(n)` — advance-only shared counter, migration 040
-- `canonical_payment_method(text)` + `payments_canonical_method()` — function and BEFORE INSERT OR UPDATE trigger on `payments`, migration 061. **NOT APPLIED as of 2026-10-18** — the file is committed, the SQL has not been run. Folds a method spelling to one of the eight canonical labels and **leaves an unrecognised value alone**. Mirrors `canonicalMethod()` in `src/paymentMethods.js`; change the two together. A trigger and not a check constraint on purpose, so restoring an old backup cannot fail hard on a label nobody anticipated. Never use `initcap()` here — it turns `PAYPAL` into `Paypal`.
+- `canonical_payment_method(text)` + `payments_canonical_method()` — function and BEFORE INSERT OR UPDATE trigger on `payments`, migrations 061 and 062, **both applied and verified 2026-10-20** (trigger present in `pg_trigger`; folding proven on 28 inputs that match `canonicalMethod()` exactly; trigger proven to fire by an `update` inside a rolled-back transaction). Folds a method spelling to one of the eight canonical labels and **leaves an unrecognised value alone**. Mirrors `canonicalMethod()` in `src/paymentMethods.js`; change the two together. A trigger and not a check constraint on purpose, so restoring an old backup cannot fail hard on a label nobody anticipated. Never use `initcap()` here — it turns `PAYPAL` into `Paypal`.
 - `visits[]` entries are `{ id, start, minutes, label, kind, eventId, builtBy, pending? }`. `kind` is `job` / `estimate` / `emergency` and drives the Google event colour; absent, it falls back to the document type, so nothing needed backfilling when it was added. `builtBy: "app"` marks an event this app created — only those get their description and location patched on a reschedule, so a booking from Lisa keeps the caller's own words. Both live in the jsonb, so neither cost a migration.
 - `sync_first_visit()` — trigger, migration 044. Mirrors the earliest entry of `invoices.visits` into `gcal_date` / `gcal_event_id` / `gcal_duration_minutes`. Runs only when `visits` is a non-empty array, so the AI receptionist writing `gcal_date` directly on a lead is left alone.
 - `create_estimate_from_lead(...)` / `capture_abandoned_call(...)` — AI receptionist
@@ -217,13 +217,13 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **059** — `clients.ge_half_tax`: per-client GE half tax (0.5%) default, see `src/geTax.js`
 - **059 (second file)** — `059_save_invoice_internal_notes.sql`: `save_invoice_with_items` no longer drops `internal_notes`. **There are two 059 files.** `059_client_ge_half_tax.sql` sorts first and does not touch the function, so the order is harmless, but any tool that assumes one file per number will mis-order them. Do not renumber either — both are committed and applied.
 - **060** — `allocate_doc_number()`: document numbers handed out by the database under a row lock, instead of computed in the browser from the snapshot loaded at app start
-- **061** — **WRITTEN, NOT YET APPLIED (as of 2026-10-18).** `canonical_payment_method()` and the `trg_payments_canonical_method` trigger on `payments`, so one payment method has one spelling no matter which writer stored it. Pairs with `src/paymentMethods.js`, which is live and already normalizes every read and write inside the app — the app is correct without the trigger; what is missing is the guard on writers that bypass it (the Telegram manager, ad-hoc REST or psql, a restore that skips `backup.js`). Includes a repair `update`, expected to touch 0 rows on a database repaired on 2026-10-16.
-  > **Apply migration 061:** open the [SQL editor](https://supabase.com/dashboard/project/cwhgcxxszyvevjpbnnkc/sql/new), paste the contents of `supabase/migrations/061_payment_method_canonical.sql`, run it, then confirm with
-  > `select tgname from pg_trigger where tgname = 'trg_payments_canonical_method';`
-  > It was not applied in the session that wrote it because this project's Supabase MCP server is pinned `read_only` in `.mcp.json` and was additionally unauthenticated.
+- **061** — **applied and verified 2026-10-20.** `canonical_payment_method()` and the `trg_payments_canonical_method` trigger on `payments`, so one payment method has one spelling no matter which writer stored it. Pairs with `src/paymentMethods.js`, which normalizes every read and write inside the app — the app was already correct without the trigger; this closes the writers that bypass it (the Telegram manager, ad-hoc REST or psql, a restore that skips `backup.js`). Its repair `update` touched 0 rows, as expected on a database repaired on 2026-10-16.
+- **062** — **applied and verified 2026-10-20.** Corrects one divergence in 061: `canonical_payment_method('   ')` returned `'   '` where the JS returns `''`, because 061 detected the blank and then handed back its argument instead of the trimmed value. A method of three spaces is worse than an empty one — it is falsy in neither language, so it survives `<> ''` guards while displaying as nothing. Parity is now exact on 28 inputs; `null` still returns `null`, which is deliberate and not a divergence.
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `062_<short_description>.sql`. Paste the SQL inline in chat per hard rule 6.
+Next migration is `063_<short_description>.sql`.
+
+**How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids
@@ -403,9 +403,9 @@ were already done and were sending agents chasing work that did not exist.
   several rows and three colour palettes disagreed. v1.21.0 moved the rule into
   `src/paymentMethods.js`, normalized the read and write chokepoints, put an
   enum on the `record_payment` tool (its description used to suggest "Card",
-  which is not a method the app knows), and wrote the migration 061 trigger —
-  **which is not applied yet**, so a writer outside the app can still store a
-  raw spelling. The app normalizes it on read either way.
+  which is not a method the app knows), and added the migration 061 trigger
+  (corrected by 062), **both applied and verified 2026-10-20**, so a writer
+  outside the app can no longer store a raw spelling either.
   **The unrecognised-value-passes-through rule is deliberate** — see the header
   of `src/paymentMethods.js` before "tidying up" a stray label.
 
