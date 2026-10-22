@@ -5,9 +5,24 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.21.3 — 2026-10-21
+
+### Renumber the canonicalizer fix to 064, and document the two migrations that were missing
+
+Bookkeeping only. No schema change, no app change.
+
+- **The blank-handling fix shipped as a second `062`.** `062_lead_channel_attribution.sql`
+  and `063_lead_owner_and_local_appointment.sql` had already landed, but neither was added
+  to the migrations list in `CLAUDE.md`, so the list still said 062 was next. Renamed to
+  `064_canonical_method_trims_blank.sql`. The SQL was already applied under the old name and
+  is `create or replace`, so this is naming only.
+- **062 and 063 are now in the migrations list**, which is what would have prevented this.
+  The list has now been behind the directory twice — it is also how there came to be two
+  `059` files — so the "next migration" note says to check `ls supabase/migrations/` first.
+
 ## v1.21.2 — 2026-10-20
 
-### Migrations 061 and 062 applied, and the canonicalizer now matches the app exactly
+### Migrations 061 and 064 applied, and the canonicalizer now matches the app exactly
 
 The v1.21.0 trigger finally ran, and testing it against the JS turned up one
 real divergence, fixed in 062.
@@ -16,7 +31,9 @@ real divergence, fixed in 062.
   `pg_trigger`, and it was proven to actually fire rather than merely exist: an
   `update` setting a method to `'  cHeCk  '` inside a rolled-back transaction
   came back as `'Check'`. Its repair `update` touched 0 rows, as expected.
-- **062 fixes a blank-handling bug in 061.**
+- **064 fixes a blank-handling bug in 061.** (Written as 062, renumbered: 062 and 063
+  had already landed from another session without reaching the migrations list in
+  `CLAUDE.md`, so the list said 062 was free when it was not.)
   `canonical_payment_method('   ')` returned `'   '`, where the JS returns `''`.
   061 detected the blank correctly and then returned its argument instead of
   the trimmed value. Three spaces is strictly worse to store than an empty

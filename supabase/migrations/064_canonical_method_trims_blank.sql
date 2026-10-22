@@ -1,4 +1,10 @@
--- 062_canonical_method_trims_blank.sql
+-- 064_canonical_method_trims_blank.sql
+--
+-- Renumbered from 062. It was written as 062 against a stale CLAUDE.md that
+-- said 062 was next, while 062_lead_channel_attribution.sql and 063 had
+-- already landed from another session without being added to that list. The
+-- SQL below had already been applied under the old name; renaming is
+-- bookkeeping only, and `create or replace` makes it idempotent either way.
 --
 -- canonical_payment_method('   ') returned '   ', where the JS returns ''.
 --
@@ -56,7 +62,7 @@ as $$
 $$;
 
 comment on function public.canonical_payment_method(text) is
-  'Folds a payment method spelling to its canonical label. Mirrors canonicalMethod() in src/paymentMethods.js: case-insensitive match against the eight labels, a small alias map, an unrecognised value passed through trimmed, and a blank folded to the empty string. null is returned as null. Added migration 061, blank handling corrected in 062.';
+  'Folds a payment method spelling to its canonical label. Mirrors canonicalMethod() in src/paymentMethods.js: case-insensitive match against the eight labels, a small alias map, an unrecognised value passed through trimmed, and a blank folded to the empty string. null is returned as null. Added migration 061, blank handling corrected in 064.';
 
 -- Fold any blank already stored. Expected to touch 0 rows.
 update public.payments
