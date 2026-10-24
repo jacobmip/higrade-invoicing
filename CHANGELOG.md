@@ -5,6 +5,28 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.21.4 — 2026-10-23
+
+### Long-pressing a client's name no longer selects it as text
+
+The actual bug behind the long-standing "iPhone customer-info text-selection"
+report, which two sessions had been chasing as a page-drag problem.
+
+- **The client list row and the client detail header had no selection guard.**
+  `InvoiceListCard` and `EstimateListCard` have carried
+  `userSelect` / `WebkitUserSelect` / `WebkitTouchCallout: none` since bug #6;
+  the client cards were missed. Both are whole-card buttons that open the
+  client, so a long-press could only ever produce an iOS selection and callout
+  over a name nobody wanted to copy.
+- **Only the non-editable displays changed.** `ClientEditFields` keeps its
+  inputs fully selectable, since you cannot edit a name you cannot put a caret
+  in, and the client detail **body** stays selectable on purpose — copying an
+  address or a phone number out of it is useful on a job.
+- **The v1.21.1 touch guard stays.** It fixed a real and separate defect:
+  pull-to-refresh and edge-swipe-back both armed inside text inputs. Jake
+  testing it on live v1.21.1 and seeing no change is what told the two defects
+  apart.
+
 ## v1.21.3 — 2026-10-21
 
 ### Renumber the canonicalizer fix to 064, and document the two migrations that were missing

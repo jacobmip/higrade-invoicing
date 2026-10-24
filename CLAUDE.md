@@ -375,27 +375,39 @@ were already done and were sending agents chasing work that did not exist.
 
 ### Open
 
-1. **iPhone customer-info text-selection drags the page** — **a candidate fix
-   shipped in v1.21.1, unconfirmed.** Still open because nobody has tested it
-   on the phone.
-   **To close it:** long-press the Name field in Clients > a client > Edit with
-   the page at scroll top, and drag down. If the orange refresh spinner no
-   longer follows your finger and the selection behaves, this is fixed.
-   **What was found and changed.** Pull-to-refresh (`onStart`, the effect near
-   `TOP_TOLERANCE`) and the edge-swipe-back handler are both document-level and
-   non-passive, and neither checked `e.target.tagName`. The client edit page is
-   the only screen where customer-info inputs are plain page content at scroll
-   top with `view` still `'list'` (`ClientsTab` is mounted ungated, so editing a
-   client never changes `view`), which is why that screen and not the modals.
-   Both now carry the same `INPUT`/`TEXTAREA`/`SELECT`/`isContentEditable` bail
-   that commit `404696e` gave the tab swiper for this exact bug class in May.
-   **Ruled out, so nobody re-hunts them:** the global `touch-action: pan-y` in
-   `index.html`, `S.input`'s `touchAction: "manipulation"`, the portaled
-   `ClientPickerModal`, the invoice-form client-edit overlay, and
-   `printablePdf.js` (it never references a touch handler). Fourteen other
-   candidates were raised and refuted.
-   **If it is still broken**, the next thing to check is whether iOS fires
-   `touchcancel` on a long-press selection, since the guard assumes it may not.
+1. **iPhone: long-pressing a client's name selects it as text** — **fixed in
+   v1.21.4, not yet confirmed on the phone** (it cannot be: Vercel has not
+   deployed since 2026-10-18, see AI-OS `STATUS.md`).
+   **What Jake actually reported, on 2026-10-23:** long-pressing the name in
+   Clients "doesn't do anything, it just starts selecting it as text". The
+   complaint is the selection itself, not the page moving. The old title
+   ("drags the page") sent two sessions after the wrong defect.
+   **Cause.** The client list row and the client detail header carried no
+   `userSelect` / `WebkitUserSelect` / `WebkitTouchCallout: none`, while
+   `InvoiceListCard` and `EstimateListCard` have carried all three since bug #6.
+   The client cards were simply missed. Both are whole-card buttons, so a
+   long-press could only ever produce an iOS selection and callout.
+   **Scope of the fix.** Only the non-editable displays. `ClientEditFields`
+   keeps its inputs fully selectable — you cannot edit a name you cannot put a
+   caret in — and the detail **body** stays selectable on purpose, because
+   copying an address or phone number out of it is useful on a job.
+
+### Fixed, keep — a different defect found while chasing the above
+
+- **Pull-to-refresh and edge-swipe-back armed inside text inputs** (v1.21.1).
+  Both are document-level and non-passive and neither checked
+  `e.target.tagName`, so a drag starting in any in-tree input at scroll top in
+  the list view locked the gesture and `preventDefault`'d every move. Both now
+  carry the same `INPUT`/`TEXTAREA`/`SELECT`/`isContentEditable` bail that
+  commit `404696e` gave the tab swiper in May. **This is real and worth
+  keeping, but it was not what Jake was hitting** — he tested it on live
+  v1.21.1 and the selection behaviour was unchanged, which is the evidence that
+  separated the two defects.
+  **Ruled out while hunting, so nobody re-hunts them:** the global
+  `touch-action: pan-y` in `index.html`, `S.input`'s
+  `touchAction: "manipulation"`, the portaled `ClientPickerModal`, the
+  invoice-form client-edit overlay, and `printablePdf.js`. Fourteen other
+  candidates were raised and refuted.
 
 ### Fixed 2026-10-18 — do not re-open
 
