@@ -3,5 +3,5 @@
 // Format: MAJOR.MINOR.PATCH  — bump patch for bug fixes / small changes,
 //         minor for new features, major for big architectural changes.
 
-export const APP_VERSION    = "1.21.4";
-export const APP_BUILD_DATE = "2026-10-23";
+export const APP_VERSION    = "1.22.0";
+export const APP_BUILD_DATE = "2026-10-24";

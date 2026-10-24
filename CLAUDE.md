@@ -93,10 +93,9 @@ src/
   supabase.js        — Supabase client init
   version.js         — APP_VERSION + APP_BUILD_DATE, see hard rule 13
   main.jsx           — entry
-api/                 — Vercel serverless functions, all nodejs runtime
+api/                 — Vercel functions. **Hard limit: 12 nodejs routes — see below.**
   ai.js                    — per-invoice AI chat; `mode: 'agent'` relays one turn of the global chat agent
-  ai-estimator.js          — structured estimate generation
-  ai-extract-client.js     — screenshot to client records (vision)
+  ai-estimator.js          — structured estimate generation, AND the client extractor via `{ task: 'extract_client' }`
   extract-receipt.js       — receipt OCR to expense
   paypal-create-order.js / paypal-capture-order.js / paypal-webhook.js
   send-email.js / send-estimate.js / submit-signature.js / track-open.js
@@ -110,11 +109,38 @@ api/                 — Vercel serverless functions, all nodejs runtime
   _lib/sms.js              — Twilio send helper
   _lib/gcal.js             — Google token refresh + calendar helpers
   _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
+  _lib/extract-client.js   — screenshot to client records (vision). A helper, not a route, to stay under the function cap
 public/
   estimator-test.html — standalone test harness for AI estimator + extractor
 supabase/migrations/ — numbered SQL, applied by hand in the SQL editor
 local-mirror/        — optional local Postgres replica, see its README
 ```
+
+### The 12-function ceiling — read before adding anything to `api/`
+
+Vercel's **Hobby plan allows 12 nodejs functions per deployment**, and this project sits at
+**exactly 12**. Add a thirteenth and *every deploy fails*, with a failure mode that wastes
+days: the build still succeeds, so `vite build` passes locally and in CI, the release check
+goes green, and the only symptom is `status ● Error` at "Deploying outputs…" **with no error
+message anywhere in the build log.** That is precisely what happened when
+`api/schedule-request.js` landed on 2026-10-18: the site silently served a five-day-old
+build until 2026-10-24, and the `/schedule` page it added never went live at all.
+
+Count with:
+```bash
+for f in api/*.js; do grep -q "runtime: 'edge'" "$f" || echo "$f"; done | grep -v '^api/_' | wc -l
+```
+
+Three ways to add a route without breaking the deploy:
+- **`runtime: 'edge'`** — edge functions do not count against the 12. Six already are
+  (`ai.js`, `eta.js`, `extract-receipt.js`, `geocode.js`, `send-email.js`,
+  `send-estimate.js`). Only works without node builtins (no `node:crypto`, no APNs signing).
+- **Put it in `api/_lib/`** and dispatch from an existing route on a `task` field. This is
+  how the client extractor works; its only caller was the test harness, so it never needed a
+  public URL.
+- **Upgrade to Pro (~$20/month)**, which removes the cap and raises the 10s function
+  ceiling. Note `ai-estimator.js` asks for `maxDuration: 90` and has silently been getting
+  **10s** all along, because Hobby clamps it.
 
 ### Where the other docs fit
 Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
@@ -236,7 +262,7 @@ below are the source of truth, and `ANTHROPIC_API_KEY` is the only AI key set).
 | Per-invoice chat (`AIChatPanel`) | `api/ai.js` | `claude-haiku-4-5-20251001` |
 | Global chat agent (`GlobalAIModal`) | `api/ai.js` agent mode, `api/_lib/agent-tools.js`, `src/aiAgent.js` | `claude-sonnet-5-5`, effort medium, server-side fallback |
 | AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-sonnet-4-5-20250929` |
-| Screenshot-to-client extractor (vision) | `api/ai-extract-client.js` | `claude-sonnet-4-5-20250929` |
+| Screenshot-to-client extractor (vision) | `api/_lib/extract-client.js`, via `api/ai-estimator.js` with `task: 'extract_client'` | `claude-sonnet-4-5-20250929` |
 | Receipt OCR to expense | `api/extract-receipt.js` | `claude-sonnet-4-6` |
 
 ### Global chat agent (v1.14.0)

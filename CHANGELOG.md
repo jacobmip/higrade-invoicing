@@ -5,6 +5,31 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.22.0 — 2026-10-24
+
+### Unblock deploys: back under Vercel's 12-function limit
+
+**The site had been serving a five-day-old build since 2026-10-18.** Every deploy since
+then failed, and the failure was close to invisible: the build succeeded, `vite build`
+passed locally and in CI, the release check went green, and the deployment just read
+`status ● Error` at "Deploying outputs…" with no message in the build log.
+
+The cause was Vercel's **Hobby limit of 12 nodejs functions per deployment**. The project
+had been sitting on exactly 12 and `api/schedule-request.js` made it 13. Nothing was wrong
+with the code, which is why nothing found in the code fixed it.
+
+- **The client extractor moved to `api/_lib/extract-client.js`** and is reached through
+  `POST /api/ai-estimator` with `{ task: 'extract_client' }`. Files under `api/_lib/` are not
+  deployed as routes, so this frees the slot. It cost nothing: its only caller has always
+  been `public/estimator-test.html`, never the app, so it never needed a public endpoint.
+- Six routes are already `runtime: 'edge'` and do not count toward the limit. That is the
+  other way to add one safely.
+- **`CLAUDE.md` now carries the ceiling, the count command and the symptom**, because the
+  expensive part of this was not the fix but the five days of looking in the wrong place.
+
+Also worth knowing: `ai-estimator.js` asks for `maxDuration: 90` and has been silently
+clamped to **10s** the whole time it has been on Hobby.
+
 ## v1.21.4 — 2026-10-23
 
 ### Long-pressing a client's name no longer selects it as text

@@ -7,6 +7,12 @@
 
 export const config = { runtime: 'nodejs', maxDuration: 90 };
 
+// The client extractor shares this route instead of owning one. See the header
+// of ./_lib/extract-client.js for why. Note maxDuration above is aspirational
+// on the Hobby plan, which clamps functions to 10s regardless of what is asked
+// for here.
+import { extractClient } from './_lib/extract-client.js';
+
 // =====================================================================
 // SYSTEM PROMPT — Jake's voice, Option B markup, flat-rate default
 // =====================================================================
@@ -286,6 +292,12 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Hand off before any estimate-specific work. Both tasks are Anthropic calls
+  // with their own prompt and schema; only the entry point is shared.
+  let peek = req.body;
+  if (typeof peek === 'string') { try { peek = JSON.parse(peek); } catch { peek = {}; } }
+  if (peek && peek.task === 'extract_client') return extractClient(req, res);
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {

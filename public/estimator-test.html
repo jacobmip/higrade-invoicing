@@ -398,10 +398,11 @@ $('clientGo').addEventListener('click', async () => {
   $('clientResult').innerHTML = '';
   const t0 = Date.now();
   try {
-    const r = await fetch('/api/ai-extract-client', {
+    const r = await fetch('/api/ai-estimator', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        task: 'extract_client',
         images: clientPhotos.map(p => p.dataUrl),
         extraContext: $('clientCtx').value.trim(),
       }),

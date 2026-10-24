@@ -1,4 +1,13 @@
 // HI Grade AI — Screenshot/photo to client extractor.
+//
+// Lives in _lib/, not as its own route, because files under api/_lib are not
+// deployed as functions. It used to be api/ai-extract-client.js, which cost a
+// serverless slot: the Vercel Hobby plan allows 12 and the project was sitting
+// on exactly 12 until api/schedule-request.js made it 13, at which point every
+// deploy failed at "Deploying outputs" with no error message for five days.
+// Its only caller was ever public/estimator-test.html, so it did not need to be
+// a public endpoint at all. Reached now via POST /api/ai-estimator with
+// { task: 'extract_client' }.
 // Takes one or more images (contact card, business card, text thread,
 // email signature, screenshot of any contact info) and extracts a
 // structured client record matching the existing `clients` schema.
@@ -75,7 +84,7 @@ function setCors(res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
-export default async function handler(req, res) {
+export async function extractClient(req, res) {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
