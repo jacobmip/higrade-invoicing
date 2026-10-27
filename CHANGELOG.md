@@ -2,6 +2,11 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.32.0 — 2026-10-27
+
+- Added Default Apprentice. Settings (admin) has a Default Apprentice dropdown of all non-admin users; it saves `settings.default_apprentice_id`. Every new invoice or estimate owned by an admin gets `invoices.apprentice_id` filled from it automatically, with no extra step. The invoice form shows a small "Apprentice: name" line under Assigned Tech.
+- Migration 094: `invoices.apprentice_id` (nullable, display only, grants no access), `default_assigned_tech()` extended to stamp it (covers the receptionist and every other writer), and the setting seeded to Kaulana Makaula.
+
 ## v1.31.0 — 2026-10-27
 
 - Added Change Password to Settings (Account card) for non-admin users. A modal asks for a new password and confirmation (8 characters minimum, must match) and calls `supabase.auth.updateUser`. Admins do not see it; they manage passwords in the Supabase dashboard.

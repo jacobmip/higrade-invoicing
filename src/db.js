@@ -73,6 +73,9 @@ function toInvoice(row, items = [], payments = []) {
     // restamps ownerId, but this is still the only field that means "who did
     // the work", and it is what the per-tech KPI scorecard groups by.
     assignedTechId: row.assigned_tech_id || null,
+    // Migration 094. Display only; filled by the default_assigned_tech trigger
+    // from settings.default_apprentice_id. Never written back by a save.
+    apprenticeId: row.apprentice_id || null,
     deletedAt: row.deleted_at || null,
     items: items
       .filter(it => it.invoice_id === row.id)
@@ -552,6 +555,12 @@ export async function loadAll() {
 // User preferences (custom email/text message templates, etc.) are stored as
 // key/value rows in the `settings` table. setSetting upserts a single key.
 // Pass value=null to delete the override and fall back to the default.
+export async function getSetting(key) {
+  const { data, error } = await supabase.from('settings').select('value').eq('key', key).maybeSingle()
+  if (error) throw error
+  return data?.value ?? null
+}
+
 export async function setSetting(key, value) {
   if (value === null || value === undefined) {
     const { error } = await supabase.from('settings').delete().eq('key', key)
