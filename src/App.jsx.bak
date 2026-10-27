@@ -3655,8 +3655,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
-  const [activeTab, setActiveTab] = useState(isReadOnly ? "preview" : "edit");
-  const [showSaved, setShowSaved] = useState(false);
+  // Migration 086: a commission tech who is not the owner or assigned tech can
+  // read the job but RLS refuses every write, so the form is view-only for him.
+  const commissionOnly = !isAdmin && !!invoice && !!myId
+    && invoice.commissionTechId === myId && invoice.assignedTechId !== myId && invoice.ownerId !== myId;
+  const lockedView = isReadOnly || commissionOnly;
+  const [activeTab, setActiveTab] = useState(lockedView ? "preview" : "edit");
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
@@ -3788,7 +3792,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const updatedAtRef = useRef(invoice?.updatedAt || null);
   // When set, suppresses the unmount-flush autosave. Used by Delete so the
   // form doesn't re-create the row we just deleted.
-  const skipFlushRef = useRef(false);
+  const skipFlushRef = useRef(commissionOnly);
   // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
   // so paddingTop is correct on first render — no content hidden on load.
   const formHeaderRef = useRef(null);
@@ -4194,7 +4198,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     }),
   } : null);
   const setClientInfoField = (k, v) => setField("clientInfo", { ...(effectiveClientInfo || {}), [k]: v });
-  const categories = [...new Set(savedItems.map(i => i.category))];
 
   // Pop the send-method sheet first (Email vs Text). The chosen method then
   // either opens ConfirmSendModal (email) or sendViaText (sms link).
@@ -4497,7 +4500,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
   const goToTab = (nextId) => {
     // Edit is disabled in read-only preview mode — ignore taps/swipes to it.
-    if (isReadOnly && nextId === "edit") { setDragX(0); return; }
+    if (lockedView && nextId === "edit") { setDragX(0); return; }
     if (nextId === activeTab) { setDragX(0); return; }
     setShowPriceBook(false);
     setAnimating(true);
@@ -4620,7 +4623,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
           {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
         </span>
-        {!isReadOnly && (invoice || autoSavedId) && onDelete && <button onClick={() => {
+        {!lockedView && (invoice || autoSavedId) && onDelete && <button onClick={() => {
           if (!confirm("Delete this?")) return;
           // Cancel any pending debounced autosave AND block the unmount-flush.
           // Without this, the unmount handler would re-insert the row we're
@@ -4629,7 +4632,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
           onDelete((invoice && invoice.id) || autoSavedId);
         }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        {isReadOnly
+        {commissionOnly
+          ? <button onClick={() => onCancel?.()} style={S.btn("primary")}>Done</button>
+          : isReadOnly
           ? <button onClick={() => { skipFlushRef.current = true; if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; } onRestore?.(form.id); }} style={S.btn("primary")}>Restore</button>
           : <button onClick={handleSave} style={S.btn("primary")}>Done</button>}
       </div>
@@ -4637,7 +4642,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0" }}>
         {TABS.map(tab => {
           // In read-only preview, the Edit tab is shown grayed and inert.
-          const editDisabled = isReadOnly && tab.id === "edit";
+          const editDisabled = lockedView && tab.id === "edit";
           return (
           <button key={tab.id} disabled={editDisabled} onClick={() => { if (!editDisabled) goToTab(tab.id); }} style={{ flex: 1, padding: "10px 4px 9px", background: "none", border: "none", borderBottom: activeTab === tab.id ? `3px solid ${ORANGE}` : "3px solid transparent", color: editDisabled ? "#d4d7e0" : (activeTab === tab.id ? ORANGE : "#999"), fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", cursor: editDisabled ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
             <Icon name={tab.icon} size={15} color={editDisabled ? "#d4d7e0" : (activeTab === tab.id ? ORANGE : "#bbb")} />{tab.label}
@@ -4997,21 +5002,38 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   </option>
                 ))}
               </select>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                <label style={{ ...S.label, marginBottom: 0, flexShrink: 0 }}>Material cost</label>
-                <input
-                  type="number" step="0.01" min="0" inputMode="decimal"
-                  style={{ ...S.input, flex: 1 }}
-                  value={form.materialCost ?? 0}
-                  onChange={e => setField("materialCost", e.target.value)}
-                  onBlur={async (e) => {
-                    const v = Number(e.target.value) || 0;
-                    setField("materialCost", v);
-                    try { await db.setInvoiceMaterialCost(invoice?.id || autoSavedId, v); }
-                    catch (err) { console.warn("setInvoiceMaterialCost failed:", err); }
-                  }}
-                />
-              </div>
+              {(() => {
+                const entries = form.materialEntries?.length
+                  ? form.materialEntries
+                  : (Number(form.materialCost) > 0 ? [{ id: "legacy", desc: "Materials", amount: Number(form.materialCost) }] : []);
+                const total = entries.reduce((t, e) => t + (Number(e.amount) || 0), 0);
+                const persist = async (next) => {
+                  setField("materialEntries", next);
+                  setField("materialCost", next.reduce((t, e) => t + (Number(e.amount) || 0), 0));
+                  try { await db.setInvoiceMaterialEntries(invoice?.id || form.id || autoSavedId, next); }
+                  catch (err) { console.warn("setInvoiceMaterialEntries failed:", err); }
+                };
+                const inp = { ...S.input, padding: "6px 8px", fontSize: 13 };
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <label style={{ ...S.label, marginBottom: 0 }}>Materials</label>
+                      <span style={{ fontWeight: 700, fontSize: 14 }}>{fmt(total)}</span>
+                    </div>
+                    {entries.map((e, k) => (
+                      <div key={e.id} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                        <input style={{ ...inp, flex: 1, minWidth: 0 }} placeholder="Description" defaultValue={e.desc}
+                          onBlur={ev => { if (ev.target.value !== e.desc) persist(entries.map((x, n) => n === k ? { ...x, desc: ev.target.value } : x)); }} />
+                        <input style={{ ...inp, width: 84 }} type="number" step="0.01" min="0" inputMode="decimal" placeholder="0.00" defaultValue={e.amount || ""}
+                          onBlur={ev => { const v = Math.max(0, Number(ev.target.value) || 0); if (v !== Number(e.amount)) persist(entries.map((x, n) => n === k ? { ...x, amount: v } : x)); }} />
+                        <button onClick={() => persist(entries.filter((_, n) => n !== k))} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={16} color="#cc4444" /></button>
+                      </div>
+                    ))}
+                    <button onClick={() => persist([...entries, { id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), desc: "", amount: 0 }])}
+                      style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 12px" }}>+ Add material</button>
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: 10, color: "#aaa", marginTop: 4, lineHeight: 1.5 }}>
                 Commission pays on total minus material cost, only once this
                 is marked Paid. He was solo, sold it, and collected it — if
@@ -5025,7 +5047,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>Line Items</span>
               <div style={{ display: "flex", gap: 6, overflowX: "auto", flexShrink: 1, minWidth: 0 }}>
-                <button onClick={() => { setReordering(!reordering); setShowAI(false); setShowSaved(false); setShowPriceBook(false); }} style={{ ...S.btn(reordering ? "primary" : "ghost"), fontSize: 11, padding: "5px 9px", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                <button onClick={() => { setReordering(!reordering); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(reordering ? "primary" : "ghost"), fontSize: 11, padding: "5px 9px", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
                   <Icon name="grip" size={12} color={reordering ? "#fff" : "#444"} />{reordering ? "Done" : "Reorder"}
                 </button>
                 {!reordering && <>
@@ -5037,33 +5059,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     // opens the keyboard for a programmatic focus that happens
                     // inside the tap, so this is what makes one tap land the
                     // cursor in the box with the keyboard already up.
-                    flushSync(() => { setShowAI(true); setShowSaved(false); setShowPriceBook(false); });
+                    flushSync(() => { setShowAI(true); setShowPriceBook(false); });
                     aiInputRef.current?.focus();
                   }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
-                  <button onClick={() => { setShowSaved(!showSaved); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(showSaved ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Saved</button>
-                  <button onClick={() => { setShowPriceBook(!showPriceBook); setShowAI(false); setShowSaved(false); }} style={{ ...S.btn(showPriceBook ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Price Book</button>
+                  <button onClick={() => { setShowPriceBook(!showPriceBook); setShowAI(false); }} style={{ ...S.btn(showPriceBook ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Price Book</button>
                   <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
                 </>}
               </div>
             </div>
 
             {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} /></div>}
-
-            {showSaved && (
-              <div style={{ background: "#fff", borderRadius: 10, marginBottom: 12, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", maxHeight: 280, overflowY: "auto" }}>
-                {categories.map(cat => (
-                  <div key={cat}>
-                    <div style={{ background: "#f4f6fa", padding: "6px 14px", fontSize: 11, fontWeight: 700, color: ORANGE, letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{cat}</div>
-                    {savedItems.filter(i => i.category === cat).map(item => (
-                      <div key={item.id} onClick={() => { addItem(item.name, item.price); setShowSaved(false); }} style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f0f2f8", cursor: "pointer" }}>
-                        <span style={{ fontSize: 14 }}>{item.name}</span>
-                        <span style={{ color: ORANGE, fontWeight: 700, fontSize: 14 }}>{fmt(item.price)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
 
             {/* Item rows */}
             {form.items.map((item, i) => {
@@ -10723,7 +10728,7 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                         />
                       </div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 9, color: "#aab4c8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>Commission %</div>
+                        <div style={{ fontSize: 9, color: "#aab4c8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>Base Rate % (flat fallback, overridden by tiers)</div>
                         <input
                           key={`comm-${u.id}-${techPay[u.id]?.commissionPct ?? "unset"}`}
                           type="number" step="1" min="0" max="100" inputMode="decimal"
@@ -10733,6 +10738,7 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                           placeholder="—"
                           style={{ width: "100%", boxSizing: "border-box", padding: "5px 6px", borderRadius: 6, border: "1px solid #e4e8f2", fontSize: 12.5 }}
                         />
+                        <div style={{ fontSize: 9.5, color: "#aab4c8", marginTop: 3, lineHeight: 1.4 }}>Flat fallback. Meant to be overridden by commission tiers, but the pay report does not read tiers yet, so this is still the rate it uses.</div>
                       </div>
                     </div>
                   </div>
