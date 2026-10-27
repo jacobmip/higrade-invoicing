@@ -120,6 +120,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   public-invoice.js        — service-role read for /v/<token>
   register-device.js       — APNs token upsert
   vapi-call-ended.js       — Vapi end-of-call webhook + call record email; also `GET ?recording=<callId>` (admin session) for a call's recording link
+  availability.js          — edge route: Jake's busy blocks and free 90+ minute windows for one Hawaii day (invoices' `gcal_date` and `visits` plus every Google calendar in `google_credentials`). Called by Lisa's `checkAvailability` Vapi tool before she books; authenticated by the webhook secret; fails closed with 502. Self-contained because `_lib/gcal.js` imports `node:crypto`
   sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text)
   gcal.js                  — Google Calendar: server-side OAuth, callback, read/write, and attendee ops (`attendee`, `tech_email`) that invite the commission apprentice to a job's event (v1.27.5)
   eta.js / geocode.js      — travel time + address lookup

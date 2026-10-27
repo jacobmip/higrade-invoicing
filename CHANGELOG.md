@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.30.0 — 2026-10-27
+
+- Lisa no longer books blind. New edge route `api/availability.js` (`GET ?date=YYYY-MM-DD` or POST `{date}`) returns Jake's busy blocks for a Hawaii day and the free windows of 90+ minutes between 8am and 6pm. Busy time is read from every invoice's `gcal_date` and `visits[]` plus every Google calendar in `google_credentials` (personal and Work), so an appointment that is on no invoice still blocks.
+- Fails closed: if Google cannot be read the route answers 502 and tells Lisa to promise a callback, never a partial list.
+- Authenticated with the existing webhook secret (`SMS_WEBHOOK_SECRET` / `settings.sms_webhook_secret`); the service-role key never leaves the server. Edge runtime, so the Node function count stays at 12.
+- Lisa's Vapi assistant gets a `checkAvailability` tool and a CRITICAL RULE in its prompt (applied through the Vapi API, not in this repo).
+
 ## v1.29.2 — 2026-10-27
 
 - Removed the AI pill from the invoice/estimate form header (the AI tab is still in the tab bar).
