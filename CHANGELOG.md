@@ -2,6 +2,12 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.32.1 — 2026-10-27
+
+- Fixed: a job's apprentice (`invoices.apprentice_id`) now sees that job in their job list and on their calendar. Before, only the assigned tech and commission tech did.
+- Migration 095: `invoices_select` also admits `apprentice_id = auth.uid()` on non-deleted jobs. SELECT only; no edit rights, and line items, payments and the client record are unchanged.
+- View-as filter in `App()` mirrors the new policy.
+
 ## v1.32.0 — 2026-10-27
 
 - Added Default Apprentice. Settings (admin) has a Default Apprentice dropdown of all non-admin users; it saves `settings.default_apprentice_id`. Every new invoice or estimate owned by an admin gets `invoices.apprentice_id` filled from it automatically, with no extra step. The invoice form shows a small "Apprentice: name" line under Assigned Tech.
