@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.8 — 2026-10-27
+
+- **Admin hours tracker** in Reports, under Payroll (admin only). One row per worker with the week's total hours and a Mon-Sun daily breakdown; defaults to the current week.
+- Prev/next arrows step by the range length; two date pickers jump to any custom range (daily columns show for ranges of 7 days or less).
+- Tap a worker to list their clock entries (date, start, end, duration, job number or shift kind). Tap an entry to edit start and end; the saved row comes back from the database, so the corrected duration is the trigger's own. Blank end leaves the shift open.
+- Open shifts show green with ACTIVE and live elapsed time. Entries corrected by an admin carry a pencil icon.
+- New `src/HoursTracker.jsx` and `db.updateTimeEntryTimes()`. No migration: migration 072 already lets an admin update and flags `edited_by_admin`.
+
 ## v1.28.7 — 2026-10-27
 
 - History tab: version snapshots now record the event that caused them. Four new tagged snapshots: line item added, line item deleted, email sent, text sent (manual text or On My Way). Each stores who did it (id, display name, tier).
