@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.30.2 — 2026-10-27
+
+- On My Way can no longer double-send: it asks first, and after a successful send the button locks to "Sent" and cannot be tapped again.
+- New confirm modal before sending: reads your GPS, gets the drive time from `/api/eta`, and shows "~X min away" (or "ETA unavailable") with the exact text the customer will receive. Nothing is sent until you tap Send.
+- `api/on-my-way.js` now uses the `eta_minutes` the modal showed (0-600), so the text matches what was confirmed. Without it, behaviour is unchanged.
+- Button row is now Call | On My Way | Navigate. Call dials the client's mobile, else phone, and says "No phone number on file" when there is none. Navigate opens Apple Maps on iPhone/Mac, Google Maps elsewhere.
+
 ## v1.30.1 — 2026-10-27
 
 - Migration 093: `vapi_calls.direction` ('inbound' default, 'outbound'), and `call_queue.approval`, `approval_asked_at`, `notified`.

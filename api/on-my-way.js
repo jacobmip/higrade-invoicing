@@ -115,7 +115,10 @@ export default async function handler(req) {
   // ETA only when the browser gave us a position and the job has a place to go.
   let eta = null;
   const lat = Number(body.lat), lng = Number(body.lng);
-  if (body.lat != null && body.lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
+  const shown = Number(body.eta_minutes); // the figure the confirm modal showed
+  if (body.eta_minutes != null && Number.isFinite(shown) && shown >= 0 && shown <= 600) {
+    eta = Math.round(shown);
+  } else if (body.lat != null && body.lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
     let dest = Number.isFinite(inv.job_lat) && Number.isFinite(inv.job_lng) ? { lat: inv.job_lat, lng: inv.job_lng } : null;
     if (!dest) {
       const a = inv.job_address || inv.billing_address || {};
