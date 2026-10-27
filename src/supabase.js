@@ -40,8 +40,21 @@ function stubClient(reason) {
   }
 }
 
+// Session persistence is stated, not left to defaults, so a library change
+// cannot quietly turn it off. The storage key is left at the library default
+// (sb-<ref>-auth-token) so sessions already stored keep working. The wrapper
+// swallows storage errors (Safari private mode, quota) instead of throwing
+// inside the auth client, which would read as "no session".
+const safeStorage = typeof window === 'undefined' ? undefined : {
+  getItem: (k) => { try { return window.localStorage.getItem(k) } catch { return null } },
+  setItem: (k, v) => { try { window.localStorage.setItem(k, v) } catch { /* best effort */ } },
+  removeItem: (k) => { try { window.localStorage.removeItem(k) } catch { /* best effort */ } },
+}
+
 export const supabase = key
-  ? createClient(url, key)
+  ? createClient(url, key, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: safeStorage },
+    })
   : (console.warn('[supabase] VITE_SUPABASE_ANON_KEY missing — using localStorage fallback only'), stubClient('Supabase not configured'))
 
 // For direct PostgREST reads under the user's own session (the chat agent's

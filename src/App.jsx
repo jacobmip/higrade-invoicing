@@ -11028,11 +11028,21 @@ export default function App() {
   const [session, setSession] = useState(undefined);
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setSession(data?.session || null);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    // A null from getSession() on a hard reload can be a transient failure of
+    // the token refresh (network not up yet), not a real sign-out. Ask once
+    // more before showing the login screen.
+    (async () => {
+      let { data, error } = await supabase.auth.getSession();
+      if (!data?.session && error) {
+        await new Promise(r => setTimeout(r, 1200));
+        ({ data } = await supabase.auth.getSession());
+      }
+      if (mounted) setSession(prev => prev || data?.session || null);
+    })().catch(() => { if (mounted) setSession(prev => prev || null); });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       if (!mounted) return;
+      // Only an explicit sign-out may drop a session we already have.
+      if (!s && event !== 'SIGNED_OUT') return;
       setSession(s || null);
     });
     return () => { mounted = false; sub?.subscription?.unsubscribe?.(); };

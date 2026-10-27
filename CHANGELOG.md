@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.3 — 2026-10-27
+
+- Apprentice job header is a slim strip: client name with a small status chip, address and phone/time on one line each, and Call / On My Way / Navigate as a single row of compact pills. Internal notes keep their own small card.
+- Messages tab on an estimate/invoice no longer risks a white screen. The thread scrolled itself with `scrollIntoView`, which also scrolls the form's overflow-hidden tab track and slides the panel out of view; it now scrolls its own box only. Added null guards on messages and media, and an error boundary so a render error shows a message instead of blanking the app.
+- Session persistence: the Supabase client states `persistSession`, `autoRefreshToken` and a storage wrapper that cannot throw, keeping the default storage key so existing sessions survive. The app no longer drops a held session on any auth event except an explicit sign-out, and retries `getSession()` once before showing the login screen after a failed first read.
+
+---
+
 ## v1.28.2 — 2026-10-27
 
 - Apprentice job screen is the full read-only invoice again. It opens the normal Preview (line items, prices, totals, customer notes) with a block above it: status, client and address, scheduled time, internal job notes, and the Call / On My Way / Navigate buttons.

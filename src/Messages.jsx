@@ -10,7 +10,7 @@
 // its phone number, because rows logged before the client existed have a null
 // client_id (see the 079 merge).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 
@@ -108,7 +108,7 @@ function stamp(iso) {
   return `${day}, ${time}`;
 }
 
-const mediaList = (m) => (Array.isArray(m.media) ? m.media : []);
+const mediaList = (m) => (Array.isArray(m?.media) ? m.media.filter(x => x && typeof x === 'object') : []);
 
 function previewOf(m) {
   if (m.body && m.body.trim()) return (m.direction === 'outbound' ? 'You: ' : '') + m.body;
@@ -137,13 +137,20 @@ function Media({ item }) {
 }
 
 // The bubbles plus the reply box. `messages` is this conversation, oldest first.
-function Thread({ messages, phone, canReply, onSent, height }) {
+function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
+  const messages = Array.isArray(rawMessages) ? rawMessages.filter(Boolean) : [];
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
-  const endRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
+  // Scroll the thread's own box only. scrollIntoView also scrolls every
+  // ancestor, including the invoice form's overflow:hidden tab track, which
+  // slides the whole panel out of view.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
 
   const send = async () => {
     const body = text.trim();
@@ -172,15 +179,15 @@ function Thread({ messages, phone, canReply, onSent, height }) {
   let prev = null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: height || 'auto', minHeight: 0 }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 4px', display: 'flex', flexDirection: 'column', gap: 4, background: '#fff' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 4px', display: 'flex', flexDirection: 'column', gap: 4, background: '#fff' }}>
         {messages.length === 0 && <div style={{ textAlign: 'center', color: '#8899bb', fontSize: 13, padding: 24 }}>No messages yet.</div>}
         {messages.map(m => {
           const out = m.direction === 'outbound';
           const t = new Date(m.created_at).getTime();
-          const showStamp = prev === null || t - prev > HOUR;
-          prev = t;
+          const showStamp = Number.isFinite(t) && (prev === null || t - prev > HOUR);
+          if (Number.isFinite(t)) prev = t;
           return (
-            <div key={m.id} style={{ display: 'flex', flexDirection: 'column' }}>
+            <div key={m.id ?? m.created_at} style={{ display: 'flex', flexDirection: 'column' }}>
               {showStamp && <div style={{ textAlign: 'center', fontSize: 11, color: '#8899bb', margin: '10px 0 6px' }}>{stamp(m.created_at)}</div>}
               <div style={{
                 alignSelf: out ? 'flex-end' : 'flex-start', maxWidth: '80%',
@@ -189,12 +196,11 @@ function Thread({ messages, phone, canReply, onSent, height }) {
                 padding: '8px 12px', fontSize: 15, lineHeight: 1.3, wordBreak: 'break-word', whiteSpace: 'pre-wrap',
               }}>
                 {mediaList(m).map((x, i) => <Media key={i} item={x} />)}
-                {m.body && m.body.trim() ? <div style={mediaList(m).length ? { marginTop: 6 } : null}>{m.body}</div> : null}
+                {typeof m.body === 'string' && m.body.trim() ? <div style={mediaList(m).length ? { marginTop: 6 } : null}>{m.body}</div> : null}
               </div>
             </div>
           );
         })}
-        <div ref={endRef} />
       </div>
       {canReply ? (
         <div style={{ borderTop: '1px solid #e5e7ee', background: '#f6f7fa', padding: 8 }}>
@@ -216,7 +222,7 @@ function Thread({ messages, phone, canReply, onSent, height }) {
 
 // One client's thread, loaded on its own. Used in the client profile and the
 // estimate/invoice Messages tab. `client` is the app's client record.
-export function ClientThread({ client, canReply, height = 420, onRead }) {
+function ClientThreadInner({ client, canReply, height = 420, onRead }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
 
@@ -224,25 +230,43 @@ export function ClientThread({ client, canReply, height = 420, onRead }) {
   clientRef.current = client;
   const load = useCallback(async () => {
     const client = clientRef.current;
+    if (!client?.id) return;
     try {
       const all = await loadMessages();
       const conv = groupConversations(all, [client]).find(c => c.client?.id === client.id);
       setRows(conv || { messages: [], phone: client.phone || client.mobile, unread: 0 });
+      setError('');
       const unread = (conv?.messages || []).filter(m => m.direction === 'inbound' && !m.read_at).map(m => m.id);
       if (unread.length) { await markRead(unread); onRead?.(); }
     } catch (e) { setError(String(e.message || e)); }
-  }, [client.id, onRead]);
+  }, [client?.id, onRead]);
 
   useEffect(() => { load(); }, [load]);
 
   if (error) return <div style={{ color: '#cc3333', fontSize: 13, padding: 12 }}>{error}</div>;
   if (!rows) return <div style={{ color: '#8899bb', fontSize: 13, padding: 12 }}>Loading messages...</div>;
-  const phone = rows.phone || client.mobile || client.phone;
+  const phone = rows.phone || client?.mobile || client?.phone;
   return (
     <div style={{ border: '1px solid #e5e7ee', borderRadius: 12, overflow: 'hidden' }}>
       <Thread messages={rows.messages} phone={phone} canReply={canReply && !!phone} onSent={load} height={height} />
     </div>
   );
+}
+
+// A render error in a thread must never blank the app.
+class ThreadBoundary extends Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(e) { console.error('[messages]', e); }
+  render() {
+    return this.state.failed
+      ? <div style={{ color: '#cc3333', fontSize: 13, padding: 12 }}>Messages could not be shown. Close and reopen this tab.</div>
+      : this.props.children;
+  }
+}
+
+export function ClientThread(props) {
+  return <ThreadBoundary key={props.client?.id}><ClientThreadInner {...props} /></ThreadBoundary>;
 }
 
 export default function MessagesTab({ clients, isAdmin, onUnreadChange }) {

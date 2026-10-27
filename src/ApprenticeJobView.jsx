@@ -20,7 +20,7 @@ function formatWhen(text) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(text || "");
   if (!m) return "";
   const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  const day = d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   return `${day} · ${time}`;
 }
@@ -47,8 +47,7 @@ export default function ApprenticeJobView({ invoice, clients, techName }) {
 
   const siteLines = linesOf(invoice.jobAddress);
   const fallbackLines = [info.address1 || client?.address1, info.address2 || client?.address2, info.address3 || client?.address3].filter(Boolean);
-  const addressLines = siteLines.length ? siteLines : fallbackLines;
-  const address = addressLines.join(", ");
+  const address = (siteLines.length ? siteLines : fallbackLines).join(", ");
 
   const when = formatWhen(firstVisitStart(invoice));
   const status = STATUS_LABELS[invoice.status] || (invoice.status || "").replace(/^./, c => c.toUpperCase());
@@ -59,54 +58,45 @@ export default function ApprenticeJobView({ invoice, clients, techName }) {
     window.location.href = `sms:${phoneDigits}${sep}body=${encodeURIComponent(body)}`;
   }
 
-  const card = { background: "#fff", borderRadius: 12, padding: 16, margin: "12px 16px 0", boxShadow: "0 1px 3px rgba(10,22,40,0.08)" };
-  const label = { fontFamily: HEAD, fontWeight: 700, fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", color: "#7a859c", marginBottom: 6 };
-  const action = (enabled) => ({
-    display: "block", width: "100%", boxSizing: "border-box", padding: "18px 16px", border: "none", borderRadius: 12,
-    fontFamily: HEAD, fontWeight: 700, fontSize: 22, letterSpacing: 1.5, textTransform: "uppercase", textAlign: "center",
+  const pill = (enabled) => ({
+    flex: 1, boxSizing: "border-box", padding: "8px 6px", border: "none", borderRadius: 999,
+    fontFamily: HEAD, fontWeight: 700, fontSize: 15, letterSpacing: 1, textTransform: "uppercase", textAlign: "center",
     textDecoration: "none", color: "#fff", background: enabled ? ORANGE : "#b9c0d0", opacity: enabled ? 1 : 0.7,
-    pointerEvents: enabled ? "auto" : "none", cursor: "pointer",
+    pointerEvents: enabled ? "auto" : "none", cursor: "pointer", whiteSpace: "nowrap",
   });
+  const link = { color: "#1a5fd0", textDecoration: "none" };
+  const oneLine = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ background: LIGHT, paddingBottom: 4 }}>
-      {status && (
-        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div style={label}>Status</div>
-          <span style={{ background: NAVY, color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: 13, letterSpacing: 1, padding: "4px 10px", borderRadius: 999, textTransform: "uppercase", whiteSpace: "nowrap" }}>{status}</span>
+    <div style={{ background: LIGHT, padding: "8px 12px 6px" }}>
+      <div style={{ background: "#fff", borderRadius: 10, padding: "8px 10px", boxShadow: "0 1px 3px rgba(10,22,40,0.08)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ ...oneLine, flex: 1, minWidth: 0, fontFamily: HEAD, fontWeight: 700, fontSize: 20, color: NAVY, lineHeight: 1.15 }}>{name}</div>
+          {status && (
+            <span style={{ background: NAVY, color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: 11, letterSpacing: 1, padding: "2px 8px", borderRadius: 999, textTransform: "uppercase", whiteSpace: "nowrap", flexShrink: 0 }}>{status}</span>
+          )}
         </div>
-      )}
-
-      <div style={card}>
-        <div style={label}>Client</div>
-        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 30, color: NAVY, lineHeight: 1.1 }}>{name}</div>
-        {address && (
-          <a href={mapsUrl(address)} style={{ display: "block", marginTop: 10, color: "#1a5fd0", fontSize: 17, textDecoration: "none" }}>
-            {addressLines.map((l, i) => <div key={i}>{l}</div>)}
-          </a>
+        {address && <a href={mapsUrl(address)} style={{ ...link, ...oneLine, display: "block", fontSize: 13, marginTop: 2 }}>{address}</a>}
+        {(phone || when) && (
+          <div style={{ ...oneLine, fontSize: 13, color: NAVY, marginTop: 1 }}>
+            {phone && <a href={`tel:${phoneDigits}`} style={link}>{phone}</a>}
+            {phone && when && <span style={{ color: "#aab" }}>{" · "}</span>}
+            {when && <span style={{ fontWeight: 600 }}>{when}</span>}
+          </div>
         )}
-        {phone && <a href={`tel:${phoneDigits}`} style={{ display: "block", marginTop: 10, color: "#1a5fd0", fontSize: 19, textDecoration: "none" }}>{phone}</a>}
-      </div>
-
-      {when && (
-        <div style={card}>
-          <div style={label}>Scheduled</div>
-          <div style={{ fontSize: 18, color: NAVY, fontWeight: 600 }}>{when}</div>
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <a href={phone ? `tel:${phoneDigits}` : undefined} style={pill(!!phone)}>Call</a>
+          <button type="button" onClick={onMyWay} disabled={!phone} style={pill(!!phone)}>On My Way</button>
+          <a href={address ? mapsUrl(address) : undefined} style={pill(!!address)}>Navigate</a>
         </div>
-      )}
+      </div>
 
       {invoice.internalNotes && (
-        <div style={card}>
-          <div style={label}>Internal job notes</div>
-          <div style={{ fontSize: 16, color: NAVY, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{invoice.internalNotes}</div>
+        <div style={{ background: "#fff", borderRadius: 10, padding: "6px 10px", marginTop: 6, boxShadow: "0 1px 3px rgba(10,22,40,0.08)" }}>
+          <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", color: "#7a859c" }}>Internal job notes</div>
+          <div style={{ fontSize: 14, color: NAVY, whiteSpace: "pre-wrap", lineHeight: 1.35 }}>{invoice.internalNotes}</div>
         </div>
       )}
-
-      <div style={{ margin: "12px 16px 0", display: "flex", flexDirection: "column", gap: 12 }}>
-        <a href={phone ? `tel:${phoneDigits}` : undefined} style={action(!!phone)}>Call</a>
-        <button type="button" onClick={onMyWay} disabled={!phone} style={action(!!phone)}>On My Way</button>
-        <a href={address ? mapsUrl(address) : undefined} style={action(!!address)}>Navigate</a>
-      </div>
     </div>
   );
 }
