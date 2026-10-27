@@ -5,6 +5,22 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.23.0 — 2026-10-27
+
+### Play Lisa's call recordings in the app (migration 067)
+
+- **"Call recordings · Lisa" on the estimate.** Under Internal Notes, admins see every call
+  linked to the job with its time and length, and a Play button. Shows on the converted
+  invoice too. Nothing appears on a job with no calls.
+- **The Call record email's "Listen" button now opens the app's player** (`/?call=<id>`),
+  with the Vapi dashboard kept as a secondary link.
+- **How it works.** `/api/vapi-call-ended` now saves each call's Vapi id against its estimate
+  in the new `vapi_calls` table. Pressing Play asks the same route (`GET ?recording=<id>`,
+  admin session required) for a short-lived link from Vapi's recording endpoint. No audio
+  is stored by us, and no new function was added, so the 12-function cap still holds.
+- **Older calls:** only abandoned calls had their call id saved, so those are linked by the
+  migration. Calls Lisa completed before today stay reachable from their Call record email.
+
 ## v1.22.4 — 2026-10-27
 
 ### Lisa back on the shared document counter (migration 066)

@@ -80,6 +80,7 @@ src/
   printablePdf.js    — jsPDF invoice/estimate generator
   JobPhotos.jsx      — per-job photo gallery
   OnMyWay.jsx        — "on my way" customer notification
+  CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   PriceBook.jsx      — price book picker
   billTo.js          — bill-to / job-site address resolution
   competencies.js    — apprentice skill catalog + graduation math (migration 054)
@@ -101,7 +102,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   send-email.js / send-estimate.js / submit-signature.js / track-open.js
   public-invoice.js        — service-role read for /v/<token>
   register-device.js       — APNs token upsert
-  vapi-call-ended.js       — Vapi end-of-call webhook + call record email
+  vapi-call-ended.js       — Vapi end-of-call webhook + call record email; also `GET ?recording=<callId>` (admin session) for a call's recording link
   sms-inbound.js           — Twilio inbound SMS webhook
   gcal.js                  — Google Calendar: server-side OAuth, callback, read/write
   eta.js / geocode.js      — travel time + address lookup
@@ -110,6 +111,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   _lib/gcal.js             — Google token refresh + calendar helpers
   _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
   _lib/extract-client.js   — screenshot to client records (vision). A helper, not a route, to stay under the function cap
+  _lib/call-recording.js   — links each Vapi call to its estimate (`vapi_calls`) and fetches a short-lived recording link from Vapi. A helper, dispatched from `vapi-call-ended.js`
 public/
   estimator-test.html — standalone test harness for AI estimator + extractor
 supabase/migrations/ — numbered SQL, applied by hand in the SQL editor
@@ -153,7 +155,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 065)
+## Database schema (current through migration 067)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
@@ -178,6 +180,7 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `ai_chat_history` — user_id PK, messages jsonb (max 200); **RLS self-only, admins do NOT bypass**
 - `settings` — key/value. Counters live here: `next_doc_num` is live, `next_num` and `next_estimate_num` are retired. `invoice_followup_live` (migration 055) gates every customer reminder the follow-up script sends; anything but `'true'` means preview only.
 - `invoice_reminders` — invoice_id, tier (1/7/14/30), days_overdue, channel ('sms'|'email'), status ('sent'|'failed'), recipient, amount_due, message, provider_id, error, sent_at. Migration 055. Written only by `scripts/invoice_followup.py` in the AI-OS repo under the service role; admins read. A partial unique index on `(invoice_id, tier) where status = 'sent'` is the duplicate guard.
+- `vapi_calls` — call_id (Vapi uuid, PK), invoice_id, phone, seconds, created_at. Migration 067. One row per Lisa call, written by `/api/vapi-call-ended` under the service role, admin-read only. No FK to invoices on purpose. **Holds no audio:** recordings stay in Vapi's private storage and are fetched on demand via `GET https://api.vapi.ai/call/{id}/mono-recording` (private key, `settings.vapi_private_key` or `VAPI_PRIVATE_KEY`), whose 302 `Location` is a short-lived signed URL the app plays directly. Read the redirect, never follow it with the Bearer header attached. Calls before 2026-10-27 are linked only where an abandoned-call note carried the id.
 - `google_credentials` — the app's server-side Google OAuth refresh token, plus `calendar_id` (the write target, must match the receptionist's Apps Script) and `read_calendar_ids` (every calendar the Calendar tab displays). Migration 045/046.
 
 ### Helper functions and RPCs
@@ -253,7 +256,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **066** — **applied and verified 2026-10-27** (live definition calls `allocate_doc_number()` and no longer references `next_estimate_num`). Puts `create_estimate_from_lead` on `allocate_doc_number()`, finding the old numbering block by its first and last lines rather than exact text. Checked live before writing: the function still read `next_estimate_num`. Tested locally against a definition 065 had skipped.
 
-Next migration is `067_<short_description>.sql`. **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **067** — **written 2026-10-27, not yet applied.** `vapi_calls`, admin-read RLS, and a backfill of the call ids abandoned-call notes already carried. Tested locally, safe to re-run.
+
+Next migration is `068_<short_description>.sql`. **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

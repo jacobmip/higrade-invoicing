@@ -22,6 +22,7 @@
 import {
   rpc, getSetting, readBody, fullUrl, webhookSecret, secretMatches, sendTwilioSms,
 } from './_lib/sms.js';
+import { recordCall, handleRecordingRequest } from './_lib/call-recording.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
@@ -101,6 +102,15 @@ function extractSeconds(p) {
 }
 
 export default async function handler(req, res) {
+  // The app asking for a call's recording, not Vapi. Lives on this route
+  // because the project is at Vercel Hobby's 12-function cap; it is
+  // authenticated by the admin's Supabase session, not the webhook secret.
+  // See api/_lib/call-recording.js.
+  if (req.method === 'GET') {
+    const recording = new URL(fullUrl(req)).searchParams.get('recording');
+    if (recording) return handleRecordingRequest(req, res, recording);
+    return json(res, 405, { error: 'Method not allowed' });
+  }
   if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
 
   let params;
@@ -132,6 +142,8 @@ export default async function handler(req, res) {
 
   if (!to) {
     console.warn('[vapi-call-ended] no caller number in payload');
+    // Still keep the call id, so the recording is findable later.
+    await recordCall({ callId, seconds: extractSeconds(params) });
     return json(res, 200, { ok: true, skipped: 'no caller number in payload' });
   }
 
@@ -162,6 +174,16 @@ export default async function handler(req, res) {
   } catch (e) {
     console.error('[vapi-call-ended] abandoned-call capture failed:', e.message || e);
   }
+
+  // Link the call to its estimate so the app can play the recording on it.
+  // capture_abandoned_call returns estimate_id whether it filed one or found
+  // the one Lisa filed during the call (migration 067).
+  await recordCall({
+    callId,
+    invoiceId: rescued?.estimate_id || null,
+    phone: to,
+    seconds: extractSeconds(params),
+  });
 
   // ─── Call archive email ──────────────────────────────────────────────────
   // Vapi keeps the recording and transcript on its own servers and nothing
@@ -197,6 +219,8 @@ export default async function handler(req, res) {
           callId,
           callSeconds: secs,
           callUrl: callId ? `https://dashboard.vapi.ai/calls/${callId}` : null,
+          // Opens the app's own player (?call=<id>), signed in as Jake.
+          listenUrl: callId ? `${APP_URL}/?call=${encodeURIComponent(callId)}` : null,
         }),
       });
     }

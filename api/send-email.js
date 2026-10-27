@@ -6,7 +6,7 @@ export default async function handler(req) {
   }
 
   try {
-    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, summary, smsMedia, callId, callSeconds, callUrl, matchedClient } = await req.json();
+    const { to, cc, ccAddresses, bccAdmin = true, subject, template, leadPhone, leadDetails, leadWhen, clientName, invoiceId, total, message, viewLink, reviewLinks, isPaidInFull, lastPayment, transcript, summary, smsMedia, callId, callSeconds, callUrl, listenUrl, matchedClient } = await req.json();
     // ccAddresses is the new multi-recipient field (array). cc is the legacy
     // single-string field. Merge them and deduplicate.
     const ccList = [...new Set([
@@ -222,7 +222,9 @@ export default async function handler(req) {
             <div style="color:#20302a;font-size:14px;line-height:1.6;">${escapeHtml(summary).replace(/\n/g, '<br>')}</div>
           </div>` : ''}
 
-          ${callUrl ? `<a href="${escapeHtml(callUrl)}" style="display:inline-block;background:#0070ba;color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;">Listen to the recording</a>
+          ${listenUrl ? `<a href="${escapeHtml(listenUrl)}" style="display:inline-block;background:#0070ba;color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;">Listen to the recording</a>
+          <p style="color:#8894a8;font-size:11px;margin:8px 0 0;">Plays in the HI Grade app (admin sign-in).${callUrl ? ` Or <a href="${escapeHtml(callUrl)}" style="color:#8894a8;">open it in Vapi</a>.` : ''}</p>`
+          : callUrl ? `<a href="${escapeHtml(callUrl)}" style="display:inline-block;background:#0070ba;color:#fff;text-decoration:none;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;">Listen to the recording</a>
           <p style="color:#8894a8;font-size:11px;margin:8px 0 0;">Opens the call in your Vapi dashboard. Recordings are stored by Vapi, not by us.</p>` : ''}
 
           ${transcript ? `<div style="margin-top:18px;">

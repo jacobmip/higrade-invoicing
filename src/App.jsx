@@ -9,6 +9,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
+import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
@@ -5095,6 +5096,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               onChange={e => setField("internalNotes", e.target.value)}
               placeholder="Call details, gate code, dog in the yard, account history… Never shown to the customer."
             />
+            {/* Lisa's calls about this job, playable here. Renders nothing
+                when there are none; admins only (migration 067). */}
+            {isAdmin && <CallRecordings docId={form.id} convertedToId={form.convertedToId} />}
           </div>
 
           {/* Schedule & Reminders */}
@@ -10662,6 +10666,19 @@ export default function App() {
     } catch {}
   }, [viewAsUserId, viewAsStorageKey]);
   const isAdmin = profile?.role === "admin";
+  // The Call record email links to /?call=<vapi call id>. Read it once, then
+  // drop it from the address bar so a reload does not reopen the player.
+  const [deepLinkCallId, setDeepLinkCallId] = useState(() => {
+    try {
+      const id = new URLSearchParams(window.location.search).get("call");
+      if (id) {
+        const u = new URL(window.location.href);
+        u.searchParams.delete("call");
+        window.history.replaceState(null, "", u.pathname + u.search + u.hash);
+      }
+      return id || null;
+    } catch { return null; }
+  });
   // Effective owner filter — admins can View As another user, everyone else
   // sees only their own rows (RLS already enforces this server-side; the
   // client-side filter only matters for admins narrowing what they see).
@@ -12545,6 +12562,7 @@ export default function App() {
         </div>
       )}
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
+      {deepLinkCallId && isAdmin && <CallRecordingModal callId={deepLinkCallId} onClose={() => setDeepLinkCallId(null)} />}
       {showGlobalAI && <GlobalAIModal data={data} getData={() => dataRef.current} userLabel={`${profile?.display_name || session?.user?.email || "unknown"} (${isAdmin ? "admin" : "tech"})`} openDocId={() => (view === "form" ? selected?.id || null : null)} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: textZoom === 1 ? 480 : "none", zIndex: 600, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
