@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import * as COMP from "./competencies";
 import TimeClockTab from "./TimeClockTab";
+import * as TC from "./timeclock";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -4968,6 +4969,56 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             </div>
           )}
 
+          {/* Commission + material cost (migration 075). Admin-only, and
+              saved immediately on change rather than waiting for the
+              document's own Save button — these are pay-affecting fields,
+              not part of what gets drafted and revised, and the database
+              pins both against anyone but Jake regardless of what this form
+              sends. Shown only for a document that already exists: there is
+              nothing to flag commission on before it has an id to flag. */}
+          {isAdmin && (invoice || autoSavedId) && (
+            <div style={{ padding: "12px 16px 0" }}>
+              <label style={S.label}>Commission</label>
+              <select
+                style={S.input}
+                value={form.commissionTechId || ""}
+                onChange={async (e) => {
+                  const v = e.target.value || null;
+                  setField("commissionTechId", v);
+                  try { await db.setInvoiceCommissionTech(invoice?.id || autoSavedId, v); }
+                  catch (err) { console.warn("setInvoiceCommissionTech failed:", err); }
+                }}
+              >
+                <option value="">Hourly only — no commission</option>
+                {(users || []).map(u => (
+                  <option key={u.id} value={u.id}>
+                    {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
+                  </option>
+                ))}
+              </select>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <label style={{ ...S.label, marginBottom: 0, flexShrink: 0 }}>Material cost</label>
+                <input
+                  type="number" step="0.01" min="0" inputMode="decimal"
+                  style={{ ...S.input, flex: 1 }}
+                  value={form.materialCost ?? 0}
+                  onChange={e => setField("materialCost", e.target.value)}
+                  onBlur={async (e) => {
+                    const v = Number(e.target.value) || 0;
+                    setField("materialCost", v);
+                    try { await db.setInvoiceMaterialCost(invoice?.id || autoSavedId, v); }
+                    catch (err) { console.warn("setInvoiceMaterialCost failed:", err); }
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 4, lineHeight: 1.5 }}>
+                Commission pays on total minus material cost, only once this
+                is marked Paid. He was solo, sold it, and collected it — if
+                you did any of those, leave this on Hourly only.
+              </div>
+            </div>
+          )}
+
           {/* Line Items */}
           <div ref={aiSectionRef} style={{ padding: "16px 16px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 6 }}>
@@ -9606,6 +9657,132 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
 }
 
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
+// ─── Payroll ──────────────────────────────────────────────────────────────
+// What to pay each tech for a period: hourly from the time clock, commission
+// from jobs Jake flagged (migration 075). Admin sees every row; a tech sees
+// only his own, which is also all the database will hand back —
+// tech_pay and time_entries are both self-or-admin by RLS.
+//
+// Deliberately does not touch calcTotals' internals: it is called once per
+// invoice with the SAME function ReportsTab already uses everywhere else, so
+// a change to tax or discount math stays in the one place that defines it.
+function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd, yearStart, yearEnd }) {
+  const [period, setPeriod] = useState("mtd");
+  const start = period === "mtd" ? mtdStart : yearStart;
+  const end = period === "mtd" ? mtdEnd : yearEnd;
+  const [techPay, setTechPay] = useState({});
+  const [entries, setEntries] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([db.loadTechPay(), db.loadTimeEntries({ from: start, to: end + 'T23:59:59' })])
+      .then(([pay, ents]) => { if (!cancelled) { setTechPay(pay); setEntries(ents); setLoaded(true); } })
+      .catch(e => console.warn('PayrollCard load failed:', e));
+    return () => { cancelled = true; };
+  }, [start, end]);
+
+  // `users` (allUsers in the shell) is an admin-only directory — refreshUsers
+  // never populates it for anyone else, so filtering it for "me" would find
+  // nothing. A non-admin gets a roster of exactly himself, built from his own
+  // session instead. Same workaround TechScorecard already needed.
+  const roster = useMemo(() => {
+    if (!isAdmin) {
+      return myId ? [{ id: myId, name: myName || 'You', color: TECH_COLORS[0] }] : [];
+    }
+    const src = (users || []).slice().sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    return src.map((u, i) => ({ id: u.id, name: u.displayName || 'Unnamed', color: TECH_COLORS[i % TECH_COLORS.length] }));
+  }, [users, isAdmin, myId, myName]);
+
+  // Commission date is when the money actually landed — the latest payment
+  // on the invoice — not the invoice date. A job billed in September and
+  // paid in October owes October's payroll, not September's.
+  const latestPaymentDate = (inv) => (inv.payments || []).reduce(
+    (max, p) => (p.date && p.date > max ? p.date : max), ''
+  );
+
+  const rows = useMemo(() => {
+    if (!loaded) return [];
+    return roster.map(t => {
+      const mins = entries
+        .filter(e => e.techId === t.id && e.clockOutAt)
+        .reduce((s, e) => s + (e.minutes || 0), 0);
+      const openCount = entries.filter(e => e.techId === t.id && !e.clockOutAt).length;
+      const rate = techPay[t.id]?.hourlyRate;
+      const hourlyPay = rate ? (mins / 60) * rate : null;
+
+      const commJobs = (invoices || []).filter(i =>
+        !i.deletedAt && i.type !== 'estimate' && i.status === 'paid'
+        && i.commissionTechId === t.id
+        && latestPaymentDate(i) >= start && latestPaymentDate(i) <= end
+      );
+      const pct = techPay[t.id]?.commissionPct;
+      const commission = commJobs.reduce((s, i) => {
+        if (!pct) return s;
+        const base = Math.max(0, calcTotals(i).total - (i.materialCost || 0));
+        return s + base * (pct / 100);
+      }, 0);
+
+      return { ...t, mins, openCount, rate, hourlyPay, commJobs: commJobs.length, pct, commission };
+    });
+  }, [roster, entries, techPay, invoices, start, end, loaded]);
+
+  if (!rows.length) return null;
+  const anyRateSet = rows.some(r => r.rate || r.pct);
+
+  return (
+    <div style={{ margin: '12px 12px 0', background: '#fff', borderRadius: 12, padding: '16px 14px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)' }}>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
+        {isAdmin ? 'Payroll' : 'My Pay'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        {[["mtd", "This Month"], ["ytd", "This Year"]].map(([val, lbl]) => (
+          <button
+            key={val}
+            onClick={() => setPeriod(val)}
+            style={{
+              flex: 1, padding: '6px 4px', borderRadius: 6, cursor: 'pointer',
+              border: period === val ? `1.5px solid ${ORANGE}` : '1px solid #e4e8f2',
+              background: period === val ? ORANGE : '#fff', color: period === val ? '#fff' : '#8899bb',
+              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.4, textTransform: 'uppercase',
+            }}
+          >{lbl}</button>
+        ))}
+      </div>
+      <div style={{ fontSize: 10.5, color: '#aaa', marginBottom: 12, lineHeight: 1.45 }}>
+        Hourly from the time clock. Commission from jobs flagged on the invoice, counted when paid.
+      </div>
+      {rows.map((r, i) => (
+        <div key={r.id} style={{ borderTop: i > 0 ? '1px solid #f4f6fa' : 'none', padding: '10px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE, flexShrink: 0 }}>
+              {fmt((r.hourlyPay || 0) + (r.commission || 0))}
+            </span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: '#8899bb' }}>
+            <span>
+              {TC.fmtMinutes(r.mins)} hourly
+              {r.rate ? ` @ ${fmt(r.rate)}/hr` : ' — no rate set'}
+              {r.openCount ? ` · ${r.openCount} open` : ''}
+            </span>
+            <span>
+              {r.commJobs} job{r.commJobs === 1 ? '' : 's'} commission
+              {r.pct ? ` @ ${r.pct}%` : r.commJobs ? ' — no % set' : ''}
+            </span>
+          </div>
+        </div>
+      ))}
+      {isAdmin && !anyRateSet && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #f4f6fa', fontSize: 10.5, color: '#aaa', lineHeight: 1.45 }}>
+          No pay rates set yet. Set an hourly rate and commission % per person in Settings.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName, competencies, selfLevels, onSetCompetency, onSetSelfLevel }) {
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -9757,6 +9934,17 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         myId={myId}
         myName={myName}
         selYear={selYear}
+      />
+      <PayrollCard
+        invoices={allInvoices || invoices}
+        users={users}
+        isAdmin={isAdmin}
+        myId={myId}
+        myName={myName}
+        mtdStart={mtdStart}
+        mtdEnd={mtdEnd}
+        yearStart={yearStart}
+        yearEnd={yearEnd}
       />
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
@@ -10389,6 +10577,26 @@ function MessageTemplatesCard() {
 }
 
 function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId, setViewAsUserId, refreshUsers, onSetTier }) {
+  // Pay rates (migration 075). Loaded here rather than threaded down from the
+  // app shell: only this panel needs them, and they are private per person,
+  // so there is no value in holding every rate in top-level state the way
+  // competencies are.
+  const [techPay, setTechPay] = useState({});
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    db.loadTechPay().then(p => { if (!cancelled) setTechPay(p); }).catch(e => console.warn("loadTechPay failed:", e));
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+  const handleSetPay = async (userId, patch) => {
+    const prev = techPay[userId];
+    setTechPay(p => ({ ...p, [userId]: { ...(p[userId] || {}), ...patch } }));
+    try { await db.setTechPay(userId, patch); }
+    catch (e) {
+      console.warn("setTechPay failed:", e);
+      setTechPay(p => ({ ...p, [userId]: prev }));
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
   const [importMode, setImportMode] = useState("merge"); // 'merge' | 'replace'
@@ -10474,9 +10682,10 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                     </div>
                     <div style={{ fontSize: 12, color: "#778" }}>{u.invoiceCount} invoices · {u.estimateCount} estimates</div>
                     {/* Pay band. Apprentice moves them off the revenue
-                        scorecard and onto the competency tracker; flipping
-                        them to Technician is the graduation, and it is the
-                        moment commission starts. */}
+                        scorecard and onto the competency tracker and flags
+                        which skill sheet they fill out. Commission is a
+                        separate, per-job call Jake makes on the invoice
+                        itself (migration 075) — it does not wait for this. */}
                     <div style={{ display: "flex", gap: 4, marginTop: 7 }} onClick={e => e.preventDefault()}>
                       {[["apprentice", "Apprentice"], ["technician", "Service Tech"], ["admin", "Owner"]].map(([val, lbl]) => {
                         const on = (u.tier || "technician") === val;
@@ -10494,6 +10703,35 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                           >{lbl}</button>
                         );
                       })}
+                    </div>
+
+                    {/* Pay rates. Private to this person and Jake — never
+                        shown to anyone else, including another employee. */}
+                    <div style={{ display: "flex", gap: 6, marginTop: 7 }} onClick={e => e.preventDefault()}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 9, color: "#aab4c8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>$/hr</div>
+                        <input
+                          key={`hourly-${u.id}-${techPay[u.id]?.hourlyRate ?? "unset"}`}
+                          type="number" step="0.5" min="0" inputMode="decimal"
+                          defaultValue={techPay[u.id]?.hourlyRate ?? ""}
+                          onClick={e => e.stopPropagation()}
+                          onBlur={e => handleSetPay(u.id, { hourlyRate: e.target.value === "" ? null : Number(e.target.value) })}
+                          placeholder="—"
+                          style={{ width: "100%", boxSizing: "border-box", padding: "5px 6px", borderRadius: 6, border: "1px solid #e4e8f2", fontSize: 12.5 }}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 9, color: "#aab4c8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>Commission %</div>
+                        <input
+                          key={`comm-${u.id}-${techPay[u.id]?.commissionPct ?? "unset"}`}
+                          type="number" step="1" min="0" max="100" inputMode="decimal"
+                          defaultValue={techPay[u.id]?.commissionPct ?? ""}
+                          onClick={e => e.stopPropagation()}
+                          onBlur={e => handleSetPay(u.id, { commissionPct: e.target.value === "" ? null : Number(e.target.value) })}
+                          placeholder="—"
+                          style={{ width: "100%", boxSizing: "border-box", padding: "5px 6px", borderRadius: 6, border: "1px solid #e4e8f2", fontSize: 12.5 }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </label>

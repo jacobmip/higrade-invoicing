@@ -46,6 +46,11 @@ function toInvoice(row, items = [], payments = []) {
     jobLat: row.job_lat ?? null,
     jobLng: row.job_lng ?? null,
     jobGeoAt: row.job_geo_at || null,
+    // Pay (migration 075). Who earns commission on this job (null = hourly
+    // only, Jake's call alone) and what the parts cost, which commission is
+    // calculated after subtracting.
+    commissionTechId: row.commission_tech_id || null,
+    materialCost: parseFloat(row.material_cost ?? 0),
     billingAddress: row.billing_address || null,
     showBillingAddress: row.show_billing_address ?? true,
     lateFeeWaived: row.late_fee_waived ?? false,
@@ -1358,5 +1363,45 @@ export async function setJobCoords(invoiceId, lat, lng, source = 'geocode') {
   const { error } = await supabase.from('invoices')
     .update({ job_lat: lat, job_lng: lng, job_geo_source: source })
     .eq('id', invoiceId)
+  if (error) throw error
+}
+
+// ─── Pay rates and commission (migration 075) ────────────────────────────────
+// Private: a tech reads only his own row. Admin reads and writes everyone's.
+
+export async function loadTechPay() {
+  const { data, error } = await supabase.from('tech_pay').select('*')
+  if (error) { console.warn('loadTechPay failed:', error.message); return {} }
+  const out = {}
+  for (const r of (data || [])) {
+    out[r.tech_id] = { hourlyRate: r.hourly_rate, commissionPct: r.commission_pct }
+  }
+  return out
+}
+
+export async function setTechPay(techId, { hourlyRate, commissionPct }) {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const me = sessionData?.session?.user?.id
+  const row = { tech_id: techId, updated_at: new Date().toISOString(), updated_by: me || null }
+  if (hourlyRate !== undefined) row.hourly_rate = hourlyRate === '' || hourlyRate === null ? null : Number(hourlyRate)
+  if (commissionPct !== undefined) row.commission_pct = commissionPct === '' || commissionPct === null ? null : Number(commissionPct)
+  const { error } = await supabase.from('tech_pay').upsert(row, { onConflict: 'tech_id' })
+  if (error) throw error
+}
+
+// Narrow updates, same shape as setJobCoords: a direct column write rather
+// than routing through upsertInvoice, which sends the whole document and
+// carries an optimistic-lock token this doesn't need. The database pins both
+// fields to their existing value for anyone but the owner (migration 075), so
+// calling these as a non-admin is a harmless no-op, not an error.
+export async function setInvoiceCommissionTech(invoiceId, techId) {
+  const { error } = await supabase.from('invoices')
+    .update({ commission_tech_id: techId || null }).eq('id', invoiceId)
+  if (error) throw error
+}
+
+export async function setInvoiceMaterialCost(invoiceId, cost) {
+  const { error } = await supabase.from('invoices')
+    .update({ material_cost: Number(cost) || 0 }).eq('id', invoiceId)
   if (error) throw error
 }

@@ -5,6 +5,39 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.26.0 — 2026-10-26
+
+### Commission is a per-job call Jake makes, with pay rates kept private (migration 075)
+
+- **One flag per invoice, not an automated rule.** Jake's own framing: "I can say which job he
+  should get paid commission for." `commission_tech_id` names who earns it; `NULL` means
+  hourly only. The three-part test he described — solo, he sold it, he collected it — is the
+  checklist Jake runs before setting the flag, not three new tracked signals. "On the job"
+  already has a field: a job assigned to Jake is a job Jake is on, by construction.
+  "Collected it" is enforced by *when* commission counts, not a new column: it's realized only
+  once the invoice is actually `paid`.
+- **Material cost is a field Jake fills in per job**, by his own choice over auto-summing
+  receipts. Commission pays on `calcTotals(invoice).total` minus this — the one function this
+  app already uses everywhere else for a total, not a new copy of it.
+- **Both fields are pinned at the database, not just hidden in the UI.** A trigger reverts any
+  non-admin attempt to touch either one, even inside an otherwise-ordinary save of a job
+  assigned to him. Verified by attacking it as the apprentice: stealing the flag for himself,
+  zeroing the material cost, both while legitimately saving his own assigned job. Pinned to
+  whatever Jake had set; Jake's own changes still go through.
+- **Pay rates live in their own table, not on `profiles`.** `profiles` is deliberately world
+  readable — every picker needs every display name — which would have made an hourly rate
+  readable by anyone who can log in. `tech_pay` is self-or-admin only. Verified: the apprentice
+  can read his own rate, reads zero rows of Jake's, and an attempt to raise his own rate is
+  silently filtered to nothing.
+- **A Payroll card in Reports**, This Month / This Year, hourly minutes from the time clock
+  times the rate plus commission from paid, flagged jobs minus material cost times the
+  percentage. Admin sees everyone; a tech sees only himself — reusing the same
+  `users`-is-admin-only-populated workaround `TechScorecard` already needed, which a first pass
+  missed and would have rendered nothing for a non-admin at all.
+- Settings gets a $/hr and Commission % box next to each person's tier buttons, synced to the
+  async-loaded rate via a keyed remount — a plain `defaultValue` would have shown blank even
+  with a rate already on file, since it only applies on first mount.
+
 ## v1.25.0 — 2026-10-26
 
 ### Clock in and clock out on a job, with GPS at both ends (migrations 071, 072, 073)
