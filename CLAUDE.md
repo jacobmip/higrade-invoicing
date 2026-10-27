@@ -123,6 +123,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text)
   gcal.js                  — Google Calendar: server-side OAuth, callback, read/write, and attendee ops (`attendee`, `tech_email`) that invite the commission apprentice to a job's event (v1.27.5)
   eta.js / geocode.js      — travel time + address lookup
+  on-my-way.js             — edge route: On My Way button. Reads the caller's GPS, gets an ETA (Google if a key exists, else OSRM), texts the client via Twilio, logs to client_messages. Gated by settings.sms_outbound_enabled; the invoice read runs under the caller's JWT so RLS decides access
   _lib/notify.js           — APNs JWT + push fan-out
   _lib/sms.js              — Twilio send helper
   _lib/gcal.js             — Google token refresh + calendar helpers

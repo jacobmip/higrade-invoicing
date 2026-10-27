@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.28.9 — 2026-10-27
+
+- On My Way now texts the client directly instead of opening the Messages app. The button reads the tech's GPS, works out the drive time, and sends "Aloha [first name], your HI Grade Plumbing technician [name] is on the way and will arrive in approximately [X] minutes" from the business Twilio number.
+- New `api/on-my-way.js` (edge runtime, so it does not count against the 12-function cap). ETA uses Google Distance Matrix when a Maps key exists, otherwise OSRM; the job's `job_lat`/`job_lng` are used before geocoding the address.
+- GPS denied: sends the "will arrive shortly" wording with no ETA. `settings.sms_outbound_enabled` off: the button shows "SMS disabled — enable in Settings" and nothing is sent.
+- A successful send is logged to the client's Messages thread and records the `sms_sent` version snapshot.
+
 
 ---
 

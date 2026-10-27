@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { supabase } from "./supabase.js";
+import { api } from "./apiBase.js";
 
 const ORANGE = "#E8622A";
 
@@ -8,51 +10,51 @@ function buildDestination(jobAddress) {
   return parts.join(", ");
 }
 
-export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAddress, onSent }) {
+export default function OnMyWay({ invoiceId, clientPhone, jobAddress, billingAddress, onSent }) {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [status, setStatus] = useState(null); // { ok, text }
 
   const destination = buildDestination(jobAddress) || buildDestination(billingAddress);
   const noAddress = !destination;
 
-  function openSms(etaMinutes) {
-    const firstName = (clientName || "").split(" ")[0] || "there";
-    const body = etaMinutes != null
-      ? `Aloha ${firstName}, this is Jake from HI Grade Plumbing. I'm on my way and should arrive in approximately ${etaMinutes} minutes. See you soon!`
-      : `Aloha ${firstName}, this is Jake from HI Grade Plumbing. I'm on my way! See you soon!`;
-    const phone = (clientPhone || "").replace(/\D/g, "");
-    try { onSent?.(); } catch { /* snapshot is best-effort */ }
-    window.location.href = `sms:${phone}&body=${encodeURIComponent(body)}`;
-  }
-
   async function handlePress() {
-    if (noAddress) return;
-
-    if (error) {
-      openSms(null);
-      return;
-    }
-
-    if (!clientPhone) {
-      openSms(null);
-      return;
-    }
+    if (noAddress || loading) return;
+    if (!invoiceId) { setStatus({ ok: false, text: "Save the document first" }); return; }
+    if (!clientPhone) { setStatus({ ok: false, text: "Client has no phone number" }); return; }
 
     setLoading(true);
+    setStatus(null);
     try {
-      const pos = await new Promise((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
-      );
-      const { latitude, longitude } = pos.coords;
-      const res = await fetch(`/api/eta?origin=${latitude},${longitude}&destination=${encodeURIComponent(destination)}`);
-      const data = await res.json();
-      if (data.minutes) {
-        openSms(data.minutes);
-      } else {
-        setError("Could not get ETA — tap to send anyway");
+      // GPS denied or slow is not fatal: the server sends the "arrive shortly" wording.
+      let coords = {};
+      try {
+        const pos = await new Promise((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+        );
+        coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      } catch { /* fall back to no ETA */ }
+
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("Signed out. Sign in again.");
+      const res = await fetch(api("/api/on-my-way"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ invoice_id: invoiceId, ...coords }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (out.code === "sms_disabled") {
+        setStatus({ ok: false, text: "SMS disabled \u2014 enable in Settings" });
+        return;
       }
-    } catch {
-      setError("Location unavailable — tap to send anyway");
+      if (!res.ok || !out.ok) throw new Error(out.error || `Send failed (${res.status})`);
+      try { onSent?.(); } catch { /* snapshot is best-effort */ }
+      setStatus({
+        ok: true,
+        text: out.eta_minutes != null ? `Message sent \u2014 ETA ${out.eta_minutes} min` : "Message sent \u2014 arriving shortly",
+      });
+    } catch (e) {
+      setStatus({ ok: false, text: String(e.message || e) });
     } finally {
       setLoading(false);
     }
@@ -84,13 +86,13 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAd
         title={noAddress ? "Add an address to this invoice" : undefined}
         style={{
           ...btnBase,
-          background: loading ? "#ccc" : ORANGE,
+          background: loading ? "#ccc" : status?.ok ? "#2e8b57" : ORANGE,
           cursor: loading || noAddress ? "default" : "pointer",
           boxShadow: loading || noAddress ? "none" : "0 2px 8px rgba(232,98,42,0.25)",
           opacity: noAddress ? 0.4 : 1,
         }}
       >
-        {error || (loading ? "Getting ETA…" : "On My Way")}
+        {loading ? "Sending…" : status?.text || "On My Way"}
       </button>
 
       <button
