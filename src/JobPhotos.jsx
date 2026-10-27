@@ -13,7 +13,13 @@ const TYPE_COLORS = {
   before: '#2980b9',
   after:  '#27ae60',
   other:  '#8899bb',
+  photo:  '#8899bb',
+  video:  '#8e44ad',
 };
+
+// Texted attachments arrive typed 'video' (migration 089); the extension check
+// covers a video someone filed under before/after/other.
+export const isVideo = (p) => p?.type === 'video' || /\.(mov|mp4|m4v|3gp|3g2|webm)(\?|$)/i.test(p?.url || '');
 
 export async function fetchInvoicePhotos(invoiceId) {
   if (!invoiceId) return [];
@@ -302,11 +308,23 @@ export default function JobPhotos({ invoiceId }) {
                   outlineOffset: -3,
                 }}
               >
-                <img
-                  src={photo.url}
-                  alt={photo.caption || photo.type}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                />
+                {isVideo(photo) ? (
+                  <>
+                    <video
+                      src={photo.url + '#t=0.1'} muted playsInline preload="metadata"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+                    <div style={{ position: 'absolute', right: 6, bottom: 6, width: 26, height: 26, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.5v9l7-4.5z" fill="#fff"/></svg>
+                    </div>
+                  </>
+                ) : (
+                  <img
+                    src={photo.url}
+                    alt={photo.caption || photo.type}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                )}
 
                 {/* Select mode: checkbox overlay */}
                 {selectMode && (
@@ -436,11 +454,18 @@ export default function JobPhotos({ invoiceId }) {
             onClick={e => e.stopPropagation()}
             style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
           >
-            <img
-              src={fullsize.url}
-              alt=""
-              style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8, objectFit: 'contain' }}
-            />
+            {isVideo(fullsize) ? (
+              <video
+                src={fullsize.url} controls playsInline autoPlay
+                style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8 }}
+              />
+            ) : (
+              <img
+                src={fullsize.url}
+                alt=""
+                style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8, objectFit: 'contain' }}
+              />
+            )}
             <div style={{ display: 'flex', gap: 8, width: '100%' }}>
               {['before', 'after', 'other'].map(t => (
                 <button

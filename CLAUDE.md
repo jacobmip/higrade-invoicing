@@ -210,7 +210,7 @@ none (RLS filters it silently) and inserts copies — a duplicate payment row pe
 - `payments` — invoice_id, amount, surcharge, method, date, note, paypal_order_id, paypal_capture_id (unique)
 - `saved_items` — line-item library. Reads are shared (migration 043): every plumber sees admin-owned items plus their own. Writes stay owner-scoped, so only the owner can change an item. Unique on `(owner_id, name)`.
 - `client_messages` — id, client_id (nullable: rows logged before the client existed), owner_id, phone_number, direction (`inbound`|`outbound`), body, related_call_id (overloaded: Twilio SID, Vapi call id or null), media jsonb `[{url,type}]`, created_at, **read_at (migration 088; null on an inbound row = unread)**. RLS owner-or-admin. Written only through `log_client_message()`. The app matches a row to a client by `client_id`, else last 10 phone digits (`src/Messages.jsx`).
-- `job_photos` — per-invoice photos
+- `job_photos` — per-invoice photos and videos (`type` before | after | other | photo | video)
 - `expenses` — receipt OCR output
 - `notifications` / `device_tokens` — in-app bell + APNs
 - `ai_chat_history` — user_id PK, messages jsonb (max 200); **RLS self-only, admins do NOT bypass**
@@ -324,8 +324,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **087** — **applied 2026-10-27.** `invoices.material_entries` jsonb `[{id, desc, amount}]`; `material_cost` is their sum, written together by `db.setInvoiceMaterialEntries()`. `guard_invoice_commission` rebuilt from its live definition to pin the new column.
 
 - **088** — **applied 2026-10-27.** `client_messages.read_at` for the Messages tab; backfilled read.
+- **089** — **applied 2026-10-27.** `job_photos_type_check` widened to `before | after | other | photo | video`. Without it every texted attachment failed to attach to its estimate (051's `attach_media_to_recent_estimate` inserts `photo` / `video`). `client_messages.media` entries are `{url,type,bytes,twilio_media_sid}` or, after two failed re-hosts, `{failed:true,twilio_url,type,twilio_media_sid}`.
 
-Next migration is `089_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+Next migration is `090_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

@@ -193,12 +193,13 @@ export default async function handler(req, res) {
 
     // Put texted photos on the job they belong to, not just in the thread.
     let attached = null;
-    if (media.length && result?.client_id) {
+    const goodMedia = media.filter(m => m.url && !m.failed);
+    if (goodMedia.length && result?.client_id) {
       try {
         attached = await rpc('attach_media_to_recent_estimate', {
           p_secret: secret,
           p_client_id: result.client_id,
-          p_media: media,
+          p_media: goodMedia,
           p_caption: String(body).slice(0, 200) || null,
         });
       } catch (e) {
@@ -224,7 +225,7 @@ export default async function handler(req, res) {
             clientName: result?.client_name || 'Unknown number',
             leadPhone: from,
             transcript: String(body),
-            smsMedia: media,
+            smsMedia: goodMedia,
             invoiceId: attached?.estimate_id || null,
           }),
         });

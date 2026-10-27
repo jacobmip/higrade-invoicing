@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.1 — 2026-10-27
+
+- Texted photos and videos now reach the job. Root cause found by checking the live database: `job_photos_type_check` only allowed `before | after | other`, so `attach_media_to_recent_estimate()` (which inserts `photo` / `video`) failed on every attachment and `sms-inbound` logged and swallowed the error. Migration 089 widens the check. The `job-photos` bucket already had no size or MIME limit, so it needed no change.
+- `rehostTwilioMedia()` (`api/_lib/sms.js`): attachments are fetched and uploaded in parallel (`Promise.all`), each retried once, extensions mapped properly (`video/quicktime` to `.mov`, `video/3gpp` to `.3gp`, `jpeg` to `.jpg`), and entries now carry `{ url, type, bytes, twilio_media_sid }`. After two failures the entry is `{ failed: true, twilio_url, type, twilio_media_sid }` instead of being dropped, so a later job can re-fetch it from Twilio. Failed entries are skipped by the estimate attach and the alert email, and the Messages thread shows "Attachment could not be saved".
+- `JobPhotos.jsx`: videos render as a `<video>` tile with a play badge in the grid and a `<video controls>` in the full-size viewer; `photo` and `video` get badge colours.
+- This does not recover quality lost before Twilio received the file (carrier MMS compression). Re-hosting stores exactly the bytes Twilio served.
+
 ## v1.28.0 — 2026-10-27
 
 - Messages tab (admin only) in the bottom bar between Calendar and Clients, with an unread badge. Conversation list from `client_messages` (client name, last-message preview, relative time, unread dot, newest first); tap for an iMessage-style thread: Lisa/outbound blue on the right, client/inbound gray on the left, a time stamp whenever the gap is over an hour, images inline and videos in a `<video controls>`. Opening a thread marks its inbound messages read.

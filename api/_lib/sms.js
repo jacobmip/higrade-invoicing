@@ -156,58 +156,89 @@ export async function readBody(req) {
 // account credentials, and rots even for those who have them. So fetch each
 // one with Basic auth and re-upload to the public job-photos bucket that the
 // app already serves images from.
+// MIME subtype to file extension. The naive "subtype" rule stored iPhone video
+// as .quicktime, which nothing recognises.
+const EXT_BY_SUBTYPE = {
+  quicktime: 'mov', '3gpp': '3gp', '3gpp2': '3g2', jpeg: 'jpg', 'x-m4v': 'm4v',
+  mpeg: 'mpg', 'x-matroska': 'mkv', heic: 'heic', heif: 'heif',
+};
+
+function extFor(type) {
+  const sub = (String(type).split('/')[1] || 'bin').split(';')[0].trim().toLowerCase();
+  return EXT_BY_SUBTYPE[sub] || sub.replace(/[^a-z0-9]/g, '') || 'bin';
+}
+
+// Twilio's media URL is /Messages/MM.../Media/ME...; the last segment is the
+// media sid, kept so a failed or soft item can be re-fetched later.
+function mediaSidOf(url) {
+  const m = String(url).match(/\/Media\/(ME[0-9a-f]+)/i);
+  return m ? m[1] : null;
+}
+
+async function rehostOne({ url, type, path, auth, key }) {
+  const res = await fetch(url, { headers: { Authorization: auth }, redirect: 'follow' });
+  if (!res.ok) throw new Error(`fetch ${res.status}`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  const up = await fetch(`${supabaseUrl()}/storage/v1/object/job-photos/${path}`, {
+    method: 'POST',
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': type, 'x-upsert': 'true' },
+    body: bytes,
+  });
+  if (!up.ok) throw new Error(`upload ${up.status} ${await up.text()}`);
+  return bytes.length;
+}
+
+// Entries: { url, type, bytes, twilio_media_sid } on success, or
+// { failed: true, twilio_url, type, twilio_media_sid } after two attempts, so a
+// repair job can re-fetch it instead of the attachment vanishing from the thread.
+// Items run in parallel: sequential fetches of several videos were the slowest
+// part of a webhook that has 10 seconds on Hobby.
 export async function rehostTwilioMedia(params) {
-  const out = [];
   const sid = await twilioAccountSid();
   const token = await twilioAuthToken();
-  if (!sid || !token) return out;
+  if (!sid || !token) return [];
 
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) {
     console.warn('[sms] no service-role key; cannot re-host media');
-    return out;
+    return [];
   }
 
   const count = parseInt(params.NumMedia || '0', 10);
-  if (!Number.isFinite(count) || count < 1) return out;
+  if (!Number.isFinite(count) || count < 1) return [];
 
   const auth = 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64');
-
+  const jobs = [];
   for (let i = 0; i < count && i < 10; i++) {
     const url = params[`MediaUrl${i}`];
-    const type = params[`MediaContentType${i}`] || 'application/octet-stream';
     if (!url) continue;
-    try {
-      const res = await fetch(url, { headers: { Authorization: auth }, redirect: 'follow' });
-      if (!res.ok) { console.error('[sms] media fetch failed', i, res.status); continue; }
-      const bytes = Buffer.from(await res.arrayBuffer());
-
-      const ext = (type.split('/')[1] || 'bin').split(';')[0].replace(/[^a-z0-9]/gi, '');
-      const path = `sms/${params.MessageSid || Date.now()}-${i}.${ext}`;
-
-      const up = await fetch(`${supabaseUrl()}/storage/v1/object/job-photos/${path}`, {
-        method: 'POST',
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-          'Content-Type': type,
-          'x-upsert': 'true',
-        },
-        body: bytes,
-      });
-      if (!up.ok) {
-        console.error('[sms] media upload failed', i, up.status, await up.text());
-        continue;
-      }
-      out.push({
-        url: `${supabaseUrl()}/storage/v1/object/public/job-photos/${path}`,
-        type,
-      });
-    } catch (e) {
-      console.error('[sms] media rehost error', i, e.message || e);
-    }
+    const type = params[`MediaContentType${i}`] || 'application/octet-stream';
+    jobs.push({
+      url, type, auth, key,
+      path: `sms/${params.MessageSid || Date.now()}-${i}.${extFor(type)}`,
+      mediaSid: mediaSidOf(url),
+    });
   }
-  return out;
+
+  return Promise.all(jobs.map(async (job) => {
+    let lastErr;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const bytes = await rehostOne(job);
+        return {
+          url: `${supabaseUrl()}/storage/v1/object/public/job-photos/${job.path}`,
+          type: job.type,
+          bytes,
+          twilio_media_sid: job.mediaSid,
+        };
+      } catch (e) {
+        lastErr = e;
+        console.error('[sms] media rehost attempt', attempt, job.path, e.message || e);
+      }
+    }
+    console.error('[sms] media rehost gave up', job.path, lastErr?.message || lastErr);
+    return { failed: true, twilio_url: job.url, type: job.type, twilio_media_sid: job.mediaSid };
+  }));
 }
 
 export function fullUrl(req) {
