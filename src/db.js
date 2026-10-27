@@ -51,6 +51,8 @@ function toInvoice(row, items = [], payments = []) {
     // calculated after subtracting.
     commissionTechId: row.commission_tech_id || null,
     materialCost: parseFloat(row.material_cost ?? 0),
+    // Migration 087: the entries behind materialCost, [{ id, desc, amount }].
+    materialEntries: Array.isArray(row.material_entries) ? row.material_entries : [],
     billingAddress: row.billing_address || null,
     showBillingAddress: row.show_billing_address ?? true,
     lateFeeWaived: row.late_fee_waived ?? false,
@@ -1398,6 +1400,17 @@ export async function setInvoiceCommissionTech(invoiceId, techId) {
   const { error } = await supabase.from('invoices')
     .update({ commission_tech_id: techId || null }).eq('id', invoiceId)
   if (error) throw error
+}
+
+// Writes the entry list and its sum together; material_cost is what
+// commission reads, so the two never drift.
+export async function setInvoiceMaterialEntries(invoiceId, entries) {
+  const clean = (entries || []).map(e => ({ id: e.id, desc: e.desc || '', amount: Number(e.amount) || 0 }))
+  const total = Math.round(clean.reduce((t, e) => t + e.amount, 0) * 100) / 100
+  const { error } = await supabase.from('invoices')
+    .update({ material_cost: total, material_entries: clean }).eq('id', invoiceId)
+  if (error) throw error
+  return total
 }
 
 export async function setInvoiceMaterialCost(invoiceId, cost) {

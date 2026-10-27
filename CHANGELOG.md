@@ -5,6 +5,13 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.3 — 2026-10-27
+
+- Apprentice visibility (migration 086): `invoices_select` now admits `commission_tech_id = auth.uid()` on non-deleted jobs. Verified as Kaulana in a rolled-back transaction: sees his 3 commission jobs and no others, sees no line items (081 unchanged), and an UPDATE touches 0 rows. The form opens view-only for him (Preview tab, Edit disabled, no auto-save, no delete, Done just closes).
+- Material cost is now a list of entries (description + amount) with a running total and "+ Add material". New `invoices.material_entries` jsonb (migration 087); `material_cost` is written as their sum, so commission is unchanged. `guard_invoice_commission` pins the new column against non-admins.
+- Removed the Saved button and panel from Line Items. It listed the same `savedItems` the Price Book already shows, so nothing was lost.
+- Settings: the per-user commission field is relabelled "Base Rate % (flat fallback, overridden by tiers)". The note says plainly that the pay report still reads only this rate; `tech_commission_tiers` is not wired into it yet.
+
 ## v1.27.2 — 2026-10-27
 
 - Edit tab: the commission dropdown is now labelled **Apprentice** and shows on any document that has an id (it also checks `form.id`, not just the prop and the auto-save id). Assigned Tech no longer requires more than one user.
