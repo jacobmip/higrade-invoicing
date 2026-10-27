@@ -5023,6 +5023,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
                 The primary tech who ran the job. Drives the tech scorecard in Reports.
               </div>
+              {form.apprenticeId && (users || []).find(u => u.id === form.apprenticeId) && (
+                <div style={{ fontSize: 11, color: "#778", marginTop: 4 }}>
+                  Apprentice: {(users || []).find(u => u.id === form.apprenticeId).displayName || "Unnamed"}
+                </div>
+              )}
             </div>
           )}
 
@@ -10720,6 +10725,19 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
     db.loadTechPay().then(p => { if (!cancelled) setTechPay(p); }).catch(e => console.warn("loadTechPay failed:", e));
     return () => { cancelled = true; };
   }, [isAdmin]);
+  // Default Apprentice (migration 094): settings.default_apprentice_id, stamped
+  // onto new admin-owned documents by the default_assigned_tech trigger.
+  const [defaultApprentice, setDefaultApprentice] = useState("");
+  useEffect(() => {
+    if (!isAdmin) return;
+    db.getSetting("default_apprentice_id").then(v => setDefaultApprentice(v || "")).catch(e => console.warn("getSetting failed:", e));
+  }, [isAdmin]);
+  const handleSetDefaultApprentice = async (id) => {
+    const prev = defaultApprentice;
+    setDefaultApprentice(id);
+    try { await db.setSetting("default_apprentice_id", id || null); }
+    catch (e) { console.warn("set default apprentice failed:", e); setDefaultApprentice(prev); }
+  };
   const handleSetPay = async (userId, patch) => {
     const prev = techPay[userId];
     setTechPay(p => ({ ...p, [userId]: { ...(p[userId] || {}), ...patch } }));
@@ -10810,6 +10828,19 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
 
   return (
     <div style={{ padding: "16px", paddingBottom: 100 }}>
+      {isAdmin && (
+        <div style={card}>
+          <div style={heading}>Default Apprentice</div>
+          <div style={body}>New invoices and estimates you create get this apprentice attached automatically.</div>
+          <select style={S.input} value={defaultApprentice} onChange={e => handleSetDefaultApprentice(e.target.value)}>
+            <option value="">None</option>
+            {(allUsers || []).filter(u => u.role !== "admin" && u.tier !== "admin").map(u => (
+              <option key={u.id} value={u.id}>{(u.displayName || "Unnamed") + (u.tier ? " (" + u.tier + ")" : "")}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {isAdmin && (
         <div style={card}>
           <div style={heading}>Users (admin)</div>
