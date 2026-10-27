@@ -4984,7 +4984,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {form.client && (
             <div style={{ padding: "12px 16px 0" }}>
               <OnMyWay
-                clientName={effectiveClientInfo?.name || form.client || ""}
+                invoiceId={form.id || autoSavedId}
                 clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
                 jobAddress={form.jobAddress || null}
                 onSent={() => snapshotEvent('sms_sent', "Text sent (On My Way)")}
