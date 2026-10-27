@@ -5,6 +5,16 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.6 — 2026-10-27
+
+- **Clock in/out strip now shows for everyone.** It was gated on `!isAdmin`, so Jake never saw it. Any saved, non-deleted job shows it.
+- **Commission techs can edit the job** (migration 090). Line items, pricing, history and photos on any job where the tech is assigned or named as commission tech, not just solo jobs. The commission-only view-only lock and hidden Edit tab are gone.
+- **Apprentice limits (UI):** no delete, no Record Payment / Down Payment, no signature controls. Assigned Tech and Apprentice dropdowns were already admin-only. The database still allows payment writes because `save_invoice_with_items` rewrites the set on every save.
+- **Tracked edits.** When a non-admin saves a change to line items, `db.upsertInvoice` logs an `items_edited` row in `invoice_events` (editor, tier, add / edit / delete with old and new values). The History tab shows it in purple with an "Edited by apprentice" badge.
+- Migration 090: `is_my_assigned_job` / `is_my_assigned_client` also match `commission_tech_id`, `invoices_update_commission` policy, `guard_invoice_assignment` trigger pins `assigned_tech_id` for a commission-only editor. Applied and exercised as the commission apprentice in a rolled-back transaction: edit allowed; reassign (pinned), trash (refused), delete (0 rows), commission change (pinned), other jobs (0 rows).
+
+---
+
 ## v1.28.5 — 2026-10-27
 
 - Removed `ApprenticeJobView` and the apprentice-only layout. Every tier now uses the standard invoice/estimate form.
