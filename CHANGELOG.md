@@ -5,6 +5,12 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.4 — 2026-10-27
+
+- Apprentice who is the assigned tech on a job is solo: full Edit tab and line items. Commission-only apprentice stays read-only.
+- Fixed Messages tab white screen on estimates/invoices: InvoiceForm referenced `clientRecord`, which only exists in another component (ReferenceError outside the error boundary). Now uses the form's selected client.
+- Fixed AI tab doing nothing in the apprentice view: tab panels were positioned by a fixed index, so with the Messages tab present (View-as) the AI panel was collapsed. Messages is no longer part of the apprentice tab set.
+
 ## v1.28.3 — 2026-10-27
 
 - Apprentice job header is a slim strip: client name with a small status chip, address and phone/time on one line each, and Call / On My Way / Navigate as a single row of compact pills. Internal notes keep their own small card.
