@@ -5,6 +5,24 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.22.1 — 2026-10-27
+
+### Calendar: a job no longer shows twice (blue Job plus grey "Other")
+
+**What was happening.** The calendar already hides `gcal_date` when a job has `visits`,
+so the grey block was not `gcal_date`. It was a second Google event. When a writer
+outside the app (Lani) stored a visit with no `eventId` while a Google event for that
+booking already existed, the sync created a fresh event for the visit. The original was
+then linked to nothing and drew as grey "Other" next to the blue job.
+
+- **The sync adopts the existing event instead of creating a duplicate.** A visit with no
+  `eventId` first looks for an unclaimed Google event that names its document number,
+  at the same start time (or the only one on that day). The link is saved to the visit.
+- **The calendar folds that event into the job** even before the sync has saved the link.
+- **Duplicates made before this fix stop drawing.** An unlinked event naming a document
+  that already has a job block at the same minute is hidden. It still exists in Google
+  Calendar until deleted there.
+
 ## v1.22.0 — 2026-10-24
 
 ### Unblock deploys: back under Vercel's 12-function limit
