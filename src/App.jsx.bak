@@ -825,7 +825,7 @@ function resizeImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
   });
 }
 
-function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef }) {
+function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef, readOnly }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -954,6 +954,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         ).join("\n");
         invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
       }
+      if (readOnly) invoiceContext += "\n\nREAD-ONLY MODE: the person asking is an apprentice who cannot change anything. Answer questions about this job and how to do the work. Do NOT emit action JSON and do not offer to edit, create or schedule anything.";
       const systemPrompt = systemBase ? systemBase + invoiceContext : null;
       // Build history. Past user messages with photos get converted to
       // text-only references ("[photo from earlier]") so we don't blow
@@ -980,14 +981,14 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         });
       const first = history.findIndex(m => m.role === "user");
       const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt);
-      const actions = extractActionsJSON(reply);
+      const actions = readOnly ? [] : extractActionsJSON(reply);
       const cleanText = stripActionBlocks(reply);
 
       // Defensive guard: the model sometimes claims it updated a line item
       // ("I've updated the description...") without emitting the action JSON.
       // If we detect that pattern with no actions, retry once forcing JSON.
       const claimsChange = /\b(i'?ve\s+updated|i\s+updated|i'?ve\s+changed|i\s+changed|updated\s+the\s+(description|line|item|price|qty|name)|changed\s+the\s+(description|line|item|price|qty|name))\b/i.test(cleanText || "");
-      if (actions.length === 0 && claimsChange && currentInvoice) {
+      if (actions.length === 0 && claimsChange && currentInvoice && !readOnly) {
         const retryReply = await callAI(
           [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: "You replied in plain text but the app only applies changes when you emit JSON. Re-send the SAME change as a proper update_item action JSON now. Reply with ONLY the JSON, nothing else." }],
           systemPrompt
@@ -3652,7 +3653,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, onRestore, users, myId }) {
+function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, isApprentice, apprenticeName, onRestore, users, myId }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3663,7 +3664,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // read the job but RLS refuses every write, so the form is view-only for him.
   const commissionOnly = !isAdmin && !!invoice && !!myId
     && invoice.commissionTechId === myId && invoice.assignedTechId !== myId && invoice.ownerId !== myId;
-  const lockedView = isReadOnly || commissionOnly;
+  const lockedView = isReadOnly || commissionOnly || !!isApprentice;
   const [activeTab, setActiveTab] = useState(lockedView ? "preview" : "edit");
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -3796,7 +3797,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const updatedAtRef = useRef(invoice?.updatedAt || null);
   // When set, suppresses the unmount-flush autosave. Used by Delete so the
   // form doesn't re-create the row we just deleted.
-  const skipFlushRef = useRef(commissionOnly);
+  const skipFlushRef = useRef(commissionOnly || !!isApprentice);
   // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
   // so paddingTop is correct on first render — no content hidden on load.
   const formHeaderRef = useRef(null);
@@ -4483,7 +4484,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     }).filter(Boolean),
   ].sort((a, b) => b.sortKey - a.sortKey);
 
-  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : [])];
+  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : []), ...(isApprentice ? [{ id: "ai", label: "AI", icon: "ai" }] : [])];
+  // An apprentice gets Preview, Photos and AI only: History carries Restore
+  // and payment recording, Edit is the whole editor.
+  const tabBlocked = (id) => (lockedView && id === "edit") || (isApprentice && id === "history");
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
 
   // Real carousel swipe between Edit / Preview / History. All three panels
@@ -4504,7 +4508,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
   const goToTab = (nextId) => {
     // Edit is disabled in read-only preview mode — ignore taps/swipes to it.
-    if (lockedView && nextId === "edit") { setDragX(0); return; }
+    if (tabBlocked(nextId)) { setDragX(0); return; }
     if (nextId === activeTab) { setDragX(0); return; }
     setShowPriceBook(false);
     setAnimating(true);
@@ -4559,8 +4563,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       const ratio = dragX / width;
       const threshold = 0.18;
       let nextIdx = tabIdx;
-      if (ratio < -threshold && tabIdx < TABS.length - 1) nextIdx = tabIdx + 1;
-      else if (ratio > threshold && tabIdx > 0) nextIdx = tabIdx - 1;
+      if (ratio < -threshold && tabIdx < TABS.length - 1) { nextIdx = tabIdx + 1; while (nextIdx < TABS.length - 1 && tabBlocked(TABS[nextIdx].id)) nextIdx++; }
+      else if (ratio > threshold && tabIdx > 0) { nextIdx = tabIdx - 1; while (nextIdx > 0 && tabBlocked(TABS[nextIdx].id)) nextIdx--; }
       goToTab(TABS[nextIdx].id);
     } else {
       setDragX(0);
@@ -4636,7 +4640,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
           onDelete((invoice && invoice.id) || autoSavedId);
         }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        {commissionOnly
+        {(commissionOnly || isApprentice)
           ? <button onClick={() => onCancel?.()} style={S.btn("primary")}>Done</button>
           : isReadOnly
           ? <button onClick={() => { skipFlushRef.current = true; if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; } onRestore?.(form.id); }} style={S.btn("primary")}>Restore</button>
@@ -4644,7 +4648,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0" }}>
-        {TABS.map(tab => {
+        {TABS.filter(t => !(isApprentice && tabBlocked(t.id))).map(tab => {
           // In read-only preview, the Edit tab is shown grayed and inert.
           const editDisabled = lockedView && tab.id === "edit";
           return (
@@ -5382,6 +5386,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 1 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 1 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
+        {isApprentice && <ApprenticeJobView invoice={form} clients={clients} techName={apprenticeName} />}
         <PDFPreview form={form} clients={clients} photos={invoicePhotos} />
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 2 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 2 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
@@ -5503,6 +5508,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             {tabIdx === 4 && (clientRecord.id
               ? <ClientThread client={clientRecord} canReply={isAdmin} />
               : <div style={{ color: "#8899bb", fontSize: 13, textAlign: "center", padding: 24 }}>Pick a saved client to see their text messages.</div>)}
+          </div>
+        </div>
+      )}
+      {isApprentice && (
+        <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 4 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 4 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
+          <div style={{ padding: 16 }}>
+            <AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} data={data} currentInvoice={form} inputRef={aiInputRef} readOnly />
           </div>
         </div>
       )}
@@ -13151,14 +13163,6 @@ export default function App() {
 
       {formMounted && (
         <div style={{ position: "fixed", top: GLOBAL_HEADER_H, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
-          {effectiveUser?.tier === "apprentice" && selected && !previewReadOnly ? (
-            <ApprenticeJobView
-              invoice={selected}
-              clients={data.clients}
-              techName={effectiveUser.display_name || ""}
-              onBack={() => { setView("list"); setSelected(null); }}
-            />
-          ) : (
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
@@ -13198,11 +13202,12 @@ export default function App() {
             onOpenLinked={(doc) => { setSelected(doc); setTab(doc.type === "estimate" ? "estimates" : "invoices"); }}
             isAdmin={isAdmin}
             isReadOnly={previewReadOnly}
+            isApprentice={effectiveUser?.tier === "apprentice" && !!selected && !previewReadOnly}
+            apprenticeName={effectiveUser?.display_name || ""}
             onRestore={restoreInvoice}
             users={allUsers}
             myId={session?.user?.id}
           />
-          )}
         </div>
       )}
 
