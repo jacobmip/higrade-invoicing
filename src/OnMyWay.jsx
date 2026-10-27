@@ -17,18 +17,10 @@ function mapsUrl(address) {
     : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
 }
 
-// Same wording as api/on-my-way.js; change the two together.
-function buildMessage(clientName, techName, eta) {
-  const first = String(clientName || "").trim().split(/\s+/)[0] || "there";
-  const arrive = eta != null ? `will arrive in approximately ${eta} minutes` : "will arrive shortly";
-  return `Aloha ${first}, your HI Grade Plumbing technician ${techName || "technician"} is on the way and ${arrive}. Mahalo! \u2014 HI Grade Plumbing`;
-}
-
 export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, jobAddress, billingAddress, onSent }) {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [status, setStatus] = useState(null); // { ok, text }
-  const [confirm, setConfirm] = useState(null); // { state: "loading" | "ready", eta, coords }
   const sendingRef = useRef(false);
   const toastTimer = useRef(null);
 
@@ -47,54 +39,41 @@ export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, 
     window.location.href = `tel:${digits}`;
   }
 
-  // Step 1: read GPS and the drive time, then show the modal. Nothing is sent.
+  // One tap sends. The ref locks synchronously so a double tap cannot send twice.
+  // GPS is best effort: without it the server sends the "arrive shortly" wording,
+  // and with it the server works out the ETA itself.
   async function handlePress() {
-    if (noAddress || loading || sent || confirm) return;
+    if (sendingRef.current || noAddress || loading || sent) return;
     if (!invoiceId) { toast("Save the document first"); return; }
     if (!clientPhone) { toast("Client has no phone number"); return; }
-
-    setConfirm({ state: "loading", eta: null, coords: null });
-    let coords = null;
-    let eta = null;
-    try {
-      const pos = await new Promise((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
-      );
-      coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      const res = await fetch(api(`/api/eta?origin=${coords.lat},${coords.lng}&destination=${encodeURIComponent(destination)}`));
-      const out = await res.json().catch(() => ({}));
-      if (Number.isFinite(out.minutes)) eta = out.minutes;
-    } catch { /* ETA unavailable: the modal says so and the text says "shortly" */ }
-    setConfirm({ state: "ready", eta, coords: eta != null ? coords : null });
-  }
-
-  // Step 2: only on confirm. The server sends exactly the eta the modal showed.
-  async function handleConfirm() {
-    if (sendingRef.current || sent || !confirm || confirm.state !== "ready") return;
     sendingRef.current = true;
     setLoading(true);
     setStatus(null);
     try {
+      let coords = null;
+      try {
+        const pos = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error("no geolocation"));
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000, maximumAge: 60000 });
+        });
+        coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      } catch { /* no GPS: send without an ETA */ }
+
       const { data } = await supabase.auth.getSession();
       const token = data?.session?.access_token;
       if (!token) throw new Error("Signed out. Sign in again.");
       const res = await fetch(api("/api/on-my-way"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          invoice_id: invoiceId,
-          ...(confirm.eta != null ? { ...confirm.coords, eta_minutes: confirm.eta } : {}),
-        }),
+        body: JSON.stringify({ invoice_id: invoiceId, ...(coords || {}) }),
       });
       const out = await res.json().catch(() => ({}));
       if (out.code === "sms_disabled") {
         setStatus({ ok: false, text: "SMS disabled \u2014 enable in Settings" });
-        setConfirm(null);
         return;
       }
       if (!res.ok || !out.ok) throw new Error(out.error || `Send failed (${res.status})`);
       setSent(true);
-      setConfirm(null);
       try { onSent?.(); } catch { /* snapshot is best-effort */ }
       setStatus({
         ok: true,
@@ -102,7 +81,6 @@ export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, 
       });
     } catch (e) {
       setStatus({ ok: false, text: String(e.message || e) });
-      setConfirm(null);
     } finally {
       setLoading(false);
       sendingRef.current = false;
@@ -126,8 +104,7 @@ export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, 
     gap: 8,
   };
 
-  const omwOff = loading || noAddress || sent || !!confirm;
-  const ready = confirm?.state === "ready";
+  const omwOff = loading || noAddress || sent;
 
   return (
     <div>
@@ -187,32 +164,6 @@ export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, 
         </div>
       )}
 
-      {confirm && (
-        <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-          onClick={() => { if (!loading) setConfirm(null); }}
-        >
-          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "100%", maxWidth: 380 }}>
-            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 20, letterSpacing: 1, textTransform: "uppercase", color: "#0a1628" }}>
-              Send On My Way?
-            </div>
-            <div style={{ marginTop: 6, fontWeight: 700, color: ready && confirm.eta == null ? "#888" : ORANGE }}>
-              {!ready ? "Finding your location…" : confirm.eta != null ? `~${confirm.eta} min away` : "ETA unavailable"}
-            </div>
-            {ready && (
-              <div style={{ marginTop: 10, padding: 12, background: "#f4f6fa", borderRadius: 10, fontSize: 14, lineHeight: 1.4, color: "#222" }}>
-                {buildMessage(clientName, techName, confirm.eta)}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-              <button type="button" disabled={loading} onClick={() => setConfirm(null)} style={{ ...btnBase, background: "#b9c0d0" }}>Cancel</button>
-              <button type="button" disabled={!ready || loading} onClick={handleConfirm} style={{ ...btnBase, background: !ready || loading ? "#ccc" : ORANGE }}>
-                {loading ? "Sending…" : "Send"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

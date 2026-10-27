@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.32.2 — 2026-10-27
+
+- Fixed: On My Way turned the screen gray and sent nothing. The confirmation modal (a fixed overlay inside the slide-animated form) could come up as an empty backdrop. The modal is gone: one tap now locks the button immediately (synchronous ref, so no double send), reads GPS if available, and sends. No GPS means the "arrive shortly" text; with GPS the server works out the ETA. Any failure shows as red text under the button instead of breaking the screen.
+
 ## v1.32.1 — 2026-10-27
 
 - Fixed: a job's apprentice (`invoices.apprentice_id`) now sees that job in their job list and on their calendar. Before, only the assigned tech and commission tech did.
