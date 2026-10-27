@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.30.3 — 2026-10-27
+
+- Fixed the clock-in banner overlapping content. The invoice/estimate form was pinned 64px from the top regardless of the header, so the "On the clock" and "Day started" banners covered its top. It now sits below the measured header height, so the banner pushes content down the same way on every screen.
+
 ## v1.30.2 — 2026-10-27
 
 - On My Way can no longer double-send: it asks first, and after a successful send the button locks to "Sent" and cannot be tapped again.
