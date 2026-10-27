@@ -89,6 +89,37 @@ function extractSummary(p) {
   return m?.analysis?.summary || m?.summary || null;
 }
 
+// The caller's name, from the structured analysis on Lisa's assistant
+// (analysisPlan.structuredDataPlan, field caller_name). Before 2026-10-27 the
+// name was never passed to capture_abandoned_call, so every rescued lead was
+// filed as 'Missed call - no name given' even after four minutes of spelling
+// it out. Returns null rather than guessing: the SQL side keeps a known
+// client's real name when none arrives.
+function extractName(p) {
+  const m = p?.message || p || {};
+  const sd = m?.analysis?.structuredData || m?.call?.analysis?.structuredData;
+  const n = typeof sd?.caller_name === 'string' ? sd.caller_name.trim() : '';
+  if (!n || n.length > 80 || /^(unknown|not given|n\/a|none|null)$/i.test(n)) return null;
+  return n;
+}
+
+// True when Lisa handed the caller to Jacob and the handoff was not cancelled.
+// A cancelled or declined transfer returns the call to Lisa, who carries on and
+// files the lead herself (result text seen so far: "Transfer cancelled."). The
+// success result text has not been observed yet, so this keys on the tool call
+// being present and not reporting cancellation, and errs towards the old label.
+function extractTransferred(p) {
+  const m = p?.message || p || {};
+  const msgs = m?.artifact?.messages || m?.messages || m?.call?.messages || [];
+  if (!Array.isArray(msgs)) return false;
+  const attempted = msgs.some(x =>
+    (x?.toolCalls || []).some(t => t?.function?.name === 'transferToJake'));
+  if (!attempted) return false;
+  const results = msgs.filter(x => x?.name === 'transferToJake' && x?.result != null);
+  if (!results.length) return false;
+  return !results.some(x => /cancel|fail|declin|no.?answer|busy|voicemail/i.test(String(x.result)));
+}
+
 function extractSeconds(p) {
   const m = p?.message || p || {};
   const started = m?.startedAt || m?.call?.startedAt;
@@ -165,6 +196,8 @@ export default async function handler(req, res) {
       p_call_id: callId,
       p_transcript: extractTranscript(params),
       p_summary: extractSummary(params),
+      p_name: extractName(params),
+      p_transferred: extractTransferred(params),
     });
     if (rescued?.created) {
       console.log('[vapi-call-ended] abandoned call captured', {

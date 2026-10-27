@@ -3,10 +3,13 @@
 --
 -- Lisa has only ever answered. This is the other direction: a row here is a
 -- call HI Grade intends to place. Nothing in the system writes to this table
--- on its own. Every row is put here deliberately, by Jake through the manager
--- bot or scripts/outbound_call.py, because calling a customer is a different
--- consent question from emailing one and an automatic trigger is how you end
--- up robo-dialling someone at 6am.
+-- on its own that a runner will dial. Every dialable row is put here or
+-- RELEASED deliberately, by Jake through the manager bot or
+-- scripts/outbound_call.py, because calling a customer is a different consent
+-- question from emailing one and an automatic trigger is how you end up
+-- robo-dialling someone at 6am. (Amended by 076: the abandoned-call net may
+-- file a status='suggested' row, which the runner never selects until a person
+-- moves it to 'queued'.)
 --
 -- Why a table and not just a cron that queries invoices:
 --   * the reason for the call has to be written down by a person and read back
@@ -47,7 +50,7 @@ create table if not exists public.call_queue (
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   constraint call_queue_status_ck
-    check (status in ('queued','calling','done','failed','cancelled'))
+    check (status in ('queued','calling','done','failed','cancelled'))  -- 076 adds 'suggested'
 );
 
 create index if not exists call_queue_due_idx
