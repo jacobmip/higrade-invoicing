@@ -2,6 +2,14 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.29.0 — 2026-10-27
+
+- Day clock: a Start Day / End Day button at the top of the More sheet. It tracks the whole workday (drive time included) with no job attached, separate from the per-job clock. Both can be open at once.
+- Non-admin users see a "Day started · Xh Ym" banner while their day clock runs; tapping it opens the Time Clock tab.
+- Admin Hours tracker: each day cell shows day-clock hours, job hours and, when positive, the drive/other difference. Expanding a worker shows Day, Jobs and Drive/other totals for the range. A date with no day clock is paid on its job entries alone, as before.
+- Paid hours are counted once: Payroll, the Time Clock "This week" total and the Hours tracker use the day clock for a date when one exists, instead of adding day and job time together.
+- Migration 092: `time_entries.kind` accepts `day`, a day entry cannot carry an invoice, and the one-open-shift index is now one open day plus one open job-type shift per person.
+
 ## v1.28.9 — 2026-10-27
 
 - On My Way now texts the client directly instead of opening the Messages app. The button reads the tech's GPS, works out the drive time, and sends "Aloha [first name], your HI Grade Plumbing technician [name] is on the way and will arrive in approximately [X] minutes" from the business Twilio number.

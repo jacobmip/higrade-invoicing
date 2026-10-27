@@ -194,7 +194,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
     return d.getTime();
   }, []);
   const weekMine = visible.filter(e => e.techId === (whoFilter || myId) && new Date(e.clockInAt).getTime() >= weekStart);
-  const weekTotals = TC.totals(weekMine);
+  const weekTotals = { ...TC.totals(weekMine), minutes: TC.paidMinutes(weekMine.filter(e => e.clockOutAt)) };
   const flagged = entries.filter(e => (e.clockInOnSite === false || e.clockOutOnSite === false) && !e.reviewedAt);
 
   return (
@@ -230,7 +230,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
           <>
             <div style={heading}>Clock in</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
-              {TC.KINDS.map(k => {
+              {TC.KINDS.filter(k => !k.hidden).map(k => {
                 const on = kind === k.id;
                 return (
                   <button

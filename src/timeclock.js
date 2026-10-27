@@ -16,6 +16,8 @@ export const KINDS = [
   { id: 'supply', label: 'Supply run', needsJob: false },
   { id: 'shop',   label: 'Shop / yard', needsJob: false },
   { id: 'other',  label: 'Other',      needsJob: false },
+  // The day clock has its own button (More sheet); it is not a clock-in choice.
+  { id: 'day',    label: 'Day clock',  needsJob: false, hidden: true },
 ]
 
 // One GPS fix. Resolves with null rather than rejecting when the device will
@@ -126,6 +128,7 @@ export function siteStatus(onSite, meters) {
 export function totals(entries) {
   let open = 0, closed = 0, flagged = 0
   for (const e of entries || []) {
+    if (e.kind === 'day') continue // paid hours are counted once, see dayBreakdown()
     if (e.clockOutAt) closed += e.minutes || 0
     else open += 1
     if (e.clockInOnSite === false || e.clockOutOnSite === false) flagged += 1
@@ -151,4 +154,45 @@ export async function endShift(entryId, { onStage } = {}) {
   const coords = await getPosition()
   onStage?.('Closing your shift…')
   return db.clockOut(entryId, { coords })
+}
+
+// Day clock (migration 092): start of workday to end of workday, no job. The
+// day clock already includes the time spent on jobs, so paid hours must never
+// be day + job. For one person on one local date: the day clock's minutes if
+// he ran one, otherwise the sum of his job-type shifts.
+export function entryMinutes(e, nowMs = Date.now()) {
+  return e.clockOutAt ? (e.minutes || 0) : elapsedMinutes(e, nowMs)
+}
+
+export function dayBreakdown(entries, nowMs = Date.now()) {
+  let day = 0, job = 0, hasDay = false
+  for (const e of entries || []) {
+    const m = entryMinutes(e, nowMs)
+    if (e.kind === 'day') { day += m; hasDay = true } else job += m
+  }
+  return { day, job, hasDay, paid: hasDay ? day : job, other: hasDay ? Math.max(0, day - job) : 0 }
+}
+
+export async function startDay({ onStage } = {}) {
+  onStage?.('Getting your location…')
+  const coords = await getPosition()
+  onStage?.('Starting your day…')
+  return db.clockIn({ invoiceId: null, kind: 'day', coords })
+}
+
+export const endDay = (entryId, opts) => endShift(entryId, opts)
+
+// Paid minutes across many days for one person: each local date counts once,
+// as the day clock if he ran one, else his job-type shifts.
+export function paidMinutes(entries, nowMs = Date.now()) {
+  const byDay = new Map()
+  for (const e of entries || []) {
+    const d = new Date(e.clockInAt)
+    const k = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    if (!byDay.has(k)) byDay.set(k, [])
+    byDay.get(k).push(e)
+  }
+  let total = 0
+  for (const list of byDay.values()) total += dayBreakdown(list, nowMs).paid
+  return total
 }

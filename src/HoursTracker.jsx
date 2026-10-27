@@ -128,16 +128,27 @@ export default function HoursTracker({ users }) {
     for (const e of entries) if (!known.has(e.techId)) { known.add(e.techId); roster.push({ id: e.techId, name: 'Unknown user' }); }
     return roster.map(r => {
       const mine = entries.filter(e => e.techId === r.id).sort((a, b) => a.clockInAt.localeCompare(b.clockInAt));
-      const perDay = {};
-      let total = 0, active = 0;
+      // Per local date: day clock hours, job-type hours, and the difference
+      // (drive / travel / other paid time). A date with no day clock is paid
+      // on its job entries alone, as before the day clock existed.
+      const groups = {};
+      let active = 0;
       for (const e of mine) {
-        const m = e.clockOutAt ? (e.minutes || 0) : TC.elapsedMinutes(e, now);
-        if (!e.clockOutAt) active += 1;
-        total += m;
+        if (!e.clockOutAt && e.kind !== 'day') active += 1;
+        if (!e.clockOutAt && e.kind === 'day') active += 1;
         const k = localKey(new Date(e.clockInAt));
-        perDay[k] = (perDay[k] || 0) + m;
+        (groups[k] = groups[k] || []).push(e);
       }
-      return { ...r, mine, perDay, total, active };
+      const perDay = {};
+      let total = 0, dayTotal = 0, jobTotal = 0;
+      for (const [k, list] of Object.entries(groups)) {
+        const b = TC.dayBreakdown(list, now);
+        perDay[k] = b;
+        total += b.paid;
+        if (b.hasDay) { dayTotal += b.day; jobTotal += b.job; }
+      }
+      const otherTotal = Math.max(0, dayTotal - jobTotal);
+      return { ...r, mine, perDay, total, active, dayTotal, jobTotal, otherTotal };
     }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
   }, [users, entries, now]);
 
@@ -178,15 +189,25 @@ export default function HoursTracker({ users }) {
               </div>
               {dayKeys.length > 0 && (
                 <div style={{ display: 'flex', marginTop: 6, paddingLeft: 18 }}>
-                  {dayKeys.map(k => (
-                    <div key={k} style={{ flex: 1, textAlign: 'center' }}>
-                      <div style={{ fontSize: 9.5, color: '#8899bb' }}>{DOW[(parseKey(k).getDay() + 6) % 7]}</div>
-                      <div style={{ fontSize: 11.5, color: r.perDay[k] ? NAVY : '#ccd2e0', fontWeight: r.perDay[k] ? 600 : 400 }}>{r.perDay[k] ? hoursText(r.perDay[k]) : '–'}</div>
-                    </div>
-                  ))}
+                  {dayKeys.map(k => {
+                    const b = r.perDay[k];
+                    return (
+                      <div key={k} style={{ flex: 1, textAlign: 'center' }}>
+                        <div style={{ fontSize: 9.5, color: '#8899bb' }}>{DOW[(parseKey(k).getDay() + 6) % 7]}</div>
+                        <div style={{ fontSize: 11.5, color: b ? NAVY : '#ccd2e0', fontWeight: b ? 600 : 400 }}>{b ? hoursText(b.paid) : '–'}</div>
+                        {b && b.hasDay && <div style={{ fontSize: 9, color: '#8899bb', lineHeight: 1.25 }}>{hoursText(b.job)} job</div>}
+                        {b && b.other > 0 && <div style={{ fontSize: 9, color: ORANGE, lineHeight: 1.25 }}>+{hoursText(b.other)} drive</div>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
+            {isOpen && r.dayTotal > 0 && (
+              <div style={{ fontSize: 11.5, color: '#556', marginTop: 8, paddingLeft: 18 }}>
+                Day {hoursText(r.dayTotal)} · Jobs {hoursText(r.jobTotal)}{r.otherTotal > 0 ? ` · Drive/other ${hoursText(r.otherTotal)}` : ''}
+              </div>
+            )}
             {isOpen && (r.mine.length
               ? r.mine.map(e => <EntryRow key={e.id} e={e} now={now} onSaved={onSaved} />)
               : <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 8, paddingLeft: 18 }}>No entries in this range.</div>)}

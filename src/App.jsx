@@ -9810,10 +9810,9 @@ function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd,
   const rows = useMemo(() => {
     if (!loaded) return [];
     return roster.map(t => {
-      const mins = entries
-        .filter(e => e.techId === t.id && e.clockOutAt)
-        .reduce((s, e) => s + (e.minutes || 0), 0);
-      const openCount = entries.filter(e => e.techId === t.id && !e.clockOutAt).length;
+      // Day clock covers its jobs; TC.paidMinutes counts each date once.
+      const mins = TC.paidMinutes(entries.filter(e => e.techId === t.id && e.clockOutAt));
+      const openCount = entries.filter(e => e.techId === t.id && !e.clockOutAt && e.kind !== 'day').length;
       const rate = techPay[t.id]?.hourlyRate;
       const hourlyPay = rate ? (mins / 60) * rate : null;
 
@@ -11238,18 +11237,40 @@ export default function App() {
   // user, the clock is driven from this same device, and a dropped socket
   // failing silently would make the banner lie.
   const [openShift, setOpenShift] = useState(null);
+  // Day clock (migration 092): separate from the job shift above, no invoice.
+  const [openDay, setOpenDay] = useState(null);
+  const [dayBusy, setDayBusy] = useState(false);
+  const [dayErr, setDayErr] = useState("");
+  const [dayNow, setDayNow] = useState(Date.now());
+  useEffect(() => {
+    if (!openDay) return;
+    setDayNow(Date.now());
+    const t = setInterval(() => setDayNow(Date.now()), 20000);
+    return () => clearInterval(t);
+  }, [openDay]);
+  const toggleDay = async () => {
+    setDayErr(""); setDayBusy(true);
+    try {
+      if (openDay) { await TC.endDay(openDay.id); setOpenDay(null); }
+      else setOpenDay(await TC.startDay());
+    } catch (e) {
+      if (e?.code === "ALREADY_CLOCKED_IN") setOpenDay(await db.loadOpenDayEntry());
+      else setDayErr("Could not update the day clock. Check your connection and try again.");
+    }
+    setDayBusy(false);
+  };
   const refreshOpenShift = async () => {
     if (!session) { setOpenShift(null); return; }
     try { setOpenShift(await db.loadOpenTimeEntry()); }
     catch (e) { console.warn("loadOpenTimeEntry failed:", e); }
   };
   useEffect(() => {
-    if (!session) { setOpenShift(null); return; }
+    if (!session) { setOpenShift(null); setOpenDay(null); return; }
     let cancelled = false;
     const tick = async () => {
       try {
-        const o = await db.loadOpenTimeEntry();
-        if (!cancelled) setOpenShift(o);
+        const [o, d] = await Promise.all([db.loadOpenTimeEntry(), db.loadOpenDayEntry()]);
+        if (!cancelled) { setOpenShift(o); setOpenDay(d); }
       } catch (e) { /* offline: keep whatever the banner already shows */ }
     };
     tick();
@@ -13179,6 +13200,23 @@ export default function App() {
             every tab — an open shift he forgets about is a timesheet Jake has
             to reconstruct from memory a week later. Tapping it goes to the
             clock, which is where the Clock Out button is. */}
+        {openDay && !isAdmin && (
+          <button
+            onClick={() => { setView("list"); setTab("timeclock"); }}
+            style={{
+              width: "100%", border: "none", cursor: "pointer", background: "#0e7a64",
+              color: "#fff", padding: "7px 20px", display: "flex", alignItems: "center",
+              justifyContent: "space-between", gap: 8, textAlign: "left",
+            }}
+          >
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase" }}>
+              Day started · {TC.fmtMinutes(TC.elapsedMinutes(openDay, dayNow))}
+            </span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
+              Clock →
+            </span>
+          </button>
+        )}
         {openShift && (
           <button
             onClick={() => { setView("list"); setTab("timeclock"); }}
@@ -13333,6 +13371,24 @@ export default function App() {
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "10px 0 max(20px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" }}>
             <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "4px auto 12px" }} />
             <div style={{ padding: "0 18px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#8899bb", letterSpacing: 1.5, textTransform: "uppercase" }}>More</div>
+            <div style={{ padding: "0 14px 8px" }}>
+              <button
+                onClick={toggleDay}
+                disabled={dayBusy}
+                style={{
+                  width: "100%", border: openDay ? "none" : `2px solid ${NAVY}`, borderRadius: 12, cursor: dayBusy ? "default" : "pointer",
+                  padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  background: openDay ? "#16a085" : "#fff", color: openDay ? "#fff" : NAVY, opacity: dayBusy ? 0.6 : 1,
+                  fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
+                }}
+              >
+                <span style={{ fontSize: 17 }}>{dayBusy ? "Working…" : openDay ? "End Day" : "Start Day"}</span>
+                <span style={{ fontSize: 13, opacity: 0.9, textTransform: "none", letterSpacing: 0.3 }}>
+                  {openDay ? `${TC.fmtMinutes(TC.elapsedMinutes(openDay, dayNow))} since ${new Date(openDay.clockInAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Total paid hours incl. drive time"}
+                </span>
+              </button>
+              {dayErr && <div style={{ color: "#c0392b", fontSize: 12, marginTop: 6 }}>{dayErr}</div>}
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, padding: "4px 8px 8px" }}>
               {moreNavItems.map(n => (
                 <button key={n.id} onClick={() => { if (n.id === "pricebook") { setShowPriceBook(true); setShowMore(false); } else { setTab(n.id); setShowMore(false); } }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>

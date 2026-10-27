@@ -1373,9 +1373,23 @@ export async function loadOpenTimeEntry() {
   if (!me) return null
   const { data, error } = await supabase
     .from('time_entries').select(TIME_ENTRY_COLS)
-    .eq('tech_id', me).is('clock_out_at', null)
+    .eq('tech_id', me).is('clock_out_at', null).neq('kind', 'day')
     .order('clock_in_at', { ascending: false }).limit(1)
   if (error) { console.warn('loadOpenTimeEntry failed:', error.message); return null }
+  return data && data[0] ? toTimeEntry(data[0]) : null
+}
+
+// The caller's open day clock (migration 092), or null. Separate from the job
+// shift above: a person can have one of each open at the same time.
+export async function loadOpenDayEntry() {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const me = sessionData?.session?.user?.id
+  if (!me) return null
+  const { data, error } = await supabase
+    .from('time_entries').select(TIME_ENTRY_COLS)
+    .eq('tech_id', me).is('clock_out_at', null).eq('kind', 'day')
+    .order('clock_in_at', { ascending: false }).limit(1)
+  if (error) { console.warn('loadOpenDayEntry failed:', error.message); return null }
   return data && data[0] ? toTimeEntry(data[0]) : null
 }
 
