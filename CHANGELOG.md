@@ -5,6 +5,15 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.2 — 2026-10-27
+
+- Apprentice job screen is the full read-only invoice again. It opens the normal Preview (line items, prices, totals, customer notes) with a block above it: status, client and address, scheduled time, internal job notes, and the Call / On My Way / Navigate buttons.
+- Apprentice tabs are Preview, Photos and AI. Edit and History are hidden (History carries Restore and payment recording), Delete is hidden, Done just closes, and the auto-save flush is skipped so leaving the screen writes nothing.
+- AI tab for apprentices is read-only: `AIChatPanel` takes a `readOnly` prop that tells the model not to emit actions and never runs any.
+- `ApprenticeJobView.jsx` is now just the header block, rendered inside `InvoiceForm`; the separate full-screen apprentice component is gone from the `App()` render.
+
+---
+
 ## v1.28.1 — 2026-10-27
 
 - Texted photos and videos now reach the job. Root cause found by checking the live database: `job_photos_type_check` only allowed `before | after | other`, so `attach_media_to_recent_estimate()` (which inserts `photo` / `video`) failed on every attachment and `sms-inbound` logged and swallowed the error. Migration 089 widens the check. The `job-photos` bucket already had no size or MIME limit, so it needed no change.
