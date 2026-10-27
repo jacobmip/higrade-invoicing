@@ -10418,10 +10418,20 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
           </div>
         </div>
       )}
-      <MessageTemplatesCard />
-      <PaymentInstructionsCard />
-      <OnlinePaymentFeeCard />
-      <ReviewRequestCard />
+      {/* Shop-wide configuration, admin only. Every one of these cards writes
+          a row in the `settings` table, which migration 070 restricted to
+          admins — these are not per-user preferences, they are the payment
+          instructions on the PDF, the card surcharge, the review links and
+          the customer message templates. Shown to a tech they would render
+          fine and then fail on save, which is worse than not being there. */}
+      {isAdmin && (
+        <>
+          <MessageTemplatesCard />
+          <PaymentInstructionsCard />
+          <OnlinePaymentFeeCard />
+          <ReviewRequestCard />
+        </>
+      )}
       <div style={card}>
         <div style={heading}>Backup</div>
         <div style={body}>

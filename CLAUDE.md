@@ -15,10 +15,22 @@ Read this file first. It captures everything an AI agent needs to safely continu
 3. **Never create a pre-commit hook.**
 4. Git identity: `user.email "jacobmip@gmail.com"`, `user.name "Jacob Petersen"`.
 5. Use a commit message file (`/tmp/commitmsg.txt` + `git commit -F`), not inline `-m` for multi-line messages.
-6. **SQL migrations: paste the full SQL inline in chat for Jake to run in the Supabase SQL editor.** Do not assume any CLI access to Supabase.
-   - **One query per code block.** Never put several statements in one box expecting Jake to run them separately — he copies a whole box at a time. If a step must run on its own, give it its own box.
-   - **Always include the SQL editor link** with any query: https://supabase.com/dashboard/project/cwhgcxxszyvevjpbnnkc/sql/new
-   - Remember the editor only returns the result of the **last** statement in a batch, so a multi-statement box silently hides the earlier results.
+6. **SQL migrations: apply them yourself with `AI-OS/scripts/apply-migration.py`.** It drives the
+   Supabase Management API, which is the only one of the three doors to this database that runs
+   DDL. Jake does not paste SQL by hand. Working since 2026-10-20.
+   - **Dry-run first.** Copy the file with its final `commit;` changed to `rollback;` and apply
+     that. It compiles every statement against the real database and leaves nothing behind.
+   - **Then verify by exercising the mechanism, not by reading your own migration back.** For an
+     RLS change that means assuming the affected user's identity inside a rolled-back
+     transaction: `set local role authenticated; set local request.jwt.claims =
+     '{"sub":"<uuid>","role":"authenticated"}';` and attempting both what should work and what
+     should be refused.
+   - **An RLS-filtered UPDATE or DELETE affects zero rows instead of erroring.** A write the
+     policy's USING clause excludes looks like a success to the caller. A WITH CHECK violation
+     does raise. Plan for the silent case — it is how duplicate rows and phantom saves happen.
+   - If Jake ever does need to run one by hand: **one query per code block**, because he copies a
+     whole box at a time, always include https://supabase.com/dashboard/project/cwhgcxxszyvevjpbnnkc/sql/new,
+     and remember the editor only returns the result of the **last** statement in a batch.
 7. **Never use the words "scrape" / "scraping" / "crawl" / "crawling".** Use "extract" / "fetch" / "read".
 8. **No emoji in chat or code output.** (The ⚠️ in the AI chat fallback is the only intentional one.)
 9. Jake works mostly from his phone — keep replies short, no long diagnostic detours.
@@ -155,11 +167,27 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 067)
+## Database schema (current through migration 070)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
-`owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
-migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
-so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
+`owner_id = auth.uid() OR is_admin()`.
+
+**The assigned tech is the second way in (migrations 053 and 069).** `invoices` SELECT allows
+`assigned_tech_id = auth.uid()`, and since 069 so does UPDATE — but not DELETE, and the WITH
+CHECK pins `assigned_tech_id = auth.uid() and deleted_at is null`, so an assigned tech cannot
+trash a job, restore one, reassign it, or unassign himself.
+
+**A job's parts are reached through the job, never through `owner_id`.** `invoice_items`,
+`payments`, `invoice_versions`, `invoice_events` and `job_photos` are keyed on the parent
+invoice via `is_my_assigned_job()`; `clients` and `client_versions` via
+`is_my_assigned_client()`. `owner_id` on a child row is stamped by a trigger to whoever
+inserted it, which makes it useless as an access key as soon as two people touch one job —
+that is exactly what 069 fixed, and why 053 alone left an apprentice looking at a $0 job with
+no line items and no phone number.
+
+**Read access without write access is a bug, not a safe middle ground.**
+`save_invoice_with_items` DELETEs and re-INSERTs the whole item and payment set on every save.
+Grant SELECT on payments without DELETE and the caller reads them, sends them back, deletes
+none (RLS filters it silently) and inserts copies — a duplicate payment row per save.
 
 - `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('apprentice'|'technician'|'admin'), created_at
   - **`tier` is not `role`.** `role` drives `is_admin()` and therefore every RLS policy; `tier` (migration 054) is pay band and which Reports scorecard the person gets, and touches no policy. Never fold one into the other.
@@ -168,7 +196,7 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
   - **GE half tax has no invoice column.** A client with `ge_half_tax` is a GC we sub for: picking them sets a new document's tax to 0.5%. An invoice is GE half tax exactly when `tax = 0.5` (`isGeHalfTax()` in `src/geTax.js`), and that alone decides whether the preview, customer link and PDF print the GE license number. The per-invoice toggle just flips the rate.
 - `client_versions` — full client snapshots, mirrors invoice_versions
 - `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, assigned_tech_id, deleted_at, updated_at
-  - **`owner_id` is not `assigned_tech_id`.** `owner_id` is whoever created the row, and the `on conflict` branch of `save_invoice_with_items` sets `owner_id = excluded.owner_id`, so it is restamped to whoever saved last — an admin editing a plumber's invoice takes ownership of it. `assigned_tech_id` (migration 053) is who *ran* the job, is set deliberately, and is never restamped by a save. Anything that pays or scores a tech must use `assigned_tech_id`.
+  - **`owner_id` is not `assigned_tech_id`.** `owner_id` is whoever created the row; `assigned_tech_id` (migration 053) is who *ran* the job. Anything that pays or scores a tech must use `assigned_tech_id`. **Migration 069 stopped the restamping:** the `on conflict` branch used to set `owner_id = excluded.owner_id`, handing the document to whoever saved it last, which was survivable only while the owner was the sole writer. It is now `coalesce(public.invoices.owner_id, excluded.owner_id)`. Deliberate transfer goes through `claimInvoiceOwner()`.
 - `invoice_items` — invoice_id, name, description, qty, price, unit, discount, taxable, sort_order
 - `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
 - `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`
@@ -179,12 +207,16 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `notifications` / `device_tokens` — in-app bell + APNs
 - `ai_chat_history` — user_id PK, messages jsonb (max 200); **RLS self-only, admins do NOT bypass**
 - `settings` — key/value. Counters live here: `next_doc_num` is live, `next_num` and `next_estimate_num` are retired. `invoice_followup_live` (migration 055) gates every customer reminder the follow-up script sends; anything but `'true'` means preview only.
+  - **Not readable by everyone any more (migration 070).** It used to be one policy, `for all using (true)`, so any account that could log in could read and write the Twilio and Vapi credentials, the webhook secrets, the kill switches and the alert destinations. `is_privileged_setting(key)` is the deny-list; admins read everything, a tech reads the rest. Writes are admin-only **except the three counter keys**, which `save_invoice_with_items` (SECURITY INVOKER) upserts at the end of every new-document save — without that carve-out a non-admin cannot create any document at all.
+  - Add a new secret to `is_privileged_setting()`. Ordinary business config needs no migration; it is readable by default on purpose.
 - `invoice_reminders` — invoice_id, tier (1/7/14/30), days_overdue, channel ('sms'|'email'), status ('sent'|'failed'), recipient, amount_due, message, provider_id, error, sent_at. Migration 055. Written only by `scripts/invoice_followup.py` in the AI-OS repo under the service role; admins read. A partial unique index on `(invoice_id, tier) where status = 'sent'` is the duplicate guard.
 - `vapi_calls` — call_id (Vapi uuid, PK), invoice_id, phone, seconds, created_at. Migration 067. One row per Lisa call, written by `/api/vapi-call-ended` under the service role, admin-read only. No FK to invoices on purpose. **Holds no audio:** recordings stay in Vapi's private storage and are fetched on demand via `GET https://api.vapi.ai/call/{id}/mono-recording` (private key, `settings.vapi_private_key` or `VAPI_PRIVATE_KEY`), whose 302 `Location` is a short-lived signed URL the app plays directly. Read the redirect, never follow it with the Bearer header attached. Calls before 2026-10-27 are linked only where an abandoned-call note carried the id.
 - `google_credentials` — the app's server-side Google OAuth refresh token, plus `calendar_id` (the write target, must match the receptionist's Apps Script) and `read_calendar_ids` (every calendar the Calendar tab displays). Migration 045/046.
 
 ### Helper functions and RPCs
 - `is_admin()` / `is_admin_uid(uid)` — SECURITY DEFINER; the second breaks RLS recursion in profiles policies
+- `is_my_assigned_job(invoice_id text)` / `is_my_assigned_client(client_id uuid)` — SECURITY DEFINER, STABLE, migration 069. The access key for every child row of an invoice. Definer on purpose: a policy on `invoice_items` that queried `invoices` directly would re-enter the invoices policies per row. Both answer one yes/no question about the caller's own assignments and leak nothing about anyone else's work.
+- `is_privileged_setting(key text)` — IMMUTABLE, migration 070. The `settings` read deny-list.
 - `admin_owner_ids()` — SECURITY DEFINER, migration 043. Admin user ids, used by the shared price book policy. Reading `profiles` under RLS from another table's policy can silently return nothing, hence the definer.
 - `set_owner_id()` — trigger, stamps owner_id on insert. **Returns NULL under the service-role key** (`auth.uid()` is null), which is how down-payment invoices ended up invisible — see migration 037.
 - `save_invoice_with_items(...)` — the main upsert. Redefined by seven migrations; rebuild it from its live definition, never from an old file.

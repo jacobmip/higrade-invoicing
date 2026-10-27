@@ -5,6 +5,53 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.24.0 — 2026-10-26
+
+### An apprentice can actually work a job you assign him (migrations 069, 070)
+
+- **The gap.** Migration 053 let an assigned tech *see* the invoice row and stopped there.
+  Checked against production by assuming a non-admin account's identity: the line items, the
+  client record, the payments and every write were all still gated on `owner_id`. Assigning a
+  job to an apprentice gave him a client name, an address and a calendar slot — no scope of
+  work, a $0 total, no phone number, and no way to save anything.
+- **Access to a job's parts now follows the job, not whoever typed them in.** Line items,
+  payments, photos, history and the client's contact record are reached through the parent
+  invoice via two new linkage helpers, `is_my_assigned_job()` and `is_my_assigned_client()`.
+  `owner_id` on a child row is set by a trigger to whoever inserted it, which makes it
+  useless as an access key the moment two people touch one job.
+- **He can:** read and edit the jobs assigned to him, including pricing and payments, update
+  that client's contact details, add photos, and create his own documents under his own name.
+- **He cannot:** trash a job, restore one, reassign it, unassign himself, or see any job that
+  is not his — verified by attempting each one as a non-admin and being refused.
+- **Read without write would have been worse than nothing.** `save_invoice_with_items` does a
+  DELETE-then-INSERT of the whole payment set on every save, and RLS silently filters a DELETE
+  to zero rows instead of erroring. A tech who could read payments but not delete them would
+  have inserted a duplicate payment row on every single save.
+- **A save no longer transfers ownership of the document.** The RPC ended with
+  `owner_id = excluded.owner_id`, which is whoever saved last — migration 053's own header
+  called this out. Harmless while only the owner could write; with an assigned tech who can
+  write, Jake's job would have changed hands the first time the apprentice saved it.
+
+### The settings table is no longer readable by anyone who can log in (migration 070)
+
+- **`settings` had one policy: `for all using (true)` to every authenticated user.** Confirmed
+  against production that a non-admin account could read `twilio_sid`, `twilio_token`,
+  `vapi_private_key` and `lead_secret`, and could have flipped `outbound_calls_enabled`.
+  Theoretical while Jake was the only login; not theoretical once an employee has one.
+- **Credentials, webhook secrets, kill switches and the alert destinations are admin-only now.**
+  A deny-list, not an allow-list, so a new piece of ordinary business config keeps working for
+  a tech without a migration — a new *secret* is the thing that has to be named.
+- **The document counters are carved out and that carve-out is load-bearing.**
+  `save_invoice_with_items` is SECURITY INVOKER and ends by upserting `next_num`, so without
+  the exception a non-admin creating any document at all would have failed on the last
+  statement of the save. Exercised for real: a non-admin new-invoice save now completes.
+- **The four shop-config cards in Settings are admin-only in the UI to match.** Writes to those
+  keys fail *silently* (RLS filters the row rather than erroring), so a tech would have seen a
+  successful save that did nothing.
+- **Job photos are scoped to the jobs you can see.** Was 222 photos of every customer's house
+  to any account that could log in. The public estimate page is unaffected — it reads
+  server-side under its own key.
+
 ## v1.23.0 — 2026-10-27
 
 ### Play Lisa's call recordings in the app (migration 067)
