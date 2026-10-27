@@ -4949,7 +4949,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               scorecard. Empty string is the sentinel for "clear it" — db.js
               turns null into the literal 'none' the RPC understands, because
               a plain null means "leave it alone" to any outside writer. */}
-          {isAdmin && (users || []).length > 1 && (
+          {isAdmin && (
             <div style={{ padding: "12px 16px 0" }}>
               <label style={S.label}>Assigned Tech</label>
               <select
@@ -4958,14 +4958,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 onChange={e => setField("assignedTechId", e.target.value || null)}
               >
                 <option value="">Unassigned</option>
-                {(users || []).map(u => (
+                {(users || []).filter(u => u.id === form.assignedTechId || ["service_tech", "journeyman", "admin"].includes(u.tier)).map(u => (
                   <option key={u.id} value={u.id}>
                     {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
                   </option>
                 ))}
               </select>
               <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
-                Who ran the job. Drives the tech scorecard in Reports.
+                The primary tech who ran the job. Drives the tech scorecard in Reports.
               </div>
             </div>
           )}
@@ -4975,23 +4975,23 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               document's own Save button — these are pay-affecting fields,
               not part of what gets drafted and revised, and the database
               pins both against anyone but Jake regardless of what this form
-              sends. Shown only for a document that already exists: there is
-              nothing to flag commission on before it has an id to flag. */}
-          {isAdmin && (invoice || autoSavedId) && (
+              sends. Shown for any document that has an id (saved or already
+              auto-saved): there is nothing to flag before it has one. */}
+          {isAdmin && (invoice?.id || form.id || autoSavedId) && (
             <div style={{ padding: "12px 16px 0" }}>
-              <label style={S.label}>Commission</label>
+              <label style={S.label}>Apprentice</label>
               <select
                 style={S.input}
                 value={form.commissionTechId || ""}
                 onChange={async (e) => {
                   const v = e.target.value || null;
                   setField("commissionTechId", v);
-                  try { await db.setInvoiceCommissionTech(invoice?.id || autoSavedId, v); }
+                  try { await db.setInvoiceCommissionTech(invoice?.id || form.id || autoSavedId, v); }
                   catch (err) { console.warn("setInvoiceCommissionTech failed:", err); }
                 }}
               >
-                <option value="">Hourly only — no commission</option>
-                {(users || []).map(u => (
+                <option value="">No apprentice (hourly only)</option>
+                {(users || []).filter(u => u.id === form.commissionTechId || u.tier === "apprentice").map(u => (
                   <option key={u.id} value={u.id}>
                     {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
                   </option>

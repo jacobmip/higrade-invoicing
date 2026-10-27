@@ -5,6 +5,12 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.2 — 2026-10-27
+
+- Edit tab: the commission dropdown is now labelled **Apprentice** and shows on any document that has an id (it also checks `form.id`, not just the prop and the auto-save id). Assigned Tech no longer requires more than one user.
+- Apprentice lists only `apprentice` tier profiles; Assigned Tech lists `service_tech`, `journeyman` and `admin`. A value already set stays visible even if its tier no longer matches.
+- Migration 085: Kaulana filed as `apprentice`.
+
 ## v1.27.1 — 2026-10-27
 
 - Merged the `technician` tier into `service_tech` (migration 084). Settings, the roster and the scorecard fallbacks now use `service_tech`; `setUserTier` no longer accepts `technician`.
