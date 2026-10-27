@@ -5,6 +5,20 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.22.2 — 2026-10-27
+
+### Lisa's bookings now land as a real visit (migration 065)
+
+- **`create_estimate_from_lead` writes `visits`.** An appointment Lisa books used to be
+  stored only in `gcal_date`, which since migration 044 is derived from `visits`. So the
+  manager bot, the chat agent and the app's calendar sync could not see or move her jobs.
+  The visit is written in the same insert, so the Google push is unchanged, and the
+  calendar callback (047) already writes the event id into that visit.
+- **Two regressions restored in the same function.** Migrations 062 and 063 were written
+  from an old copy of it, which dropped the Hawaii time fix (049: calls after 2pm were
+  dated tomorrow) and the shared document counter. 065 restores both, only where missing.
+- SQL only. No app code changed.
+
 ## v1.22.1 — 2026-10-27
 
 ### Calendar: a job no longer shows twice (blue Job plus grey "Other")

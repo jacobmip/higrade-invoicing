@@ -153,7 +153,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 064)
+## Database schema (current through migration 065)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`. `invoices` is the exception since
 migration 053: its SELECT policy also allows `assigned_tech_id = auth.uid()`,
@@ -191,7 +191,7 @@ so a tech can read the jobs assigned to them. Writes are still owner-or-admin.
 - `canonical_payment_method(text)` + `payments_canonical_method()` — function and BEFORE INSERT OR UPDATE trigger on `payments`, migrations 061 and 064, **both applied and verified 2026-10-20** (trigger present in `pg_trigger`; folding proven on 28 inputs that match `canonicalMethod()` exactly; trigger proven to fire by an `update` inside a rolled-back transaction). Folds a method spelling to one of the eight canonical labels and **leaves an unrecognised value alone**. Mirrors `canonicalMethod()` in `src/paymentMethods.js`; change the two together. A trigger and not a check constraint on purpose, so restoring an old backup cannot fail hard on a label nobody anticipated. Never use `initcap()` here — it turns `PAYPAL` into `Paypal`.
 - `visits[]` entries are `{ id, start, minutes, label, kind, eventId, builtBy, pending? }`. `kind` is `job` / `estimate` / `emergency` and drives the Google event colour; absent, it falls back to the document type, so nothing needed backfilling when it was added. `builtBy: "app"` marks an event this app created — only those get their description and location patched on a reschedule, so a booking from Lisa keeps the caller's own words. Both live in the jsonb, so neither cost a migration.
 - `sync_first_visit()` — trigger, migration 044. Mirrors the earliest entry of `invoices.visits` into `gcal_date` / `gcal_event_id` / `gcal_duration_minutes`. Runs only when `visits` is a non-empty array, so the AI receptionist writing `gcal_date` directly on a lead is left alone.
-- `create_estimate_from_lead(...)` / `capture_abandoned_call(...)` — AI receptionist
+- `create_estimate_from_lead(...)` / `capture_abandoned_call(...)` — AI receptionist. Since migration 065 a booked appointment is written as a one-entry `visits` array in the same INSERT (kind `estimate`, no `builtBy`, `eventId` null until `set_invoice_gcal_event()` fills it), and numbers come from `allocate_doc_number()`.
 - `set_invoice_internal_notes(...)`, `set_invoice_gcal_event(...)`, `push_invoice_to_calendar(...)`, `notify_owner_of_lead(...)`, `propagate_client_to_invoices(...)`, `lookup_client_by_phone(...)`, `log_client_message(...)`, `client_message_thread(...)`
 
 **`src/App.jsx` and `src/db.js` are not the only writers to `invoices`.** The AI
@@ -249,7 +249,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **064** — **applied and verified 2026-10-20.** Corrects one divergence in 061: `canonical_payment_method('   ')` returned `'   '` where the JS returns `''`, because 061 detected the blank and then handed back its argument instead of the trimmed value. A method of three spaces is worse than an empty one — it is falsy in neither language, so it survives `<> ''` guards while displaying as nothing. Parity is now exact on 28 inputs; `null` still returns `null`, which is deliberate and not a divergence.
 - `20260515_job_photos.sql`, `20260515_price_book_seed.sql` — date-named, apply after the numbered set
 
-Next migration is `065_<short_description>.sql`. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **065** — **written 2026-10-27, not yet applied.** `create_estimate_from_lead` writes `visits` when Lisa books, so her jobs are visible to the calendar sync, the manager bot and the chat agent. Patches the live definition (041 pattern) because **062 and 063 were written from an old copy of the function** and, if that copy is live, undid 049 (Hawaii time) and the shared counter; 065 restores both, each only if the old text is present. Tested on a local Postgres 16 against the 063 text, a variant with 049 already applied, and a mismatched variant (aborts, nothing changed).
+
+Next migration is `066_<short_description>.sql`. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 
