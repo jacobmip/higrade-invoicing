@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.31.0 — 2026-10-27
+
+- Added Change Password to Settings (Account card) for non-admin users. A modal asks for a new password and confirmation (8 characters minimum, must match) and calls `supabase.auth.updateUser`. Admins do not see it; they manage passwords in the Supabase dashboard.
+
 ## v1.30.3 — 2026-10-27
 
 - Fixed the clock-in banner overlapping content. The invoice/estimate form was pinned 64px from the top regardless of the header, so the "On the clock" and "Day started" banners covered its top. It now sits below the measured header height, so the banner pushes content down the same way on every screen.

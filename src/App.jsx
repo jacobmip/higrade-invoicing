@@ -10736,6 +10736,28 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
   const [showConfirm, setShowConfirm] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Change password (non-admin only; admins use the Supabase dashboard).
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const closePw = () => { setPwOpen(false); setPwNew(""); setPwConfirm(""); setPwErr(""); };
+  const submitPw = async () => {
+    if (pwNew.length < 8) { setPwErr("Password must be at least 8 characters."); return; }
+    if (pwNew !== pwConfirm) { setPwErr("Passwords do not match."); return; }
+    setPwBusy(true); setPwErr("");
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pwNew });
+      if (error) throw error;
+      closePw();
+      setStatus({ kind: "ok", text: "Password updated" });
+    } catch (e) {
+      setPwErr("Could not update password: " + (e?.message || e));
+    }
+    setPwBusy(false);
+  };
+
   const handleExport = async () => {
     setBusy(true); setStatus(null);
     try {
@@ -10952,6 +10974,14 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
         </div>
       </div>
 
+      {!isAdmin && (
+        <div style={card}>
+          <div style={heading}>Account</div>
+          <div style={body}>Signed in as <b>{profile?.display_name || "you"}</b>.</div>
+          <button onClick={() => setPwOpen(true)} style={S.btn("ghost")}>Change Password</button>
+        </div>
+      )}
+
       <div style={card}>
         <div style={heading}>Sign out</div>
         <div style={body}>
@@ -10968,6 +10998,23 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
           Sign out
         </button>
       </div>
+
+      {pwOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: "100%", maxWidth: 380, boxSizing: "border-box" }}>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, marginBottom: 12 }}>Change Password</div>
+            <label style={S.label}>New Password</label>
+            <input type="password" autoComplete="new-password" value={pwNew} onChange={e => setPwNew(e.target.value)} style={{ ...S.input, marginBottom: 10 }} />
+            <label style={S.label}>Confirm Password</label>
+            <input type="password" autoComplete="new-password" value={pwConfirm} onChange={e => setPwConfirm(e.target.value)} style={{ ...S.input, marginBottom: 10 }} />
+            {pwErr && <div style={{ fontSize: 13, color: "#8a1f1f", marginBottom: 10 }}>{pwErr}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={closePw} disabled={pwBusy} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+              <button onClick={submitPw} disabled={pwBusy} style={{ ...S.btn("primary"), flex: 1, opacity: pwBusy ? 0.5 : 1 }}>{pwBusy ? "Saving…" : "Update"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showConfirm && pendingFile && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
