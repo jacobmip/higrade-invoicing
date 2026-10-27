@@ -92,7 +92,7 @@ src/
   printablePdf.js    — jsPDF invoice/estimate generator
   JobPhotos.jsx      — per-job photo gallery
   OnMyWay.jsx        — "on my way" customer notification
-  ApprenticeJobView.jsx — the only job screen an `apprentice`-tier user (or View-as apprentice) gets: no money, no edit controls
+  JobActions.jsx    — Call / On My Way / Navigate row (Preview tab) and the clock in/out button, both for non-admin users in the standard form
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker

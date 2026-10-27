@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.5 — 2026-10-27
+
+- Removed `ApprenticeJobView` and the apprentice-only layout. Every tier now uses the standard invoice/estimate form.
+- Permissions live in the form: the assigned tech (apprentices included) and admin edit fully; a commission-only tech gets no Edit tab, no delete, no payment controls, no signature, no version restore. View-as follows the viewed person.
+- Call / On My Way / Navigate moved to a compact row at the top of the Preview tab, for non-admin users.
+- New clock in / clock out button under the tabs for non-admin users: Clock In, a green Clock Out with elapsed time on this job, or "Clocked in elsewhere" when the open shift is on another job. Uses new `startShift` / `endShift` in `timeclock.js`, which the Time Clock tab now shares.
+- Removed the apprentice AI tab.
+
 ## v1.28.4 — 2026-10-27
 
 - Apprentice who is the assigned tech on a job is solo: full Edit tab and line items. Commission-only apprentice stays read-only.
