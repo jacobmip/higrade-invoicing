@@ -1961,9 +1961,53 @@ function buildCalendarPatch(body, v, { titleChanged = false } = {}) {
 // unscheduling on that guess would both be wrong. A later edit self-heals: the
 // PATCH 404s and falls back to creating a replacement.
 //
+// ─── Finding a visit's event when the visit lost its eventId ──────────────────
+// A writer outside the app (Lani, a script) can store a visit with no eventId
+// while a Google event for that booking already exists. Left alone, the sync
+// below creates a second event for the visit, and the first one is linked to
+// nothing, so the calendar draws it as a grey "Other" block next to the job.
+//
+// This finds that existing event instead: not already claimed by another visit,
+// and carrying the document number in its title or description, which every
+// writer puts there (the app, push_invoice_to_calendar, Lisa's Apps Script).
+// An exact start-time match wins; failing that, the one candidate on the same
+// day, since a booking is sometimes dragged within the day in Google. Two or
+// more candidates on that day and no exact match means no guess.
+function calEventMentions(ev, docId) {
+  if (!docId) return false;
+  const re = new RegExp(`\\b${String(docId).replace(/[^A-Za-z0-9]/g, "")}\\b`, "i");
+  return re.test(ev?.summary || "") || re.test(ev?.description || "");
+}
+
+function findUnlinkedEventForVisit(inv, visit, events, claimed) {
+  if (!visit?.start || !inv?.id) return null;
+  const date = visit.start.slice(0, 10);
+  const mins = (parseInt(visit.start.slice(11, 13), 10) || 0) * 60 + (parseInt(visit.start.slice(14, 16), 10) || 0);
+  const sameDay = [];
+  for (const ev of (events || [])) {
+    if (!ev?.id || claimed.has(ev.id)) continue;
+    const s = ev.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
+    if (!s || s.date !== date) continue;
+    if (!calEventMentions(ev, inv.id)) continue;
+    if (s.minutes === mins) return ev;
+    sameDay.push(ev);
+  }
+  return sameDay.length === 1 ? sameDay[0] : null;
+}
+
+// Every event id some visit already points at. An event in this set belongs
+// to its visit and is never adopted by another.
+function calClaimedEventIds(invoices) {
+  const claimed = new Set();
+  (invoices || []).forEach(inv => (Array.isArray(inv.visits) ? inv.visits : [])
+    .forEach(v => { if (v?.eventId) claimed.add(v.eventId); }));
+  return claimed;
+}
+
 // Returns [{ id, visits }] for the invoices that actually changed.
 async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackMinutes, pushed }) {
   const byId = new Map((events || []).filter(e => e?.id).map(e => [e.id, e]));
+  const claimed = calClaimedEventIds(invoices);
   const out = [];
 
   for (const inv of (invoices || [])) {
@@ -1975,6 +2019,18 @@ async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackM
 
     for (const v of visits) {
       const nv = { ...v };
+
+      // Adopt the booking's existing event rather than create a duplicate.
+      // Not marked builtBy "app": someone else made it, so a reschedule keeps
+      // its description. A pending visit still pushes below, now as a PATCH.
+      if (!nv.eventId) {
+        const found = findUnlinkedEventForVisit(inv, nv, events, claimed);
+        if (found) {
+          nv.eventId = found.id;
+          claimed.add(found.id);
+          changed = true;
+        }
+      }
 
       if (canWrite && (nv.pending || !nv.eventId)) {
         // Creating an event is the one step that cannot be undone by repeating
@@ -7590,6 +7646,12 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
     const gcalById = new Map();
     gcalEvents.forEach(ev => { if (ev.id) gcalById.set(ev.id, ev); });
     const merged = new Set();
+    // Events some visit already points at, so the fallback match below never
+    // folds one job's event into another.
+    const claimed = calClaimedEventIds(invoices);
+    // "DOCID|date|startMin" for every job block drawn, so a leftover duplicate
+    // event for the same booking can be recognised below.
+    const drawnJobs = new Set();
 
     // How long this job runs, best source first: what was saved on the invoice,
     // then the length of its Google event, then the shared default.
@@ -7607,7 +7669,14 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
 
       visits.forEach((visit, vi) => {
         if (!visit?.start) return;
-        const linked = visit.eventId ? gcalById.get(visit.eventId) : null;
+        // A visit with no eventId may still have an event in Google, booked by
+        // whoever wrote the visit. Fold it in here so it does not also draw as
+        // a grey "Other" block; the sync stores the link on its next pass.
+        let linked = visit.eventId ? gcalById.get(visit.eventId) : null;
+        if (!visit.eventId) {
+          linked = findUnlinkedEventForVisit(inv, visit, gcalEvents, claimed);
+          if (linked) claimed.add(linked.id);
+        }
         const s = linked?.start?.dateTime ? calZonedParts(linked.start.dateTime) : null;
         const e = linked?.end?.dateTime ? calZonedParts(linked.end.dateTime) : null;
         const stored = Number(visit.minutes) > 0 ? Number(visit.minutes) : null;
@@ -7634,6 +7703,7 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
         // three identical entries.
         const suffix = (!firstLine && visits.length > 1) ? ` · Visit ${vi + 1}` : "";
         const kind = visitKind(inv, visit);
+        drawnJobs.add(`${String(inv.id).toUpperCase()}|${date}|${startMin}`);
         push({
           date, startMin, endMin,
           label: `${calJobWhat(inv, visit)} · ${who}${suffix}`,
@@ -7650,6 +7720,13 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
       if (ev.start?.date) { push({ date: ev.start.date, allDay: true, label: ev.summary || "Event", color: GCAL_OTHER.hex, type: "gcal", kind: "other" }); return; }
       const s = ev.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
       if (!s) return;
+      // A second Google event for a booking already drawn as a job: the same
+      // document number, starting at the same minute. Jobs synced before
+      // v1.22.1 can carry one, made when the sync created a fresh event for a
+      // visit whose original had lost its link. It stays in Google until
+      // deleted there; it just stops drawing as a grey copy here.
+      const ids = `${ev.summary || ""} ${ev.description || ""}`.match(/\b(?:EST|INV)\d{3,}\b/gi) || [];
+      if (ids.some(id => drawnJobs.has(`${id.toUpperCase()}|${s.date}|${s.minutes}`))) return;
       const e = ev.end?.dateTime ? calZonedParts(ev.end.dateTime) : null;
       push({
         date: s.date, startMin: s.minutes,
