@@ -60,12 +60,19 @@ function CallRow({ call }) {
     }
   };
 
+  const outbound = call.direction === 'outbound';
   const meta = [fmtWhen(call.created_at), fmtLen(call.seconds)].filter(Boolean).join(' · ');
 
   return (
     <div style={{ padding: '10px 12px', borderTop: '1px solid #f0f2f8' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ fontSize: 13, color: '#333', minWidth: 0 }}>{meta || 'Call'}</div>
+        <div style={{ fontSize: 13, color: '#333', minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{
+            background: outbound ? '#fff1e0' : '#e8f1fb', color: outbound ? '#b85c00' : BLUE,
+            borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700, flexShrink: 0,
+          }}>{outbound ? 'Outbound' : 'Inbound'}</span>
+          <span>{meta || 'Call'}</span>
+        </div>
         {state.status !== 'ready' && (
           <button
             type="button"
@@ -106,7 +113,7 @@ export default function CallRecordings({ docId, convertedToId }) {
     let cancelled = false;
     supabase
       .from('vapi_calls')
-      .select('call_id, created_at, seconds')
+      .select('call_id, created_at, seconds, direction')
       .in('invoice_id', ids)
       .order('created_at', { ascending: false })
       .then(({ data, error }) => {

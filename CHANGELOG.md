@@ -2,6 +2,12 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.30.1 — 2026-10-27
+
+- Migration 093: `vapi_calls.direction` ('inbound' default, 'outbound'), and `call_queue.approval`, `approval_asked_at`, `notified`.
+- Call recordings on an estimate now carry an Inbound / Outbound label. Outbound calls placed by `AI-OS/scripts/outbound_call.py` are filed in `vapi_calls` when `check` sees them end.
+- Outbound runner (AI-OS repo): every live dial waits for a Telegram APPROVE, a call-summary email goes to the business inbox when a call finishes. The manager bot records the APPROVE/CANCEL reply.
+
 ## v1.30.0 — 2026-10-27
 
 - Lisa no longer books blind. New edge route `api/availability.js` (`GET ?date=YYYY-MM-DD` or POST `{date}`) returns Jake's busy blocks for a Hawaii day and the free windows of 90+ minutes between 8am and 6pm. Busy time is read from every invoice's `gcal_date` and `visits[]` plus every Google calendar in `google_credentials` (personal and Work), so an appointment that is on no invoice still blocks.
