@@ -1,5 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import * as COMP from "./competencies";
+import TimeClockTab from "./TimeClockTab";
+import * as TC from "./timeclock";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -9,6 +11,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
+import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
@@ -4966,6 +4969,56 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             </div>
           )}
 
+          {/* Commission + material cost (migration 075). Admin-only, and
+              saved immediately on change rather than waiting for the
+              document's own Save button — these are pay-affecting fields,
+              not part of what gets drafted and revised, and the database
+              pins both against anyone but Jake regardless of what this form
+              sends. Shown only for a document that already exists: there is
+              nothing to flag commission on before it has an id to flag. */}
+          {isAdmin && (invoice || autoSavedId) && (
+            <div style={{ padding: "12px 16px 0" }}>
+              <label style={S.label}>Commission</label>
+              <select
+                style={S.input}
+                value={form.commissionTechId || ""}
+                onChange={async (e) => {
+                  const v = e.target.value || null;
+                  setField("commissionTechId", v);
+                  try { await db.setInvoiceCommissionTech(invoice?.id || autoSavedId, v); }
+                  catch (err) { console.warn("setInvoiceCommissionTech failed:", err); }
+                }}
+              >
+                <option value="">Hourly only — no commission</option>
+                {(users || []).map(u => (
+                  <option key={u.id} value={u.id}>
+                    {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
+                  </option>
+                ))}
+              </select>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <label style={{ ...S.label, marginBottom: 0, flexShrink: 0 }}>Material cost</label>
+                <input
+                  type="number" step="0.01" min="0" inputMode="decimal"
+                  style={{ ...S.input, flex: 1 }}
+                  value={form.materialCost ?? 0}
+                  onChange={e => setField("materialCost", e.target.value)}
+                  onBlur={async (e) => {
+                    const v = Number(e.target.value) || 0;
+                    setField("materialCost", v);
+                    try { await db.setInvoiceMaterialCost(invoice?.id || autoSavedId, v); }
+                    catch (err) { console.warn("setInvoiceMaterialCost failed:", err); }
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 4, lineHeight: 1.5 }}>
+                Commission pays on total minus material cost, only once this
+                is marked Paid. He was solo, sold it, and collected it — if
+                you did any of those, leave this on Hourly only.
+              </div>
+            </div>
+          )}
+
           {/* Line Items */}
           <div ref={aiSectionRef} style={{ padding: "16px 16px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 6 }}>
@@ -5095,6 +5148,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               onChange={e => setField("internalNotes", e.target.value)}
               placeholder="Call details, gate code, dog in the yard, account history… Never shown to the customer."
             />
+            {/* Lisa's calls about this job, playable here. Renders nothing
+                when there are none; admins only (migration 067). */}
+            {isAdmin && <CallRecordings docId={form.id} convertedToId={form.convertedToId} />}
           </div>
 
           {/* Schedule & Reminders */}
@@ -9079,10 +9135,17 @@ function ExpensesTab({ expenses, onSave, onDelete, newToken }) {
 // measured on the only thing they do control: how fast they are learning the
 // trade. Tier flips them onto the revenue board at graduation.
 
-function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
+function CompetencyModal({ tech, levels, selfLevels, canEdit, canRateSelf, onSet, onSetSelf, onClose }) {
   const [open, setOpen] = useState(() => new Set([COMP.DOMAINS[0].key]));
   const [saving, setSaving] = useState(null);
+  const [savingSelf, setSavingSelf] = useState(null);
   const prog = COMP.progressFor(levels);
+  const selfProg = COMP.progressFor(selfLevels || {});
+  // How many skills he has rated at all. A sheet he has never filled in reads
+  // identically to one he rated all zeros unless this is counted separately.
+  const ratedCount = COMP.ALL_SKILLS.filter(
+    sk => (selfLevels || {})[sk.key] !== undefined
+  ).length;
 
   const toggle = (k) => setOpen(s => {
     const n = new Set(s);
@@ -9096,6 +9159,12 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
     try { await onSet(skillKey, level); } finally { setSaving(null); }
   };
 
+  const pickSelf = async (skillKey, level) => {
+    if (!canRateSelf) return;
+    setSavingSelf(skillKey);
+    try { await onSetSelf(skillKey, level); } finally { setSavingSelf(null); }
+  };
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#f5f7fb", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
@@ -9103,7 +9172,14 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tech.name}</div>
-              <div style={{ color: "#8899bb", fontSize: 11 }}>Apprentice · {Math.round(prog.overallPct * 100)}% overall</div>
+              <div style={{ color: "#8899bb", fontSize: 11 }}>
+                Apprentice · {Math.round(prog.overallPct * 100)}% signed off
+                {canRateSelf
+                  ? ` · you have rated ${ratedCount}/${COMP.SKILL_COUNT}`
+                  : ratedCount > 0
+                    ? ` · he rates himself ${Math.round(selfProg.overallPct * 100)}% (${ratedCount}/${COMP.SKILL_COUNT} rated)`
+                    : " · he has not rated himself yet"}
+              </div>
             </div>
             <button onClick={onClose} style={{ background: "rgba(255,255,255,0.12)", border: "none", color: "#fff", borderRadius: 8, padding: "7px 13px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", flexShrink: 0 }}>Done</button>
           </div>
@@ -9132,6 +9208,12 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
                   <div style={{ padding: "0 14px 12px" }}>
                     {d.skills.map(sk => {
                       const lv = Math.max(0, Math.min(COMP.MAX_LEVEL, levels[sk.key] ?? 0));
+                      const claim = (selfLevels || {})[sk.key];
+                      const hasClaim = claim !== undefined;
+                      // Only flag a claim that runs AHEAD of the sign-off.
+                      // Behind is normal and means nothing; ahead is the one
+                      // that says "check me on this".
+                      const claimsMore = hasClaim && claim > lv;
                       return (
                         <div key={sk.key} style={{ padding: "9px 0", borderTop: "1px solid #f4f6fa" }}>
                           <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 6 }}>
@@ -9140,6 +9222,13 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
                               <span title="Must be Solo before running a van" style={{ flexShrink: 0, background: "#fff1ec", color: ORANGE, fontSize: 8, fontWeight: 700, letterSpacing: 0.6, padding: "2px 5px", borderRadius: 3, textTransform: "uppercase" }}>Gate</span>
                             )}
                           </div>
+                          {/* The owner's sign-off. The only number the
+                              graduation gate reads. */}
+                          {canRateSelf && (
+                            <div style={{ fontSize: 8.5, color: "#aab4c8", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 3 }}>
+                              Signed off by Jake
+                            </div>
+                          )}
                           <div style={{ display: "flex", gap: 3, opacity: saving === sk.key ? 0.45 : 1 }}>
                             {COMP.LEVELS.map(L => {
                               const on = lv === L.v;
@@ -9163,6 +9252,51 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
                               );
                             })}
                           </div>
+
+                          {/* His own call. A second, separate number — the
+                              database refuses to let him move the one above
+                              (migration 071), so this is not a shortcut to
+                              graduating, it is him telling Jake where he
+                              thinks he is. */}
+                          {canRateSelf && (
+                            <>
+                              <div style={{ fontSize: 8.5, color: claimsMore ? ORANGE : "#aab4c8", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", margin: "7px 0 3px" }}>
+                                {hasClaim ? "Your call" : "Your call — not rated yet"}
+                              </div>
+                              <div style={{ display: "flex", gap: 3, opacity: savingSelf === sk.key ? 0.45 : 1 }}>
+                                {COMP.LEVELS.map(L => {
+                                  const on = hasClaim && claim === L.v;
+                                  return (
+                                    <button
+                                      key={L.v}
+                                      onClick={() => pickSelf(sk.key, L.v)}
+                                      title={L.label}
+                                      style={{
+                                        flex: 1, padding: "5px 2px", borderRadius: 6, cursor: "pointer",
+                                        border: on ? `2px solid ${NAVY}` : "1px dashed #dde2ee",
+                                        background: on ? "#eef1f7" : "#fff",
+                                        color: on ? NAVY : "#bbc3d4",
+                                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 9.5,
+                                        letterSpacing: 0.3, textTransform: "uppercase", lineHeight: 1.2,
+                                      }}
+                                    >
+                                      {L.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+
+                          {/* Owner's view: his claim, flagged only when it
+                              runs ahead of the sign-off. */}
+                          {!canRateSelf && hasClaim && (
+                            <div style={{ marginTop: 5, fontSize: 10.5, color: claimsMore ? ORANGE : "#99a3b8", display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", fontSize: 8.5 }}>He says</span>
+                              <span style={{ fontWeight: 600 }}>{COMP.LEVELS[claim]?.label || claim}</span>
+                              {claimsMore && <span style={{ fontSize: 9.5 }}>· ahead of your sign-off</span>}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -9174,7 +9308,9 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
 
           {!canEdit && (
             <div style={{ fontSize: 11, color: "#aaa", textAlign: "center", padding: "6px 10px", lineHeight: 1.5 }}>
-              Read only. Only the owner can sign a skill off.
+              {canRateSelf
+                ? "Rate yourself on every skill — that is your half of this. Only Jake can sign one off, and the sign-off is what counts toward Service Technician."
+                : "Read only. Only the owner can sign a skill off."}
             </div>
           )}
         </div>
@@ -9214,7 +9350,7 @@ function GraduationCard({ prog }) {
       {prog.ready ? (
         <div style={{ fontSize: 11, color: "#1f6f3a", lineHeight: 1.5 }}>
           Both bars are met. Switch their tier to Technician in Settings to move
-          them onto the revenue scorecard and turn commission on.
+          them onto the revenue scorecard.
         </div>
       ) : (
         <div style={{ fontSize: 11, color: "#889", lineHeight: 1.5 }}>
@@ -9229,7 +9365,7 @@ function GraduationCard({ prog }) {
   );
 }
 
-function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
+function ApprenticeScorecard({ techs, competencies, selfLevels, canEdit, myId, onSet, onSetSelf }) {
   const [openTech, setOpenTech] = useState(null);
   if (!techs.length) return null;
 
@@ -9239,7 +9375,8 @@ function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
         Apprentice Progress
       </div>
       <div style={{ fontSize: 10.5, color: "#aaa", marginBottom: 12, lineHeight: 1.45 }}>
-        Measured on learning, not revenue. Commission starts at Service Technician.
+        Measured on learning, not revenue. Commission on a job is a separate
+        test — solo, sold it, collected it.
       </div>
 
       {techs.map((t, i) => {
@@ -9273,6 +9410,9 @@ function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
 
       {openTech && (
         <CompetencyModal
+          selfLevels={(selfLevels || {})[openTech.id] || {}}
+          canRateSelf={!canEdit && openTech.id === myId}
+          onSetSelf={onSetSelf}
           tech={openTech}
           levels={competencies[openTech.id] || {}}
           canEdit={canEdit}
@@ -9517,7 +9657,133 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
 }
 
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
-function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName, competencies, onSetCompetency }) {
+// ─── Payroll ──────────────────────────────────────────────────────────────
+// What to pay each tech for a period: hourly from the time clock, commission
+// from jobs Jake flagged (migration 075). Admin sees every row; a tech sees
+// only his own, which is also all the database will hand back —
+// tech_pay and time_entries are both self-or-admin by RLS.
+//
+// Deliberately does not touch calcTotals' internals: it is called once per
+// invoice with the SAME function ReportsTab already uses everywhere else, so
+// a change to tax or discount math stays in the one place that defines it.
+function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd, yearStart, yearEnd }) {
+  const [period, setPeriod] = useState("mtd");
+  const start = period === "mtd" ? mtdStart : yearStart;
+  const end = period === "mtd" ? mtdEnd : yearEnd;
+  const [techPay, setTechPay] = useState({});
+  const [entries, setEntries] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([db.loadTechPay(), db.loadTimeEntries({ from: start, to: end + 'T23:59:59' })])
+      .then(([pay, ents]) => { if (!cancelled) { setTechPay(pay); setEntries(ents); setLoaded(true); } })
+      .catch(e => console.warn('PayrollCard load failed:', e));
+    return () => { cancelled = true; };
+  }, [start, end]);
+
+  // `users` (allUsers in the shell) is an admin-only directory — refreshUsers
+  // never populates it for anyone else, so filtering it for "me" would find
+  // nothing. A non-admin gets a roster of exactly himself, built from his own
+  // session instead. Same workaround TechScorecard already needed.
+  const roster = useMemo(() => {
+    if (!isAdmin) {
+      return myId ? [{ id: myId, name: myName || 'You', color: TECH_COLORS[0] }] : [];
+    }
+    const src = (users || []).slice().sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    return src.map((u, i) => ({ id: u.id, name: u.displayName || 'Unnamed', color: TECH_COLORS[i % TECH_COLORS.length] }));
+  }, [users, isAdmin, myId, myName]);
+
+  // Commission date is when the money actually landed — the latest payment
+  // on the invoice — not the invoice date. A job billed in September and
+  // paid in October owes October's payroll, not September's.
+  const latestPaymentDate = (inv) => (inv.payments || []).reduce(
+    (max, p) => (p.date && p.date > max ? p.date : max), ''
+  );
+
+  const rows = useMemo(() => {
+    if (!loaded) return [];
+    return roster.map(t => {
+      const mins = entries
+        .filter(e => e.techId === t.id && e.clockOutAt)
+        .reduce((s, e) => s + (e.minutes || 0), 0);
+      const openCount = entries.filter(e => e.techId === t.id && !e.clockOutAt).length;
+      const rate = techPay[t.id]?.hourlyRate;
+      const hourlyPay = rate ? (mins / 60) * rate : null;
+
+      const commJobs = (invoices || []).filter(i =>
+        !i.deletedAt && i.type !== 'estimate' && i.status === 'paid'
+        && i.commissionTechId === t.id
+        && latestPaymentDate(i) >= start && latestPaymentDate(i) <= end
+      );
+      const pct = techPay[t.id]?.commissionPct;
+      const commission = commJobs.reduce((s, i) => {
+        if (!pct) return s;
+        const base = Math.max(0, calcTotals(i).total - (i.materialCost || 0));
+        return s + base * (pct / 100);
+      }, 0);
+
+      return { ...t, mins, openCount, rate, hourlyPay, commJobs: commJobs.length, pct, commission };
+    });
+  }, [roster, entries, techPay, invoices, start, end, loaded]);
+
+  if (!rows.length) return null;
+  const anyRateSet = rows.some(r => r.rate || r.pct);
+
+  return (
+    <div style={{ margin: '12px 12px 0', background: '#fff', borderRadius: 12, padding: '16px 14px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)' }}>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
+        {isAdmin ? 'Payroll' : 'My Pay'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        {[["mtd", "This Month"], ["ytd", "This Year"]].map(([val, lbl]) => (
+          <button
+            key={val}
+            onClick={() => setPeriod(val)}
+            style={{
+              flex: 1, padding: '6px 4px', borderRadius: 6, cursor: 'pointer',
+              border: period === val ? `1.5px solid ${ORANGE}` : '1px solid #e4e8f2',
+              background: period === val ? ORANGE : '#fff', color: period === val ? '#fff' : '#8899bb',
+              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.4, textTransform: 'uppercase',
+            }}
+          >{lbl}</button>
+        ))}
+      </div>
+      <div style={{ fontSize: 10.5, color: '#aaa', marginBottom: 12, lineHeight: 1.45 }}>
+        Hourly from the time clock. Commission from jobs flagged on the invoice, counted when paid.
+      </div>
+      {rows.map((r, i) => (
+        <div key={r.id} style={{ borderTop: i > 0 ? '1px solid #f4f6fa' : 'none', padding: '10px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: '#1a1a1a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: ORANGE, flexShrink: 0 }}>
+              {fmt((r.hourlyPay || 0) + (r.commission || 0))}
+            </span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: '#8899bb' }}>
+            <span>
+              {TC.fmtMinutes(r.mins)} hourly
+              {r.rate ? ` @ ${fmt(r.rate)}/hr` : ' — no rate set'}
+              {r.openCount ? ` · ${r.openCount} open` : ''}
+            </span>
+            <span>
+              {r.commJobs} job{r.commJobs === 1 ? '' : 's'} commission
+              {r.pct ? ` @ ${r.pct}%` : r.commJobs ? ' — no % set' : ''}
+            </span>
+          </div>
+        </div>
+      ))}
+      {isAdmin && !anyRateSet && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #f4f6fa', fontSize: 10.5, color: '#aaa', lineHeight: 1.45 }}>
+          No pay rates set yet. Set an hourly rate and commission % per person in Settings.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName, competencies, selfLevels, onSetCompetency, onSetSelfLevel }) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
@@ -9652,6 +9918,9 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
       <ApprenticeScorecard
         techs={apprentices}
         competencies={competencies || {}}
+        selfLevels={selfLevels || {}}
+        myId={myId}
+        onSetSelf={onSetSelfLevel}
         canEdit={isAdmin}
         onSet={onSetCompetency}
       />
@@ -9665,6 +9934,17 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         myId={myId}
         myName={myName}
         selYear={selYear}
+      />
+      <PayrollCard
+        invoices={allInvoices || invoices}
+        users={users}
+        isAdmin={isAdmin}
+        myId={myId}
+        myName={myName}
+        mtdStart={mtdStart}
+        mtdEnd={mtdEnd}
+        yearStart={yearStart}
+        yearEnd={yearEnd}
       />
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
@@ -10297,6 +10577,26 @@ function MessageTemplatesCard() {
 }
 
 function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId, setViewAsUserId, refreshUsers, onSetTier }) {
+  // Pay rates (migration 075). Loaded here rather than threaded down from the
+  // app shell: only this panel needs them, and they are private per person,
+  // so there is no value in holding every rate in top-level state the way
+  // competencies are.
+  const [techPay, setTechPay] = useState({});
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    db.loadTechPay().then(p => { if (!cancelled) setTechPay(p); }).catch(e => console.warn("loadTechPay failed:", e));
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+  const handleSetPay = async (userId, patch) => {
+    const prev = techPay[userId];
+    setTechPay(p => ({ ...p, [userId]: { ...(p[userId] || {}), ...patch } }));
+    try { await db.setTechPay(userId, patch); }
+    catch (e) {
+      console.warn("setTechPay failed:", e);
+      setTechPay(p => ({ ...p, [userId]: prev }));
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null); // {kind:'ok'|'err', text}
   const [importMode, setImportMode] = useState("merge"); // 'merge' | 'replace'
@@ -10382,9 +10682,10 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                     </div>
                     <div style={{ fontSize: 12, color: "#778" }}>{u.invoiceCount} invoices · {u.estimateCount} estimates</div>
                     {/* Pay band. Apprentice moves them off the revenue
-                        scorecard and onto the competency tracker; flipping
-                        them to Technician is the graduation, and it is the
-                        moment commission starts. */}
+                        scorecard and onto the competency tracker and flags
+                        which skill sheet they fill out. Commission is a
+                        separate, per-job call Jake makes on the invoice
+                        itself (migration 075) — it does not wait for this. */}
                     <div style={{ display: "flex", gap: 4, marginTop: 7 }} onClick={e => e.preventDefault()}>
                       {[["apprentice", "Apprentice"], ["technician", "Service Tech"], ["admin", "Owner"]].map(([val, lbl]) => {
                         const on = (u.tier || "technician") === val;
@@ -10403,6 +10704,35 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                         );
                       })}
                     </div>
+
+                    {/* Pay rates. Private to this person and Jake — never
+                        shown to anyone else, including another employee. */}
+                    <div style={{ display: "flex", gap: 6, marginTop: 7 }} onClick={e => e.preventDefault()}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 9, color: "#aab4c8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>$/hr</div>
+                        <input
+                          key={`hourly-${u.id}-${techPay[u.id]?.hourlyRate ?? "unset"}`}
+                          type="number" step="0.5" min="0" inputMode="decimal"
+                          defaultValue={techPay[u.id]?.hourlyRate ?? ""}
+                          onClick={e => e.stopPropagation()}
+                          onBlur={e => handleSetPay(u.id, { hourlyRate: e.target.value === "" ? null : Number(e.target.value) })}
+                          placeholder="—"
+                          style={{ width: "100%", boxSizing: "border-box", padding: "5px 6px", borderRadius: 6, border: "1px solid #e4e8f2", fontSize: 12.5 }}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 9, color: "#aab4c8", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 2 }}>Commission %</div>
+                        <input
+                          key={`comm-${u.id}-${techPay[u.id]?.commissionPct ?? "unset"}`}
+                          type="number" step="1" min="0" max="100" inputMode="decimal"
+                          defaultValue={techPay[u.id]?.commissionPct ?? ""}
+                          onClick={e => e.stopPropagation()}
+                          onBlur={e => handleSetPay(u.id, { commissionPct: e.target.value === "" ? null : Number(e.target.value) })}
+                          placeholder="—"
+                          style={{ width: "100%", boxSizing: "border-box", padding: "5px 6px", borderRadius: 6, border: "1px solid #e4e8f2", fontSize: 12.5 }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </label>
               );
@@ -10414,10 +10744,20 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
           </div>
         </div>
       )}
-      <MessageTemplatesCard />
-      <PaymentInstructionsCard />
-      <OnlinePaymentFeeCard />
-      <ReviewRequestCard />
+      {/* Shop-wide configuration, admin only. Every one of these cards writes
+          a row in the `settings` table, which migration 070 restricted to
+          admins — these are not per-user preferences, they are the payment
+          instructions on the PDF, the card surcharge, the review links and
+          the customer message templates. Shown to a tech they would render
+          fine and then fail on save, which is worse than not being there. */}
+      {isAdmin && (
+        <>
+          <MessageTemplatesCard />
+          <PaymentInstructionsCard />
+          <OnlinePaymentFeeCard />
+          <ReviewRequestCard />
+        </>
+      )}
       <div style={card}>
         <div style={heading}>Backup</div>
         <div style={body}>
@@ -10662,6 +11002,19 @@ export default function App() {
     } catch {}
   }, [viewAsUserId, viewAsStorageKey]);
   const isAdmin = profile?.role === "admin";
+  // The Call record email links to /?call=<vapi call id>. Read it once, then
+  // drop it from the address bar so a reload does not reopen the player.
+  const [deepLinkCallId, setDeepLinkCallId] = useState(() => {
+    try {
+      const id = new URLSearchParams(window.location.search).get("call");
+      if (id) {
+        const u = new URL(window.location.href);
+        u.searchParams.delete("call");
+        window.history.replaceState(null, "", u.pathname + u.search + u.hash);
+      }
+      return id || null;
+    } catch { return null; }
+  });
   // Effective owner filter — admins can View As another user, everyone else
   // sees only their own rows (RLS already enforces this server-side; the
   // client-side filter only matters for admins narrowing what they see).
@@ -10705,16 +11058,55 @@ export default function App() {
     try { setAllUsers(await db.listAllUsers()); } catch (e) { console.warn(e); }
   };
 
-  // Apprentice competency levels, shaped { techId: { skillKey: level } }.
-  // RLS scopes it: an admin gets everyone, a tech gets only themselves.
+  // Apprentice competency levels, both shaped { techId: { skillKey: level } }.
+  // RLS scopes them: an admin gets everyone, a tech gets only themselves.
+  //
+  // Two separate numbers on purpose (migration 071). `competencies` is the
+  // owner's sign-off and the only thing the graduation gate reads.
+  // `selfLevels` is the tech's own claim, which he writes himself. They are
+  // useful precisely where they disagree.
   const [competencies, setCompetencies] = useState({});
+  const [selfLevels, setSelfLevels] = useState({});
   useEffect(() => {
-    if (!session) { setCompetencies({}); return; }
+    if (!session) { setCompetencies({}); setSelfLevels({}); return; }
     let cancelled = false;
     db.loadCompetencies()
-      .then(c => { if (!cancelled) setCompetencies(c); })
+      .then(c => {
+        if (cancelled) return;
+        setCompetencies(c.signed || {});
+        setSelfLevels(c.self || {});
+      })
       .catch(e => console.warn("loadCompetencies failed:", e));
     return () => { cancelled = true; };
+  }, [session]);
+
+  // An open shift, polled lightly, so the banner is right from whatever tab
+  // he is on. A forgotten clock-out is a payroll problem that only shows up a
+  // week later, and the clock tab is not where he spends his day.
+  //
+  // Intentionally not a realtime subscription: this is one small row for one
+  // user, the clock is driven from this same device, and a dropped socket
+  // failing silently would make the banner lie.
+  const [openShift, setOpenShift] = useState(null);
+  const refreshOpenShift = async () => {
+    if (!session) { setOpenShift(null); return; }
+    try { setOpenShift(await db.loadOpenTimeEntry()); }
+    catch (e) { console.warn("loadOpenTimeEntry failed:", e); }
+  };
+  useEffect(() => {
+    if (!session) { setOpenShift(null); return; }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const o = await db.loadOpenTimeEntry();
+        if (!cancelled) setOpenShift(o);
+      } catch (e) { /* offline: keep whatever the banner already shows */ }
+    };
+    tick();
+    const iv = setInterval(tick, 120000);
+    const onFocus = () => tick();
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; clearInterval(iv); window.removeEventListener("focus", onFocus); };
   }, [session]);
 
   const handleSetTier = async (userId, tier) => {
@@ -10741,6 +11133,27 @@ export default function App() {
       console.warn("setCompetency failed:", e);
       setCompetencies(c => ({ ...c, [techId]: { ...(c[techId] || {}), [skillKey]: prev } }));
       alert("Could not save that skill level. Check your connection and try again.");
+    }
+  };
+
+  // A tech rating his own skill. Always writes his own row — the database
+  // refuses any other tech_id — so this takes no techId argument, which is
+  // also what stops a UI bug from aiming it at someone else.
+  const handleSetSelfLevel = async (skillKey, level) => {
+    const me = session?.user?.id;
+    if (!me) return;
+    const prev = selfLevels[me]?.[skillKey];
+    setSelfLevels(c => ({ ...c, [me]: { ...(c[me] || {}), [skillKey]: level } }));
+    try {
+      await db.setSelfCompetency(skillKey, level);
+    } catch (e) {
+      console.warn("setSelfCompetency failed:", e);
+      setSelfLevels(c => {
+        const next = { ...(c[me] || {}) };
+        if (prev === undefined) delete next[skillKey]; else next[skillKey] = prev;
+        return { ...c, [me]: next };
+      });
+      alert("Could not save your rating. Check your connection and try again.");
     }
   };
   // Apply the View-as filter to in-memory data. Admins viewing themselves or
@@ -12499,6 +12912,7 @@ export default function App() {
     { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
+    { id: "timeclock", label: "Time Clock", icon: "clock"    },
     { id: "payments",  label: "Payments",   icon: "dollar"   },
     { id: "pricebook", label: "Price Book", icon: "items"    },
     { id: "reports",   label: "Reports",    icon: "chart"    },
@@ -12545,6 +12959,7 @@ export default function App() {
         </div>
       )}
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
+      {deepLinkCallId && isAdmin && <CallRecordingModal callId={deepLinkCallId} onClose={() => setDeepLinkCallId(null)} />}
       {showGlobalAI && <GlobalAIModal data={data} getData={() => dataRef.current} userLabel={`${profile?.display_name || session?.user?.email || "unknown"} (${isAdmin ? "admin" : "tech"})`} openDocId={() => (view === "form" ? selected?.id || null : null)} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: textZoom === 1 ? 480 : "none", zIndex: 600, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
@@ -12584,6 +12999,28 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {/* On the clock. Lives in the fixed header so it follows him across
+            every tab — an open shift he forgets about is a timesheet Jake has
+            to reconstruct from memory a week later. Tapping it goes to the
+            clock, which is where the Clock Out button is. */}
+        {openShift && (
+          <button
+            onClick={() => { setView("list"); setTab("timeclock"); }}
+            style={{
+              width: "100%", border: "none", cursor: "pointer", background: "#16a085",
+              color: "#fff", padding: "7px 20px", display: "flex", alignItems: "center",
+              justifyContent: "space-between", gap: 8, textAlign: "left",
+            }}
+          >
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              On the clock{openShift.invoiceId ? ` · ${openShift.invoiceId}` : ""}
+            </span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
+              Clock out →
+            </span>
+          </button>
+        )}
       </div>
 
       {view === "list" && (tab === "invoices" || tab === "estimates" || tab === "expenses") && (
@@ -12611,8 +13048,9 @@ export default function App() {
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
-        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} onSetCompetency={handleSetCompetency} />}
+        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} selfLevels={selfLevels} onSetCompetency={handleSetCompetency} onSetSelfLevel={handleSetSelfLevel} />}
         {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
+        {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
