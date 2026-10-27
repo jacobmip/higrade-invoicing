@@ -6670,7 +6670,10 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
         {/* Header bar */}
         <div style={{ background: NAVY2, padding: "14px 16px", display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={() => { setMode("list"); setDetailId(null); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="back" size={22} color="#fff" /></button>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Header name/phone are not selectable for the same reason as the list
+              card. The detail BODY below stays selectable on purpose — copying an
+              address or a phone number out of it is genuinely useful on a job. */}
+          <div style={{ flex: 1, minWidth: 0, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
             <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
             {c.phone && <div style={{ fontSize: 12, color: "#8899bb" }}>{c.phone}</div>}
           </div>
@@ -6787,7 +6790,15 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
         {filtered.map(c => {
           const propCount = (c.addresses || []).length;
           return (
-            <div key={c.id} onClick={() => openDetail(c)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            // Not selectable: the whole card is a button that opens the client, so a
+            // long-press here only ever produced an iOS selection and callout over a
+            // name nobody wanted to copy. The invoice and estimate list cards have
+            // carried the same three properties since bug #6; the client card was
+            // missed, which is what Jake was still hitting on 2026-10-23.
+            // Only the non-editable displays get this. ClientEditFields keeps its
+            // inputs fully selectable, because you cannot edit a name you cannot
+            // put a caret in.
+            <div key={c.id} onClick={() => openDetail(c)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{c.name}</div>
                 {c.phone && <div style={{ fontSize: 13, color: "#666" }}>{c.phone}</div>}
