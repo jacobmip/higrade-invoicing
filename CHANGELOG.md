@@ -5,6 +5,11 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.6 — 2026-10-27
+
+- Simplified job screen for apprentices (`src/ApprenticeJobView.jsx`). When the effective user's tier is `apprentice` (the signed-in user, or the person an admin is viewing as), tapping a job shows job title + status, client name, tappable address and phone, scheduled time, job notes, and three buttons: Call, On My Way, Navigate. No line items, pricing, totals, tax, payments, signature or edit controls. Admins and other tiers still get the full form. Deleted-document previews are unaffected.
+- On My Way opens the phone's Messages app with the pre-written text (`sms:` link, same pattern as `OnMyWay.jsx` and the send-by-text flow), not Twilio: outbound Twilio SMS is gated off pending A2P 10DLC and would fail silently. The buttons are plain text labels (no emoji, per house rules).
+
 ## v1.27.5 — 2026-10-27
 
 - Apprentice on the Google Calendar event. Setting the Apprentice dropdown on a job that has a `gcal_event_id` adds his email as an attendee, so Google sends him the standard invite. Clearing or changing it removes the previous apprentice (Google sends the cancellation). Best effort: a failure is logged and never blocks the save.

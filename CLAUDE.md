@@ -92,6 +92,7 @@ src/
   printablePdf.js    — jsPDF invoice/estimate generator
   JobPhotos.jsx      — per-job photo gallery
   OnMyWay.jsx        — "on my way" customer notification
+  ApprenticeJobView.jsx — the only job screen an `apprentice`-tier user (or View-as apprentice) gets: no money, no edit controls
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   PriceBook.jsx      — price book picker
   WelcomePage.jsx    — `/welcome` invite onboarding (public route) and the Pending-setup screen (migrations 082-083)

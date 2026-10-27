@@ -11,6 +11,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
+import ApprenticeJobView from './ApprenticeJobView.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
@@ -11042,6 +11043,8 @@ export default function App() {
     } catch {}
   }, [viewAsUserId, viewAsStorageKey]);
   const isAdmin = profile?.role === "admin";
+  // Whose tier decides the screen: the person being viewed-as, else the signed-in user.
+  const effectiveUser = (isAdmin && viewAsUserId ? allUsers.find(u => u.id === viewAsUserId) : null) || profile;
   // The Call record email links to /?call=<vapi call id>. Read it once, then
   // drop it from the address bar so a reload does not reopen the player.
   const [deepLinkCallId, setDeepLinkCallId] = useState(() => {
@@ -13127,6 +13130,14 @@ export default function App() {
 
       {formMounted && (
         <div style={{ position: "fixed", top: GLOBAL_HEADER_H, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+          {effectiveUser?.tier === "apprentice" && selected && !previewReadOnly ? (
+            <ApprenticeJobView
+              invoice={selected}
+              clients={data.clients}
+              techName={effectiveUser.display_name || ""}
+              onBack={() => { setView("list"); setSelected(null); }}
+            />
+          ) : (
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
@@ -13170,6 +13181,7 @@ export default function App() {
             users={allUsers}
             myId={session?.user?.id}
           />
+          )}
         </div>
       )}
 
