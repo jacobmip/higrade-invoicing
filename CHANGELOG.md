@@ -5,6 +5,17 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.22.4 — 2026-10-27
+
+### Lisa back on the shared document counter (migration 066)
+
+- 065 was meant to move `create_estimate_from_lead` onto `allocate_doc_number()` and
+  skipped it: its exact-text match missed the live function. Checked live afterwards, Lisa
+  still minted from `next_estimate_num`, so an estimate she filed could take a number whose
+  paired `INV` already existed, and conversion would then give it a different number.
+- 066 finds the block by its first and last lines and must match exactly once, or nothing
+  changes. The visit and Hawaii-time changes from 065 are verified live and untouched.
+
 ## v1.22.3 — 2026-10-27
 
 - Migration 065 now stops, changing nothing, if more than one `create_estimate_from_lead`
