@@ -14,6 +14,7 @@ import OnMyWay from './OnMyWay.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
+import WelcomePage, { PendingSetupScreen } from './WelcomePage.jsx';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
@@ -10679,6 +10680,7 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                     <div style={{ fontWeight: 700, fontSize: 14, color: NAVY, display: "flex", alignItems: "center", gap: 6 }}>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.displayName || "(no name)"}</span>
                       {u.role === "admin" && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, padding: "1px 5px", borderRadius: 3 }}>ADMIN</span>}
+                      {u.tier === "pending" && <span style={{ background: "#f0b429", color: NAVY, fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1, padding: "1px 5px", borderRadius: 3 }}>NEEDS A ROLE</span>}
                     </div>
                     <div style={{ fontSize: 12, color: "#778" }}>{u.invoiceCount} invoices · {u.estimateCount} estimates</div>
                     {/* Pay band. Apprentice moves them off the revenue
@@ -10687,8 +10689,8 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                         separate, per-job call Jake makes on the invoice
                         itself (migration 075) — it does not wait for this. */}
                     <div style={{ display: "flex", gap: 4, marginTop: 7 }} onClick={e => e.preventDefault()}>
-                      {[["apprentice", "Apprentice"], ["technician", "Service Tech"], ["admin", "Owner"]].map(([val, lbl]) => {
-                        const on = (u.tier || "technician") === val;
+                      {[["apprentice", "Apprentice"], ["technician", "Service Tech"], ["journeyman", "Journeyman"], ["admin", "Owner"]].map(([val, lbl]) => {
+                        const on = (u.tier || "technician") === val || (val === "technician" && u.tier === "service_tech");
                         return (
                           <button
                             key={val}
@@ -12877,6 +12879,7 @@ export default function App() {
   // Public routes — must come before the auth + dbLoading gates so customers
   // can view/sign/pay invoices without an owner account.
   if (window.location.pathname === "/sign") return <SignaturePage />;
+  if (window.location.pathname === "/welcome") return <WelcomePage />;
   if (window.location.pathname.startsWith("/v/")) {
     const token = window.location.pathname.slice(3);
     return <PublicViewerPage token={token} />;
@@ -12897,6 +12900,16 @@ export default function App() {
       <div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 2 }}>HI GRADE PLUMBING</div>
       <div style={{ color: "#8899bb", fontSize: 13 }}>Loading…</div>
     </div>
+  );
+
+  // Invited and not yet assigned by Jake (tier is set in Settings). Nothing
+  // else in the app is shown until then. See WelcomePage.jsx.
+  if (profile?.tier === "pending") return (
+    <PendingSetupScreen
+      name={profile.display_name}
+      onRecheck={async () => { const p = await db.getMyProfile(); if (p) setProfile(p); }}
+      onSignOut={async () => { try { await supabase.auth.signOut(); } catch {} }}
+    />
   );
 
   // Local memos kept for any leftover uses; both honor the View-as filter so
