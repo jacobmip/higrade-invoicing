@@ -41,6 +41,7 @@ Read this file first. It captures everything an AI agent needs to safely continu
     - Bump the version: patch (+0.0.1) for bug fixes / small changes, minor (+0.1.0) for new features, major (+1.0.0) for big architectural changes. Also update `APP_BUILD_DATE` to today's date (YYYY-MM-DD).
     - Prepend a new `## vX.Y.Z — YYYY-MM-DD` section to `CHANGELOG.md` describing every change in that push.
     - Commit both files in the same commit as the code change (not a separate commit).
+    - **macOS sed syntax (this machine is macOS — GNU sed flags do not work):** `sed -i '' 's/old/new/' file`. Never use `sed -i 's/...' file` without the `''` — it fails silently and leaves the version unbumped, which is the cause of every split-commit CI failure. If sed fails for any reason, edit `src/version.js` directly with a Write tool instead.
     - **This is enforced by CI** (`.github/workflows/release-check.yml`): a push
       to `main` that touches `src/`, `api/` or `supabase/migrations/` without
       bumping `src/version.js` fails the check, as does a version with no
