@@ -359,7 +359,7 @@ export async function setCompetency(techId, skillKey, level, note) {
 
 // Sets a profile's pay band / scorecard tier. Admin-only by the profiles RLS.
 export async function setUserTier(userId, tier) {
-  if (!['apprentice', 'technician', 'admin'].includes(tier)) {
+  if (!['apprentice', 'technician', 'service_tech', 'journeyman', 'admin'].includes(tier)) {
     throw new Error(`invalid tier: ${tier}`)
   }
   const { error } = await supabase.from('profiles').update({ tier }).eq('id', userId)

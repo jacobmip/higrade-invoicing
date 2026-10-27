@@ -5,6 +5,24 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.0 — 2026-10-27
+
+### Employee onboarding page and the Journeyman tier (migrations 082, 083)
+
+- **`/welcome`.** The invite email now links to the app, not raw Supabase. The page opens the invite
+  with `verifyOtp`, asks for full name, phone and a password, then signs the person in. The link skips
+  Supabase's `/verify` so email scanners cannot use up the one-time token. Template text to paste into
+  the dashboard is in `docs/invite-email-template.md`.
+- **Pending setup screen.** A new login is filed as tier `pending` (083) and sees only "Your account is
+  being configured" until Jake picks a tier in Settings. The screen re-checks on focus and every 30s.
+  Settings marks such people "Needs a role".
+- **New tier values (082).** `journeyman`, `service_tech` and `pending` are accepted by `profiles.tier`.
+  Settings gets a Journeyman button. No permissions change: the tier plan is written up in `CLAUDE.md`
+  under "Employee tiers", and nothing enforces it yet.
+- Migration 083 is written and dry-run but not applied; apply it when this build deploys.
+
+---
+
 ## v1.26.0 — 2026-10-26
 
 ### Commission is a per-job call Jake makes, with pay rates kept private (migration 075)

@@ -94,6 +94,7 @@ src/
   OnMyWay.jsx        — "on my way" customer notification
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   PriceBook.jsx      — price book picker
+  WelcomePage.jsx    — `/welcome` invite onboarding (public route) and the Pending-setup screen (migrations 082-083)
   billTo.js          — bill-to / job-site address resolution
   competencies.js    — apprentice skill catalog + graduation math (migration 054)
   geTax.js           — GE license number, 0.5% GE half tax rate, isGeHalfTax() (migration 059)
@@ -189,7 +190,8 @@ no line items and no phone number.
 Grant SELECT on payments without DELETE and the caller reads them, sends them back, deletes
 none (RLS filters it silently) and inserts copies — a duplicate payment row per save.
 
-- `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('apprentice'|'technician'|'admin'), created_at
+- `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('pending'|'apprentice'|'technician'|'service_tech'|'journeyman'|'admin'), created_at
+  - **Employee tiers and what each is meant to do: see "Employee tiers" below.**
   - **`tier` is not `role`.** `role` drives `is_admin()` and therefore every RLS policy; `tier` (migration 054) is pay band and which Reports scorecard the person gets, and touches no policy. Never fold one into the other.
 - `tech_competencies` — tech_id, skill_key, level 0–4, note, updated_at, updated_by, plus **self_level, self_note, self_updated_at (migration 071)**. `level` is the owner's sign-off and the only input to the graduation gate. `self_level` is the tech's own claim, writable only on his own rows, enforced by a BEFORE trigger (`guard_competency_signoff`) rather than RLS or a grant — RLS cannot restrict which columns an UPDATE touches, and a column grant would be per-role, which here is the same `authenticated` role as the owner. `skill_key` matches a `key` in `src/competencies.js` — the catalog is code, not a table, so it is versioned. A stored row whose skill has been removed from the catalog is orphaned and ignored, never deleted.
 - `time_entries` — one clock-in/clock-out per person per visit (migration 072). `tech_id`, `invoice_id` (nullable — shop/drive/supply time has no job), `kind`, both clock timestamps, both raw lat/lng + accuracy, and **clock_in_m/clock_out_m/clock_in_on_site/clock_out_on_site/minutes — all computed by `tg_time_entry_compute()`, never accepted from the client.** A partial unique index on `(tech_id) where clock_out_at is null` caps one open shift per person. A non-admin may close his own open shift and nothing else: not reopen a closed one, not move its start, not touch anyone else's row. Self-or-admin read/write by RLS; delete is admin-only. `tg_time_entry_offsite_alert()` (migration 073) texts `settings.notify_to` via `send_owner_sms()` the moment either end of a shift computes off-site — verified delivering for real on 2026-10-26.
@@ -293,9 +295,57 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **067** — **written 2026-10-27, not yet applied.** `vapi_calls`, admin-read RLS, and a backfill of the call ids abandoned-call notes already carried. Tested locally, safe to re-run.
 
-Next migration is `068_<short_description>.sql`. **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **068** — `call_queue`: Lisa's outbound queue.
+- **069** — assigned tech can work the job: line items, pricing, client record, photos and history keyed off `assigned_tech_id` (`is_my_assigned_job`, `is_my_assigned_client`). Also stopped `owner_id` restamping on conflict.
+- **070** — `settings` no longer readable/writable by every login; `is_privileged_setting()` deny-list, counters carved out.
+- **071** — competency self-assessment: `self_level` / `self_note`, with the `guard_competency_signoff` trigger.
+- **072** — `time_entries`, the GPS time clock; distance and on-site computed server-side.
+- **073** — owner SMS alert when a shift computes off-site (`send_owner_sms()`).
+- **074** — `log_client_message` overload, from a concurrent session.
+- **075** — `tech_pay` (hourly_rate, commission_pct), `invoices.commission_tech_id` / `material_cost`, `guard_invoice_commission`.
+
+**On disk but not in this list:** `076_call_queue_suggested.sql` and `077_lead_name_phone_transfer.sql` are uncommitted drafts from a parallel session (applied state unchecked). `078_apprentice_hourly_rate.sql` sets the apprentice's $25/hr and is written but **not applied**: it raises until the Auth login for kmakaula23@gmail.com exists.
+
+- **079** — **applied 2026-10-27.** Merged the duplicate Les Lee client: the "Missed call - no name given" row (bfe6491a) had 3 inbound `client_messages`; they now point at the real row 7a188e28 and the junk row is deleted. Guarded to delete only a `Missed call` placeholder with no email or phone.
+- **080** — **applied 2026-10-27.** `tech_commission_tiers` (tech_id, threshold_cents, rate_pct; unique per tech and threshold; self-or-admin read, admin write). Apprentice seeded 0 -> 15%, $1,500 -> 18%, $3,000 -> 20%. **Data model only: nothing in the app or pay report reads it yet.** `tech_pay.commission_pct` remains the flat fallback.
+- **081** — **applied 2026-10-27.** `invoice_items` is reachable only by admin (`invoice_items_admin`) or the assigned tech on a non-deleted job (`invoice_items_assigned`, 069). The `owner_id`-keyed `invoice_items_select` and `invoice_items_modify` are dropped, so a `commission_tech_id` who is not the assigned tech can neither read nor write that job's items.
+
+- **082** — **applied 2026-10-27.** `profiles_tier_check` widened to `pending | apprentice | technician | service_tech | journeyman | admin`. A text CHECK, not a Postgres enum. Additive, touches no policy.
+- **083** — **written and dry-run 2026-10-27, NOT applied** (apply when the `/welcome` build deploys). `handle_new_user()` files new logins as tier `pending`; `complete_my_onboarding(name)` lets a pending person set his own `display_name` (profiles has no self-update policy). Exercised as the test journeyman inside a rolled-back transaction: name set, self tier write refused, rollback left the live rows unchanged.
+
+Next migration is `084_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
+
+## Employee tiers (plan, 2026-10-27 — permissions NOT built)
+`profiles.tier` is pay band and scorecard today, and since 083 also the onboarding gate. It touches no RLS
+policy; `role` still decides `is_admin()`. Nothing below is enforced yet except where marked built.
+
+| tier | meant to be able to do | state |
+|---|---|---|
+| `pending` | nothing: sees only the Pending-setup screen until Jake assigns a tier | built (gate in `App()`, set by 083 trigger) |
+| `apprentice` | limited: works jobs assigned to him (migration 069), clocks in, fills own skill sheet, own hourly rate. No pricing authority, no commission | built as described |
+| `technician` / `service_tech` | solo jobs, create and price his own documents, see own financials (own `tech_pay`, own commission, own revenue scorecard). No other tech's money, no admin settings | partly built: scorecard and own pay rows exist; "own financials" screen does not |
+| `journeyman` | nearly full access minus admin settings: all jobs and clients, pricing, reports, no Users/Settings secrets, no pay rates of others, no deleting history | not built: only the Settings button and the check value exist |
+| `admin` | everything (`role = 'admin'`) | built |
+
+**`technician` vs `service_tech`.** The app has always stored Service Tech as `technician` (the Settings button
+says "Service Tech"). 082 also allows the spelling `service_tech`; Settings shows `service_tech` as the same
+button and nothing writes it. To collapse: `update profiles set tier='service_tech' where tier='technician'`,
+change the column default, and replace the `"technician"` fallbacks in `db.js` and `App.jsx` together.
+
+**To build before the tiers mean anything:** a `my_tier()` SECURITY DEFINER helper for policies (like
+`is_admin_uid`, to avoid profiles RLS recursion); journeyman policies on invoices/clients/payments/reports and a
+deny on `settings`/`tech_pay`/`profiles` writes; hide admin-only tabs client-side by tier; an own-financials view
+for service techs; and a rule for whether tier may ever be self-changed (today only admin can write profiles).
+
+## Invite onboarding (`/welcome`)
+Invite email -> `{{ .SiteURL }}/welcome?token_hash=...&type=invite` (template text in
+`docs/invite-email-template.md`, pasted into the Supabase dashboard by hand) -> `WelcomePage` calls `verifyOtp`
+(also handles PKCE `?code=` and an implicit-flow hash) -> `updateUser({ password, data })` -> `complete_my_onboarding`
+-> `/`. The link deliberately skips Supabase's `/verify` so mail scanners cannot spend the one-time token.
+Phone lives in auth `user_metadata` only; `profiles_read` is `using (true)` so a column there would be public.
+The route is matched in `App()` before the auth gate, like `/sign` and `/v/`.
 
 ## AI features
 All AI calls go to the Anthropic API via `api/*` (never OpenAI — the model ids
