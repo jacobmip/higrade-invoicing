@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.29.1 — 2026-10-27
+
+- Ghost-action guard broadened: if the AI says it did something ("I've added", "Done!", an action name, etc.) but emitted no JSON, the invoice/estimate chat retries once forcing JSON, then shows a warning. Previously only update_item phrasing was covered.
+- Global AI assistant gets the same guard: a completion claim with no write tool called triggers one forced retry, then a warning.
+- Per-invoice chat system prompt: stronger rules that every action must carry its JSON block.
+- New "AI" pill in the invoice/estimate header opens the AI chat from any tab.
+
 ## v1.29.0 — 2026-10-27
 
 - Day clock: a Start Day / End Day button at the top of the More sheet. It tracks the whole workday (drive time included) with no job attached, separate from the per-job clock. Both can be open at once.

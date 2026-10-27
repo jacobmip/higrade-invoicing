@@ -714,6 +714,11 @@ async function callModel(messages) {
  * @param {Function} opts.onProgress  called with a short status string while tools run
  * @returns {Promise<{ reply: string, cards: object[], trace: string, agentCtx: string }>}
  */
+// Ghost-action guard: phrases that say a change was made. If the reply says so
+// and nothing was actually written, the model is describing work it did not do.
+const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved)|done!|(add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|delete_invoice|delete_document))/i;
+export function claimsAction(text) { return CLAIM_RE.test(text || ''); }
+
 export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx, onProgress }) {
   const agentCtx = contextBlock(userLabel);
   const content = [...imageBlocks(photos), { type: 'text', text: agentCtx + (text || '(see attached photo)') }];
@@ -726,6 +731,8 @@ export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx,
   const cards = [];
   const trace = [];
   let reply = '';
+  let ghostRetried = false;
+  let wroteAnything = false;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     onProgress?.(step === 0 ? 'Thinking' : 'Working');
@@ -742,6 +749,15 @@ export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx,
     // resumes it, with no extra user message.
     if (resp.stop_reason === 'pause_turn') continue;
     if (resp.stop_reason !== 'tool_use') {
+      if (resp.stop_reason !== 'max_tokens' && !wroteAnything && claimsAction(said)) {
+        if (!ghostRetried) {
+          ghostRetried = true;
+          working.push({ role: 'user', content: 'You described an action but did not call the tool. Call the tool now to actually do it. No prose until it is done.' });
+          continue;
+        }
+        reply = '⚠️ The AI described a change but couldn\'t complete it. Please try again or be more specific.';
+        break;
+      }
       reply = said || 'Done.';
       if (resp.stop_reason === 'max_tokens') reply += '\n\n(Cut off. Ask me to continue.)';
       break;
@@ -753,6 +769,7 @@ export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx,
       onProgress?.(progressLabel(block.name, block.input));
       const result = await execTool(block.name, block.input, ctx);
       if (result?.card) cards.push(result.card);
+      if (WRITE_TOOLS.has(block.name)) wroteAnything = true;
       if (WRITE_TOOLS.has(block.name)) trace.push(traceLine(block.name, block.input || {}, result));
       const { card, ...forModel } = result || {};
       let body = JSON.stringify(forModel);
