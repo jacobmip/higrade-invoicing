@@ -17,7 +17,7 @@ import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import WelcomePage, { PendingSetupScreen } from './WelcomePage.jsx';
-import { runAgentMessage, describeFailure } from './aiAgent.js';
+import { runAgentMessage, describeFailure, claimsAction } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 import { weekStartOf, weekEndOf, tierFor } from './commissionTiers.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
@@ -528,6 +528,9 @@ RULES:
 - When asked to create multiple invoices or estimates (e.g. "create 10 invoices", "make 5 sample estimates", "create 10 invoices and 10 estimates"), you MUST return ONE single JSON array containing one action object per document — never just one. If asked for 10 invoices, the array MUST have exactly 10 create_invoice objects. If asked for "10 invoices and 10 estimates", return ONE array with 20 objects total (10 create_invoice + 10 create_estimate). Do not split across multiple turns; do not stop after the first object. Vary clients, dates, and items across the documents. Keep desc concise (6 short steps) when generating in bulk so the full array fits in your response. Example shape: [{"action":"create_invoice",...},{"action":"create_invoice",...}, ...]
 - IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.
 - NO BULK DELETES: You can delete ONE invoice or estimate at a time using delete_invoice. Never delete more than one in a single turn. If Jake asks to "delete all invoices", "wipe everything", "clear them all", or anything similar, refuse politely and tell him bulk deletes are handled outside the chat for safety — he should ask Computer (the agent that built this app) to do it directly.
+- CRITICAL: You MUST emit a JSON action block for EVERY action you take. Never describe an action without emitting JSON. If you cannot emit valid JSON, say 'I was unable to complete that action' — do not claim you did it.
+- NEVER say 'I've added', 'I've created', 'Done!', or any completion phrase unless you have already emitted the corresponding JSON block in this same response.
+- If your response contains any action description, it MUST contain the JSON block. One without the other is forbidden.
     - ABSOLUTE RULE: Any time you perform an action (create_invoice, create_estimate, schedule_job, update_invoice, etc.) your response MUST contain the raw JSON object. A response with only text and no JSON is a critical failure when an action was requested. The JSON is mandatory even if you also include a summary sentence.`;
 }
 
@@ -990,20 +993,19 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       const actions = readOnly ? [] : extractActionsJSON(reply);
       const cleanText = stripActionBlocks(reply);
 
-      // Defensive guard: the model sometimes claims it updated a line item
-      // ("I've updated the description...") without emitting the action JSON.
-      // If we detect that pattern with no actions, retry once forcing JSON.
-      const claimsChange = /\b(i'?ve\s+updated|i\s+updated|i'?ve\s+changed|i\s+changed|updated\s+the\s+(description|line|item|price|qty|name)|changed\s+the\s+(description|line|item|price|qty|name))\b/i.test(cleanText || "");
-      if (actions.length === 0 && claimsChange && currentInvoice && !readOnly) {
+      // Ghost-action guard: the model sometimes says it did something ("Done!
+      // I've added...") without emitting the action JSON, so nothing happened.
+      // Any completion phrase or action name with no JSON gets one forced retry.
+      if (actions.length === 0 && claimsAction(cleanText) && !readOnly) {
         const retryReply = await callAI(
-          [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: "You replied in plain text but the app only applies changes when you emit JSON. Re-send the SAME change as a proper update_item action JSON now. Reply with ONLY the JSON, nothing else." }],
+          [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: "You described an action but did not emit the JSON. You MUST emit the action as a JSON block. Emit ONLY the JSON now, no prose." }],
           systemPrompt
         );
         const retryActions = extractActionsJSON(retryReply);
         if (retryActions.length) {
           actions.push(...retryActions);
         } else {
-          setMsgs(p => [...p, { role: "assistant", text: "⚠️ I claimed to update something but didn't emit the action. Try rephrasing, e.g. \"update line 1 description to: <new text>\"." }]);
+          setMsgs(p => [...p, { role: "assistant", text: "⚠️ The AI described a change but couldn't complete it. Please try again or be more specific." }]);
           setLoading(false); return;
         }
       }
@@ -4679,6 +4681,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
           {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
         </span>
+        {!lockedView && !isReadOnly && <button onClick={() => {
+          if (activeTab !== "edit") goToTab("edit");
+          flushSync(() => { setShowAI(true); setShowPriceBook(false); });
+          aiInputRef.current?.focus();
+          setTimeout(() => aiSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+        }} style={{ background: showAI ? ORANGE : "rgba(255,255,255,0.15)", border: "none", color: "#fff", borderRadius: 14, padding: "4px 12px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, cursor: "pointer" }}>AI</button>}
         {!lockedView && !viewerIsApprentice && (invoice || autoSavedId) && onDelete && <button onClick={() => {
           if (!confirm("Delete this?")) return;
           // Cancel any pending debounced autosave AND block the unmount-flush.
