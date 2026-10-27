@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.0 — 2026-10-27
+
+- Messages tab (admin only) in the bottom bar between Calendar and Clients, with an unread badge. Conversation list from `client_messages` (client name, last-message preview, relative time, unread dot, newest first); tap for an iMessage-style thread: Lisa/outbound blue on the right, client/inbound gray on the left, a time stamp whenever the gap is over an hour, images inline and videos in a `<video controls>`. Opening a thread marks its inbound messages read.
+- Reply box in the thread. It posts to `/api/sms-inbound` with the admin session token (no new function, still at the 12 cap): the route checks `profiles.role = 'admin'`, honours `settings.sms_outbound_enabled`, sends through Twilio and logs the row.
+- The same thread component (`src/Messages.jsx`) is now a Messages section in the client profile and a Messages tab on estimates/invoices (both admin only; the document tab shows the linked saved client's thread).
+- Messages match a client by `client_id`, else by the last 10 digits of the phone, so rows logged before the client existed still show.
+- Migration 088: `client_messages.read_at`, existing rows backfilled as read, partial index on unread inbound.
+
 ## v1.27.6 — 2026-10-27
 
 - Simplified job screen for apprentices (`src/ApprenticeJobView.jsx`). When the effective user's tier is `apprentice` (the signed-in user, or the person an admin is viewing as), tapping a job shows job title + status, client name, tappable address and phone, scheduled time, job notes, and three buttons: Call, On My Way, Navigate. No line items, pricing, totals, tax, payments, signature or edit controls. Admins and other tiers still get the full form. Deleted-document previews are unaffected.

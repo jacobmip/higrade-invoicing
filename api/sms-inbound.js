@@ -22,6 +22,10 @@
 // here (saying a reply "would be dropped by carriers anyway") is out of date.
 // settings.sms_outbound_enabled is 'true' as of 2026-10-27.
 //
+// POST with `Authorization: Bearer <admin session>` and no Twilio signature is
+// the Messages tab's reply box: `{ to, body }` sends one text and logs it. Same
+// reason it lives here: the 12-function cap.
+//
 // GET ?preview=<phone>&k=<secret> returns what Lisa WOULD reply to that
 // thread, without sending anything. That is how a change to her prompt gets
 // checked before a customer sees it. It lives on this route because the
@@ -29,8 +33,9 @@
 
 import {
   rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature, twilioAuthToken,
-  rehostTwilioMedia, getSetting,
+  rehostTwilioMedia, getSetting, sendTwilioSms,
 } from './_lib/sms.js';
+import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -50,6 +55,45 @@ function deny(res, reason) {
   res.statusCode = 403;
   res.setHeader('Content-Type', 'text/plain');
   res.end('forbidden');
+}
+
+function jsonOut(res, status, obj) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(obj));
+}
+
+// Admin-only. The sms_outbound_enabled gate applies here too, so the reply box
+// cannot send while Jake has outbound switched off.
+async function appSend(req, res) {
+  try {
+    const user = await requireAdmin(req);
+    if (!user) return jsonOut(res, 403, { error: 'admin only' });
+    const { params } = await readBody(req);
+    const to = String(params.to || '').trim();
+    const body = String(params.body || '').trim();
+    if (!to || !body) return jsonOut(res, 400, { error: 'to and body are required' });
+    if (body.length > 1500) return jsonOut(res, 400, { error: 'message too long' });
+    if (String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() !== 'true') {
+      return jsonOut(res, 409, { error: 'Outbound texting is switched off (sms_outbound_enabled).' });
+    }
+    const sent = await sendTwilioSms({ to, body });
+    // Logged after the send: the customer has it either way, and a failed log
+    // is a missing bubble, not a lost message.
+    let logged = null;
+    try {
+      logged = await rpc('log_client_message', {
+        p_secret: await webhookSecret(), p_phone: to, p_direction: 'outbound',
+        p_body: body, p_call_id: sent?.sid || null, p_media: null,
+      });
+    } catch (e) {
+      console.error('[sms-inbound] logging app reply failed:', e.message || e);
+    }
+    return jsonOut(res, 200, { ok: true, sid: sent?.sid || null, message_id: logged?.message_id || null });
+  } catch (e) {
+    console.error('[sms-inbound] app send failed:', e.message || e);
+    return jsonOut(res, 500, { error: String(e.message || e) });
+  }
 }
 
 export default async function handler(req, res) {
@@ -83,6 +127,11 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.statusCode = 405;
     return res.end('Method not allowed');
+  }
+
+  // The app's reply box. A Twilio webhook never carries a Bearer token.
+  if (!req.headers['x-twilio-signature'] && /^Bearer /i.test(req.headers.authorization || '')) {
+    return appSend(req, res);
   }
 
   let params;

@@ -78,7 +78,7 @@ export async function recordCall({ callId, invoiceId, phone, seconds }) {
 
 // ─── Who is asking ──────────────────────────────────────────────────────────
 
-async function requireAdmin(req) {
+export async function requireAdmin(req) {
   const header = req.headers.authorization || req.headers.Authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
   if (!token) return null;

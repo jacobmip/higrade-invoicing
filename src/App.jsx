@@ -21,6 +21,7 @@ import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 import { weekStartOf, weekEndOf, tierFor } from './commissionTiers.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
 import { PAYMENT_METHODS, canonicalMethod, methodStyle } from './paymentMethods.js';
+import MessagesTab, { ClientThread, useUnreadMessages } from './Messages.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -662,6 +663,7 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
   const icons = {
     invoice:   <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>,
     estimates: <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>,
+    messages:  <svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
     clients:   <svg {...p}><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>,
     items:     <svg {...p}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
     dollar:    <svg {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
@@ -4481,7 +4483,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     }).filter(Boolean),
   ].sort((a, b) => b.sortKey - a.sortKey);
 
-  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }];
+  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : [])];
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
 
   // Real carousel swipe between Edit / Preview / History. All three panels
@@ -5495,6 +5497,15 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           <JobPhotos invoiceId={form.id || autoSavedId} />
         </div>
       </div>
+      {isAdmin && (
+        <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 4 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 4 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
+          <div style={{ padding: 16 }}>
+            {tabIdx === 4 && (clientRecord.id
+              ? <ClientThread client={clientRecord} canReply={isAdmin} />
+              : <div style={{ color: "#8899bb", fontSize: 13, textAlign: "center", padding: 24 }}>Pick a saved client to see their text messages.</div>)}
+          </div>
+        </div>
+      )}
       </div>
       </div>
     </div>
@@ -6813,6 +6824,13 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
               {c.email && <div style={{ fontSize: 13, color: "#444" }}>{c.email}</div>}
               {c.email2 && <div style={{ fontSize: 13, color: "#444" }}>{c.email2}</div>}
               {c.phone && <div style={{ fontSize: 13, color: "#444" }}>{c.phone}</div>}
+            </div>
+          )}
+
+          {isAdmin && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", paddingBottom: 6 }}>Messages</div>
+              <ClientThread client={c} canReply={isAdmin} height={360} />
             </div>
           )}
 
@@ -11394,6 +11412,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [chatStorageKey]);
   const [showMore, setShowMore] = useState(false);
+  const [unreadMessages, refreshUnreadMessages] = useUnreadMessages(isAdmin);
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
   // Counter bumped by the header "+" button when on the Expenses tab. The
@@ -12975,6 +12994,7 @@ export default function App() {
     { id: "invoices",  label: "Invoices",  icon: "invoice"   },
     { id: "estimates", label: "Estimates", icon: "estimates" },
     { id: "calendar",  label: "Calendar",  icon: "calendar"  },
+    ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : []),
     { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
@@ -13110,6 +13130,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
+        {tab === "messages"  && <MessagesTab clients={data.clients} isAdmin={isAdmin} onUnreadChange={refreshUnreadMessages} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
@@ -13189,7 +13210,12 @@ export default function App() {
         <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
           {mainNavItems.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-              <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
+              <span style={{ position: "relative", display: "inline-flex" }}>
+                <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
+                {n.id === "messages" && unreadMessages > 0 && (
+                  <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
+                )}
+              </span>
               {n.label}
             </button>
           ))}
