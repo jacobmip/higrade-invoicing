@@ -579,6 +579,56 @@ export async function fetchInvoiceUpdatedAt(id) {
   return data?.updated_at || null
 }
 
+// ─── Line-item edit log (v1.28.6) ─────────────────────────────────────────────
+// Returns null for an admin (Jake's own edits are not logged), else the
+// editor's profile plus the item set as currently saved.
+async function beginItemEditLog(invoiceId) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.id) return null
+  const me = await getMyProfile()
+  if (!me || me.role === 'admin') return null
+  const { data, error } = await supabase
+    .from('invoice_items')
+    .select('name, description, qty, price, unit, discount, discount_type, taxable, sort_order')
+    .eq('invoice_id', invoiceId)
+    .order('sort_order')
+  if (error) throw error
+  return { editor: { ...me, id: user.id }, before: data || [] }
+}
+
+// Compare saved rows to the payload being saved. Items have no stable id (the
+// RPC re-inserts every row), so match by position first, then by name for
+// reordered or removed lines. Returns [{ op, name, ... }].
+function diffItems(before, after) {
+  const norm = (it) => ({
+    name: String(it.name || '').trim(),
+    desc: String(it.description ?? it.desc ?? '').trim(),
+    qty: Number(it.qty ?? 1),
+    price: Number(it.price ?? 0),
+    unit: it.unit || 'ea',
+    discount: Number(it.discount ?? 0),
+  })
+  const b = before.map(norm)
+  const a = after.map(norm)
+  const left = [...b]
+  const changes = []
+  const addedItems = []
+  for (const cur of a) {
+    let i = left.findIndex(x => x.name === cur.name)
+    if (i < 0) { addedItems.push(cur); continue }
+    const old = left.splice(i, 1)[0]
+    const delta = {}
+    for (const k of ['qty', 'price', 'unit', 'discount', 'desc']) {
+      if (old[k] !== cur[k]) delta[k] = [old[k], cur[k]]
+    }
+    if (Object.keys(delta).length) changes.push({ op: 'edit', name: cur.name, delta })
+  }
+  // A rename reads as a delete plus an add, which is what the saved rows show.
+  for (const cur of addedItems) changes.push({ op: 'add', name: cur.name, qty: cur.qty, price: cur.price })
+  for (const old of left) changes.push({ op: 'delete', name: old.name, qty: old.qty, price: old.price })
+  return changes
+}
+
 // Save an invoice atomically via the save_invoice_with_items Postgres RPC.
 // All three writes (invoice header, line items, payments) happen inside one
 // transaction so a network drop can't leave you with an invoice that has
@@ -667,6 +717,14 @@ export async function upsertInvoice(inv, isNew) {
     }
   }
 
+  // v1.28.6: when a non-admin changes a job's line items, read the saved set
+  // first so the save can be logged as an 'items_edited' event Jake reads in
+  // the History tab. Best-effort: logging never blocks or fails the save.
+  let editLog = null
+  if (!isNew) {
+    try { editLog = await beginItemEditLog(inv.id) } catch (e) { console.warn('edit log (read) failed:', e) }
+  }
+
   const { data, error } = await supabase.rpc('save_invoice_with_items', payload)
   if (error) {
     // Surface concurrent edit as a typed error the UI can handle distinctly.
@@ -689,6 +747,20 @@ export async function upsertInvoice(inv, isNew) {
   }
 
   const savedId = data?.id || inv.id
+
+  if (editLog) {
+    try {
+      const changes = diffItems(editLog.before, payload.items)
+      if (changes.length) {
+        await recordInvoiceEvent(savedId, 'items_edited', null, {
+          editor_id: editLog.editor.id,
+          editor_name: editLog.editor.display_name || '',
+          tier: editLog.editor.tier || '',
+          changes,
+        })
+      }
+    } catch (e) { console.warn('edit log (write) failed:', e) }
+  }
 
   // Persist the shared counter past the number just used. Fire-and-forget: the
   // client already clamps to the highest id it can see on every load, so this

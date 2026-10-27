@@ -3653,7 +3653,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, viewerId, viewerIsAdmin, viewerName, openShift, onShiftChange, onRestore, users, myId }) {
+function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, viewerId, viewerIsAdmin, viewerName, viewerTier, openShift, onShiftChange, onRestore, users, myId }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3665,9 +3665,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // The assigned tech (any tier, apprentice included) edits the job like any
   // tech (RLS allows it, migrations 069/081); a commission-only tech is
   // read-only. `viewerId` is the person being viewed-as, else the signed-in user.
-  const commissionOnly = !viewerIsAdmin && !!invoice && !!viewerId
-    && invoice.commissionTechId === viewerId && invoice.assignedTechId !== viewerId && invoice.ownerId !== viewerId;
-  const lockedView = isReadOnly || commissionOnly;
+  // v1.28.6: a commission tech now edits the job too (migration 090), so the
+  // only locked view is a deleted document.
+  const lockedView = isReadOnly;
+  // An apprentice edits line items but does not delete the document, record
+  // payments or manage signatures. UI-only: RLS must keep payments writable
+  // because save_invoice_with_items deletes and re-inserts the whole set.
+  const viewerIsApprentice = !viewerIsAdmin && viewerTier === "apprentice";
   const [activeTab, setActiveTab] = useState(lockedView ? "preview" : "edit");
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -3800,7 +3804,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const updatedAtRef = useRef(invoice?.updatedAt || null);
   // When set, suppresses the unmount-flush autosave. Used by Delete so the
   // form doesn't re-create the row we just deleted.
-  const skipFlushRef = useRef(commissionOnly);
+  const skipFlushRef = useRef(false);
   // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
   // so paddingTop is correct on first render — no content hidden on load.
   const formHeaderRef = useRef(null);
@@ -4483,13 +4487,24 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           sortKey: new Date(when).getTime(),
         };
       }
+      if (ev.kind === 'items_edited') {
+        const m = ev.meta || {};
+        const who = m.editor_name || 'Team member';
+        return {
+          date: when,
+          label: `Line items edited by ${who}`,
+          type: 'items_edited',
+          badge: m.tier === 'apprentice' ? 'Edited by apprentice' : 'Edited by non-admin',
+          changes: Array.isArray(m.changes) ? m.changes : [],
+          amount: null,
+          sortKey: new Date(when).getTime(),
+        };
+      }
       return null;
     }).filter(Boolean),
   ].sort((a, b) => b.sortKey - a.sortKey);
 
   const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : [])];
-  // A commission-only tech does not get the Edit tab at all.
-  const tabBlocked = (id) => commissionOnly && id === "edit";
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
 
   // Real carousel swipe between Edit / Preview / History. All three panels
@@ -4509,8 +4524,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   }, []);
 
   const goToTab = (nextId) => {
-    // Edit is disabled in read-only preview mode — ignore taps/swipes to it.
-    if (tabBlocked(nextId)) { setDragX(0); return; }
+    // Edit is disabled in read-only preview mode via the tab button itself.
     if (nextId === activeTab) { setDragX(0); return; }
     setShowPriceBook(false);
     setAnimating(true);
@@ -4565,8 +4579,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       const ratio = dragX / width;
       const threshold = 0.18;
       let nextIdx = tabIdx;
-      if (ratio < -threshold && tabIdx < TABS.length - 1) { nextIdx = tabIdx + 1; while (nextIdx < TABS.length - 1 && tabBlocked(TABS[nextIdx].id)) nextIdx++; }
-      else if (ratio > threshold && tabIdx > 0) { nextIdx = tabIdx - 1; while (nextIdx > 0 && tabBlocked(TABS[nextIdx].id)) nextIdx--; }
+      if (ratio < -threshold && tabIdx < TABS.length - 1) { nextIdx = tabIdx + 1; }
+      else if (ratio > threshold && tabIdx > 0) { nextIdx = tabIdx - 1; }
       goToTab(TABS[nextIdx].id);
     } else {
       setDragX(0);
@@ -4633,7 +4647,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
           {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
         </span>
-        {!lockedView && (invoice || autoSavedId) && onDelete && <button onClick={() => {
+        {!lockedView && !viewerIsApprentice && (invoice || autoSavedId) && onDelete && <button onClick={() => {
           if (!confirm("Delete this?")) return;
           // Cancel any pending debounced autosave AND block the unmount-flush.
           // Without this, the unmount handler would re-insert the row we're
@@ -4642,15 +4656,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
           onDelete((invoice && invoice.id) || autoSavedId);
         }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        {commissionOnly
-          ? <button onClick={() => onCancel?.()} style={S.btn("primary")}>Done</button>
-          : isReadOnly
+        {isReadOnly
           ? <button onClick={() => { skipFlushRef.current = true; if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; } onRestore?.(form.id); }} style={S.btn("primary")}>Restore</button>
           : <button onClick={handleSave} style={S.btn("primary")}>Done</button>}
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0" }}>
-        {TABS.filter(t => !tabBlocked(t.id)).map(tab => {
+        {TABS.map(tab => {
           // In read-only preview, the Edit tab is shown grayed and inert.
           const editDisabled = lockedView && tab.id === "edit";
           return (
@@ -4660,7 +4672,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           );
         })}
       </div>
-      {!isAdmin && invoice && !isReadOnly && <JobClockButton invoice={invoice} openShift={openShift} onShiftChange={onShiftChange} />}
+      {invoice && !isReadOnly && <JobClockButton invoice={invoice} openShift={openShift} onShiftChange={onShiftChange} />}
       </div>
 
       <div ref={trackRef} style={{ overflow: "hidden", touchAction: "pan-y" }}>
@@ -5276,7 +5288,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                       return (
                         <div
                           key={p.id || i}
-                          onClick={() => { if (!isPayPal) setEditingPayment(p); }}
+                          onClick={() => { if (!isPayPal && !viewerIsApprentice) setEditingPayment(p); }}
                           style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, cursor: isPayPal ? "default" : "pointer" }}>
                           <div style={{ width: 6, height: 6, borderRadius: "50%", background: mc, flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -5336,7 +5348,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           </div>
 
           {/* Signature Section (estimates only) */}
-          {isEstimate && (
+          {isEstimate && !viewerIsApprentice && (
             <div style={{ padding: "12px 16px 0" }}>
               <label style={S.label}>Client Signature</label>
               {form.signatureData ? (
@@ -5367,7 +5379,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
+              {!viewerIsApprentice && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>}
               <button onClick={isEstimate ? handleSendEstimate : handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
@@ -5415,7 +5427,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 </span>
               </button>
             </div>
-            {!lockedView && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>}
+            {!lockedView && !viewerIsApprentice && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>}
           </div>
           <div style={{ position: "relative" }}>
             {historyEvents.length > 1 && <div style={{ position: "absolute", left: 17, top: 18, bottom: 18, width: 2, background: "#e8ecf4" }} />}
@@ -5425,13 +5437,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     ? { bg: '#e8f8ef', stroke: '#27ae60', icon: 'phone' }
                     : { bg: '#eaf2ff', stroke: '#2c6ed4', icon: 'mail' })
                 : ev.type === 'opened'  ? { bg: '#fff1e0', stroke: '#E8622A', icon: 'eye' }
+                : ev.type === 'items_edited' ? { bg: '#f3e8ff', stroke: '#8e44ad', icon: 'pencil' }
                 : { bg: '#eef0fa', stroke: '#8899bb', icon: 'invoice' };
               // For sent/opened we have full timestamps; show "Apr 30, 12:42 AM".
               const fmtTime = (iso) => {
                 try { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
                 catch { return fmtDate(iso); }
               };
-              const dateLabel = (ev.type === 'sent' || ev.type === 'opened') ? fmtTime(ev.date) : fmtDate(ev.date);
+              const dateLabel = (ev.type === 'sent' || ev.type === 'opened' || ev.type === 'items_edited') ? fmtTime(ev.date) : fmtDate(ev.date);
               return (
                 <div key={i} style={{ display: "flex", gap: 14, marginBottom: 14, position: "relative" }}>
                   <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: palette.bg, border: `2px solid ${palette.stroke}`, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
@@ -5442,6 +5455,19 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                       <div><div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 }}>{ev.label}</div><div style={{ fontSize: 12, color: "#aaa" }}>{dateLabel}</div></div>
                       {ev.amount != null && <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, color: "#27ae60" }}>{fmt(ev.amount)}</div>}
                     </div>
+                    {ev.type === 'items_edited' && (
+                      <div style={{ marginTop: 8 }}>
+                        <span style={{ display: "inline-block", background: "#8e44ad", color: "#fff", borderRadius: 999, padding: "2px 10px", fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{ev.badge}</span>
+                        {ev.changes.map((c, ci) => {
+                          const money = (n) => fmt(Number(n) || 0);
+                          const names = { qty: "qty", price: "price", unit: "unit", discount: "discount", desc: "description" };
+                          const text = c.op === 'add' ? `Added "${c.name}" (${c.qty} x ${money(c.price)})`
+                            : c.op === 'delete' ? `Deleted "${c.name}" (${c.qty} x ${money(c.price)})`
+                            : `Changed "${c.name}": ` + Object.entries(c.delta || {}).map(([k, [from, to]]) => k === 'desc' ? 'description edited' : `${names[k] || k} ${k === 'price' ? money(from) : from} to ${k === 'price' ? money(to) : to}`).join(", ");
+                          return <div key={ci} style={{ fontSize: 12, color: "#5b2d78", background: "#f8f1ff", borderRadius: 6, padding: "4px 8px", marginTop: 5 }}>{text}</div>;
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -13219,6 +13245,7 @@ export default function App() {
             viewerId={effectiveUser?.id}
             viewerIsAdmin={effectiveUser?.role === "admin"}
             viewerName={effectiveUser?.display_name || ""}
+            viewerTier={effectiveUser?.tier || ""}
             openShift={openShift}
             onShiftChange={setOpenShift}
             onRestore={restoreInvoice}
