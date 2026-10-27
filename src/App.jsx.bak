@@ -9476,7 +9476,7 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
         id: u.id,
         name: u.displayName || "Unnamed",
         role: u.role || "plumber",
-        tier: u.tier || "technician",
+        tier: u.tier || "service_tech",
         color: TECH_COLORS[i % TECH_COLORS.length],
       }))
       // An apprentice generates no attributable revenue, so listing them here
@@ -9865,7 +9865,7 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
   const apprentices = useMemo(() => {
     const src = (users || []).slice().sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
     return src
-      .map((u, i) => ({ id: u.id, name: u.displayName || "Unnamed", tier: u.tier || "technician", color: TECH_COLORS[i % TECH_COLORS.length] }))
+      .map((u, i) => ({ id: u.id, name: u.displayName || "Unnamed", tier: u.tier || "service_tech", color: TECH_COLORS[i % TECH_COLORS.length] }))
       .filter(u => u.tier === "apprentice")
       .filter(u => isAdmin || u.id === myId);
   }, [users, isAdmin, myId]);
@@ -10689,8 +10689,8 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
                         separate, per-job call Jake makes on the invoice
                         itself (migration 075) — it does not wait for this. */}
                     <div style={{ display: "flex", gap: 4, marginTop: 7 }} onClick={e => e.preventDefault()}>
-                      {[["apprentice", "Apprentice"], ["technician", "Service Tech"], ["journeyman", "Journeyman"], ["admin", "Owner"]].map(([val, lbl]) => {
-                        const on = (u.tier || "technician") === val || (val === "technician" && u.tier === "service_tech");
+                      {[["apprentice", "Apprentice"], ["service_tech", "Service Tech"], ["journeyman", "Journeyman"], ["admin", "Owner"]].map(([val, lbl]) => {
+                        const on = (u.tier || "service_tech") === val;
                         return (
                           <button
                             key={val}
@@ -11040,7 +11040,7 @@ export default function App() {
             id: p.id,
             displayName: p.display_name || "",
             role: p.role || "plumber",
-            tier: p.tier || "technician",
+            tier: p.tier || "service_tech",
             createdAt: null,
             invoiceCount: 0,
             estimateCount: 0,
