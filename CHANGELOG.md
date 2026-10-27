@@ -2,6 +2,12 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.29.2 — 2026-10-27
+
+- Removed the AI pill from the invoice/estimate form header (the AI tab is still in the tab bar).
+- Removed the delete (trash) button from the form header, where it sat next to Done and was easy to hit by accident.
+- Deleting a document is now long-press (500ms) on its card in Invoices or Estimates, then Delete in the sheet, then the existing confirm. The Delete entry is admin-only; other users still get the rest of the sheet.
+
 ## v1.29.1 — 2026-10-27
 
 - Ghost-action guard broadened: if the AI says it did something ("I've added", "Done!", an action name, etc.) but emitted no JSON, the invoice/estimate chat retries once forcing JSON, then shows a warning. Previously only update_item phrasing was covered.
