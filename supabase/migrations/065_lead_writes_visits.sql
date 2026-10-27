@@ -51,6 +51,14 @@ declare
   before text;
   after  text;
 begin
+  -- Exactly one signature, or there is no telling which one Lisa calls.
+  select count(*) into n
+    from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+   where n2.nspname = 'public' and p.proname = 'create_estimate_from_lead';
+  if n <> 1 then
+    raise exception '065: expected 1 create_estimate_from_lead, found % - nothing changed', n;
+  end if;
+
   select pg_get_functiondef(p.oid) into d
     from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
    where n2.nspname = 'public' and p.proname = 'create_estimate_from_lead';

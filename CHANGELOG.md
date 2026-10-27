@@ -5,6 +5,12 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.22.3 — 2026-10-27
+
+- Migration 065 now stops, changing nothing, if more than one `create_estimate_from_lead`
+  signature exists, instead of patching whichever one Postgres lists first. Not yet applied,
+  so nothing to re-run.
+
 ## v1.22.2 — 2026-10-27
 
 ### Lisa's bookings now land as a real visit (migration 065)
