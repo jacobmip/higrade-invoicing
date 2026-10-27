@@ -11,7 +11,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
-import ApprenticeJobView from './ApprenticeJobView.jsx';
+import { JobContactActions, JobClockButton } from './JobActions.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
@@ -3653,7 +3653,7 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
-function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, isApprentice, apprenticeSolo, apprenticeName, onRestore, users, myId }) {
+function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, viewerId, viewerIsAdmin, viewerName, openShift, onShiftChange, onRestore, users, myId }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
@@ -3662,13 +3662,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // the Edit tab is disabled below.
   // Migration 086: a commission tech who is not the owner or assigned tech can
   // read the job but RLS refuses every write, so the form is view-only for him.
-  // An apprentice who is the assigned tech is solo on the job and edits it like
-  // any tech (RLS allows it, migration 069/081); a commission-only apprentice
-  // is read-only.
-  const apprenticeRO = !!isApprentice && !apprenticeSolo;
-  const commissionOnly = !isAdmin && !!invoice && !!myId
-    && invoice.commissionTechId === myId && invoice.assignedTechId !== myId && invoice.ownerId !== myId;
-  const lockedView = isReadOnly || commissionOnly || !!apprenticeRO;
+  // The assigned tech (any tier, apprentice included) edits the job like any
+  // tech (RLS allows it, migrations 069/081); a commission-only tech is
+  // read-only. `viewerId` is the person being viewed-as, else the signed-in user.
+  const commissionOnly = !viewerIsAdmin && !!invoice && !!viewerId
+    && invoice.commissionTechId === viewerId && invoice.assignedTechId !== viewerId && invoice.ownerId !== viewerId;
+  const lockedView = isReadOnly || commissionOnly;
   const [activeTab, setActiveTab] = useState(lockedView ? "preview" : "edit");
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -3801,7 +3800,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const updatedAtRef = useRef(invoice?.updatedAt || null);
   // When set, suppresses the unmount-flush autosave. Used by Delete so the
   // form doesn't re-create the row we just deleted.
-  const skipFlushRef = useRef(commissionOnly || !!apprenticeRO);
+  const skipFlushRef = useRef(commissionOnly);
   // Fixed header (NAVY bar + tab bar). useLayoutEffect measures before paint
   // so paddingTop is correct on first render — no content hidden on load.
   const formHeaderRef = useRef(null);
@@ -4488,10 +4487,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     }).filter(Boolean),
   ].sort((a, b) => b.sortKey - a.sortKey);
 
-  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin && !apprenticeRO ? [{ id: "messages", label: "Messages", icon: "messages" }] : []), ...(apprenticeRO ? [{ id: "ai", label: "AI", icon: "ai" }] : [])];
-  // An apprentice gets Preview, Photos and AI only: History carries Restore
-  // and payment recording, Edit is the whole editor.
-  const tabBlocked = (id) => (lockedView && id === "edit") || (apprenticeRO && id === "history");
+  const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : [])];
+  // A commission-only tech does not get the Edit tab at all.
+  const tabBlocked = (id) => commissionOnly && id === "edit";
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
 
   // Real carousel swipe between Edit / Preview / History. All three panels
@@ -4644,7 +4642,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
           onDelete((invoice && invoice.id) || autoSavedId);
         }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
-        {(commissionOnly || apprenticeRO)
+        {commissionOnly
           ? <button onClick={() => onCancel?.()} style={S.btn("primary")}>Done</button>
           : isReadOnly
           ? <button onClick={() => { skipFlushRef.current = true; if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; } onRestore?.(form.id); }} style={S.btn("primary")}>Restore</button>
@@ -4652,7 +4650,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       </div>
 
       <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #eaecf0" }}>
-        {TABS.filter(t => !(apprenticeRO && tabBlocked(t.id))).map(tab => {
+        {TABS.filter(t => !tabBlocked(t.id)).map(tab => {
           // In read-only preview, the Edit tab is shown grayed and inert.
           const editDisabled = lockedView && tab.id === "edit";
           return (
@@ -4662,6 +4660,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           );
         })}
       </div>
+      {!isAdmin && invoice && !isReadOnly && <JobClockButton invoice={invoice} openShift={openShift} onShiftChange={onShiftChange} />}
       </div>
 
       <div ref={trackRef} style={{ overflow: "hidden", touchAction: "pan-y" }}>
@@ -5390,7 +5389,15 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 1 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 1 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
-        {apprenticeRO && <ApprenticeJobView invoice={form} clients={clients} techName={apprenticeName} />}
+        {!viewerIsAdmin && (invoice || autoSavedId) && (
+          <JobContactActions
+            name={effectiveClientInfo?.name || form.client || ""}
+            phone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
+            jobAddress={form.jobAddress || null}
+            fallbackAddress={effectiveClientInfo?.address1 ? { line1: effectiveClientInfo.address1, line2: effectiveClientInfo.address2 || "", line3: effectiveClientInfo.address3 || "" } : null}
+            techName={viewerName}
+          />
+        )}
         <PDFPreview form={form} clients={clients} photos={invoicePhotos} />
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 2 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 2 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
@@ -5408,7 +5415,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 </span>
               </button>
             </div>
-            <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>
+            {!lockedView && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), fontSize: 12, padding: "7px 14px", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payment" size={14} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>}
           </div>
           <div style={{ position: "relative" }}>
             {historyEvents.length > 1 && <div style={{ position: "absolute", left: 17, top: 18, bottom: 18, width: 2, background: "#e8ecf4" }} />}
@@ -5485,14 +5492,14 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                         </div>
                         {v.sent_to && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>Sent to {v.sent_to}</div>}
                       </div>
-                      <button
+                      {!lockedView && <button
                         onClick={() => {
                           if (!confirm(`Restore v${v.version_number}? Your current edits will be replaced.`)) return;
                           setForm({ discountType: "$", ...snap });
                           goToTab("edit");
                         }}
                         style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 12px", border: "1px solid #dde2ee", flexShrink: 0 }}
-                      >Restore</button>
+                      >Restore</button>}
                     </div>
                   </div>
                 );
@@ -5512,13 +5519,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             {tabIdx === 4 && (selectedClient?.id
               ? <ClientThread client={selectedClient} canReply={isAdmin} />
               : <div style={{ color: "#8899bb", fontSize: 13, textAlign: "center", padding: 24 }}>Pick a saved client to see their text messages.</div>)}
-          </div>
-        </div>
-      )}
-      {apprenticeRO && (
-        <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 4 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 4 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
-          <div style={{ padding: 16 }}>
-            <AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} data={data} currentInvoice={form} inputRef={aiInputRef} readOnly />
           </div>
         </div>
       )}
@@ -13216,9 +13216,11 @@ export default function App() {
             onOpenLinked={(doc) => { setSelected(doc); setTab(doc.type === "estimate" ? "estimates" : "invoices"); }}
             isAdmin={isAdmin}
             isReadOnly={previewReadOnly}
-            isApprentice={effectiveUser?.tier === "apprentice" && !!selected && !previewReadOnly}
-            apprenticeSolo={!!selected && !!effectiveUser?.id && selected.assignedTechId === effectiveUser.id}
-            apprenticeName={effectiveUser?.display_name || ""}
+            viewerId={effectiveUser?.id}
+            viewerIsAdmin={effectiveUser?.role === "admin"}
+            viewerName={effectiveUser?.display_name || ""}
+            openShift={openShift}
+            onShiftChange={setOpenShift}
             onRestore={restoreInvoice}
             users={allUsers}
             myId={session?.user?.id}

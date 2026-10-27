@@ -132,3 +132,23 @@ export function totals(entries) {
   }
   return { minutes: closed, openCount: open, flaggedCount: flagged }
 }
+
+// The whole clock-in sequence, shared by the Time Clock tab and the clock button
+// on a job. The fence centre and the device fix run in parallel and neither is
+// allowed to stop the clock. `onStage` reports what we are waiting on.
+export async function startShift({ invoice = null, kind = 'job', note = '', onStage } = {}) {
+  onStage?.('Finding the job and your location…')
+  const [, coords] = await Promise.all([
+    invoice ? ensureJobCoords(invoice).catch(() => null) : Promise.resolve(null),
+    getPosition(),
+  ])
+  onStage?.('Starting your shift…')
+  return db.clockIn({ invoiceId: invoice?.id || null, kind, coords, note })
+}
+
+export async function endShift(entryId, { onStage } = {}) {
+  onStage?.('Getting your location…')
+  const coords = await getPosition()
+  onStage?.('Closing your shift…')
+  return db.clockOut(entryId, { coords })
+}

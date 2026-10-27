@@ -136,15 +136,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
     setBusy(true);
     try {
       const inv = jobId ? invById.get(jobId) : null;
-      // In parallel: the fence centre (needs network) and the device fix
-      // (needs GPS). Neither is allowed to stop the clock.
-      setStage('Finding the job and your location…');
-      const [, coords] = await Promise.all([
-        inv ? TC.ensureJobCoords(inv).catch(() => null) : Promise.resolve(null),
-        TC.getPosition(),
-      ]);
-      setStage('Starting your shift…');
-      await db.clockIn({ invoiceId: jobId || null, kind, coords, note });
+      await TC.startShift({ invoice: inv, kind, note, onStage: setStage });
       setNote('');
       await reload();
     } catch (e) {
@@ -164,10 +156,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
     setErr(null);
     setBusy(true);
     try {
-      setStage('Getting your location…');
-      const coords = await TC.getPosition();
-      setStage('Closing your shift…');
-      await db.clockOut(open.id, { coords });
+      await TC.endShift(open.id, { onStage: setStage });
       await reload();
     } catch (e) {
       console.warn('clockOut failed:', e);
