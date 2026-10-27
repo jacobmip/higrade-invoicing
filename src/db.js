@@ -1381,6 +1381,18 @@ export async function loadTechPay() {
   return out
 }
 
+// Tiered weekly commission (migration 080). Self-or-admin read.
+export async function loadCommissionTiers() {
+  const { data, error } = await supabase.from('tech_commission_tiers').select('tech_id, threshold_cents, rate_pct')
+  if (error) { console.warn('loadCommissionTiers failed:', error.message); return {} }
+  const out = {}
+  for (const r of (data || [])) {
+    (out[r.tech_id] = out[r.tech_id] || []).push({ thresholdCents: Number(r.threshold_cents), ratePct: Number(r.rate_pct) })
+  }
+  for (const k of Object.keys(out)) out[k].sort((x, y) => x.thresholdCents - y.thresholdCents)
+  return out
+}
+
 export async function setTechPay(techId, { hourlyRate, commissionPct }) {
   const { data: sessionData } = await supabase.auth.getSession()
   const me = sessionData?.session?.user?.id

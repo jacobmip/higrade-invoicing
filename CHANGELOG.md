@@ -5,6 +5,11 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.4 — 2026-10-27
+
+- View-as fix: it is a UI filter on already-loaded data (the queries still run as the admin), and it matched `ownerId` only. Jobs Jake created and assigned to Kaulana are owned by Jake, so "view as Kaulana" showed an empty list. It now mirrors `invoices_select`: owned, assigned (`assignedTechId`), or commission job (`commissionTechId`, non-deleted). Clients follow the assigned jobs. Migration 086 was confirmed live in `pg_policies`; the policy was never the problem.
+- Tiered weekly commission in Payroll (reads `tech_commission_tiers`, migration 080). New "This Week" (Mon-Sun) period. Each week's collected total on the tech's commission jobs picks one rate for the whole week; commission is that rate times collected minus parts cost. Month and year sum per-week results. A tech with no tier rows falls back to the flat `tech_pay.commission_pct`. Card shows collected, tier hit, hourly, commission.
+
 ## v1.27.3 — 2026-10-27
 
 - Apprentice visibility (migration 086): `invoices_select` now admits `commission_tech_id = auth.uid()` on non-deleted jobs. Verified as Kaulana in a rolled-back transaction: sees his 3 commission jobs and no others, sees no line items (081 unchanged), and an UPDATE touches 0 rows. The form opens view-only for him (Preview tab, Edit disabled, no auto-save, no delete, Done just closes).

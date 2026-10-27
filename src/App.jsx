@@ -17,6 +17,7 @@ import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import WelcomePage, { PendingSetupScreen } from './WelcomePage.jsx';
 import { runAgentMessage, describeFailure } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
+import { weekStartOf, weekEndOf, tierFor } from './commissionTiers.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
 import { PAYMENT_METHODS, canonicalMethod, methodStyle } from './paymentMethods.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
@@ -9674,16 +9675,18 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
 // a change to tax or discount math stays in the one place that defines it.
 function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd, yearStart, yearEnd }) {
   const [period, setPeriod] = useState("mtd");
-  const start = period === "mtd" ? mtdStart : yearStart;
-  const end = period === "mtd" ? mtdEnd : yearEnd;
+  const todayStr = today();
+  const start = period === "week" ? weekStartOf(todayStr) : period === "mtd" ? mtdStart : yearStart;
+  const end = period === "week" ? weekEndOf(todayStr) : period === "mtd" ? mtdEnd : yearEnd;
   const [techPay, setTechPay] = useState({});
+  const [tiers, setTiers] = useState({});
   const [entries, setEntries] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([db.loadTechPay(), db.loadTimeEntries({ from: start, to: end + 'T23:59:59' })])
-      .then(([pay, ents]) => { if (!cancelled) { setTechPay(pay); setEntries(ents); setLoaded(true); } })
+    Promise.all([db.loadTechPay(), db.loadTimeEntries({ from: start, to: end + 'T23:59:59' }), db.loadCommissionTiers()])
+      .then(([pay, ents, tr]) => { if (!cancelled) { setTechPay(pay); setEntries(ents); setTiers(tr); setLoaded(true); } })
       .catch(e => console.warn('PayrollCard load failed:', e));
     return () => { cancelled = true; };
   }, [start, end]);
@@ -9723,18 +9726,35 @@ function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd,
         && latestPaymentDate(i) >= start && latestPaymentDate(i) <= end
       );
       const pct = techPay[t.id]?.commissionPct;
-      const commission = commJobs.reduce((s, i) => {
-        if (!pct) return s;
-        const base = Math.max(0, calcTotals(i).total - (i.materialCost || 0));
-        return s + base * (pct / 100);
-      }, 0);
+      const techTiers = tiers[t.id] || [];
+      // Bucket by Monday-Sunday week of each payment, because tier thresholds
+      // are weekly. Materials come off the week the job finished paying.
+      // Commission base = collected minus parts cost; the TIER is chosen by
+      // collected. No tier rows: flat tech_pay.commission_pct on the base.
+      const weeks = {};
+      const wk = (d) => (weeks[weekStartOf(d)] = weeks[weekStartOf(d)] || { collected: 0, materials: 0 });
+      for (const i of commJobs) {
+        for (const p of (i.payments || [])) {
+          if (p.date && p.date >= start && p.date <= end) wk(p.date).collected += p.amount || 0;
+        }
+        wk(latestPaymentDate(i)).materials += i.materialCost || 0;
+      }
+      const weekRows = Object.entries(weeks).sort(([a], [b]) => a.localeCompare(b)).map(([ws, w]) => {
+        const tier = tierFor(techTiers, w.collected);
+        const rate = techTiers.length ? (tier ? tier.ratePct : 0) : (pct || 0);
+        const base = Math.max(0, w.collected - w.materials);
+        return { weekStart: ws, collected: w.collected, tier, rate, commission: base * (rate / 100) };
+      });
+      const collected = weekRows.reduce((x, w) => x + w.collected, 0);
+      const commission = weekRows.reduce((x, w) => x + w.commission, 0);
+      const tiered = techTiers.length > 0;
 
-      return { ...t, mins, openCount, rate, hourlyPay, commJobs: commJobs.length, pct, commission };
+      return { ...t, mins, openCount, rate, hourlyPay, commJobs: commJobs.length, pct, commission, collected, weekRows, tiered };
     });
-  }, [roster, entries, techPay, invoices, start, end, loaded]);
+  }, [roster, entries, techPay, tiers, invoices, start, end, loaded]);
 
   if (!rows.length) return null;
-  const anyRateSet = rows.some(r => r.rate || r.pct);
+  const anyRateSet = rows.some(r => r.rate || r.pct || r.tiered);
 
   return (
     <div style={{ margin: '12px 12px 0', background: '#fff', borderRadius: 12, padding: '16px 14px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)' }}>
@@ -9742,7 +9762,7 @@ function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd,
         {isAdmin ? 'Payroll' : 'My Pay'}
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-        {[["mtd", "This Month"], ["ytd", "This Year"]].map(([val, lbl]) => (
+        {[["week", "This Week"], ["mtd", "This Month"], ["ytd", "This Year"]].map(([val, lbl]) => (
           <button
             key={val}
             onClick={() => setPeriod(val)}
@@ -9756,7 +9776,7 @@ function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd,
         ))}
       </div>
       <div style={{ fontSize: 10.5, color: '#aaa', marginBottom: 12, lineHeight: 1.45 }}>
-        Hourly from the time clock. Commission from jobs flagged on the invoice, counted when paid.
+        Hourly from the time clock. Commission from jobs flagged on the invoice, counted when paid; tiers apply per Monday-Sunday week.
       </div>
       {rows.map((r, i) => (
         <div key={r.id} style={{ borderTop: i > 0 ? '1px solid #f4f6fa' : 'none', padding: '10px 0' }}>
@@ -9775,9 +9795,21 @@ function PayrollCard({ invoices, users, isAdmin, myId, myName, mtdStart, mtdEnd,
             </span>
             <span>
               {r.commJobs} job{r.commJobs === 1 ? '' : 's'} commission
-              {r.pct ? ` @ ${r.pct}%` : r.commJobs ? ' — no % set' : ''}
+              {!r.tiered && (r.pct ? ` @ ${r.pct}%` : r.commJobs ? ' — no % set' : '')}
             </span>
           </div>
+          {(r.tiered || r.commJobs > 0) && (
+            <div style={{ marginTop: 6, fontSize: 10.5, color: '#556', lineHeight: 1.6 }}>
+              <div>Collected {fmt(r.collected)} · Hourly {fmt(r.hourlyPay || 0)} · Commission {fmt(r.commission)}</div>
+              {r.weekRows.map(w => (
+                <div key={w.weekStart} style={{ color: '#8899bb' }}>
+                  {period === 'week' ? 'Tier' : `Wk of ${w.weekStart.slice(5)}`}: {fmt(w.collected)} collected
+                  {r.tiered ? ` -> ${w.tier ? `${w.rate}% (from ${fmt(w.tier.thresholdCents / 100)})` : 'no tier'}` : ''}
+                  {` = ${fmt(w.commission)}`}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ))}
       {isAdmin && !anyRateSet && (
@@ -11170,6 +11202,18 @@ export default function App() {
   const filteredData = useMemo(() => {
     if (!effectiveOwnerId) return data;
     const match = (r) => r?.ownerId === effectiveOwnerId;
+    // View-as is a UI filter, not impersonation: the queries still run as the
+    // admin. A tech's real RLS reach is owned OR assigned OR commission jobs
+    // (migrations 053/086), and a job Jake created and assigned to an
+    // apprentice is owned by Jake. Matching ownerId alone showed that tech an
+    // empty list. Mirror invoices_select here.
+    const matchInvoice = (r) => r?.ownerId === effectiveOwnerId
+      || r?.assignedTechId === effectiveOwnerId
+      || (r?.commissionTechId === effectiveOwnerId && !r?.deletedAt);
+    const visibleInvoices = (data.invoices || []).filter(matchInvoice);
+    // Clients follow the jobs (is_my_assigned_client, migration 069).
+    const jobClientIds = new Set(visibleInvoices.filter(r => r.assignedTechId === effectiveOwnerId && r.client_id).map(r => r.client_id));
+    const matchClient = (r) => r?.ownerId === effectiveOwnerId || jobClientIds.has(r?.id);
     // Saved items are the exception. The price book is shared (migration 043),
     // so what this plumber actually sees is their own items plus the admin's —
     // and the admin is whoever is doing the viewing. Filtering to the viewed
@@ -11178,8 +11222,8 @@ export default function App() {
     const matchItem = (r) => r?.ownerId === effectiveOwnerId || (myId && r?.ownerId === myId);
     return {
       ...data,
-      invoices:   (data.invoices   || []).filter(match),
-      clients:    (data.clients    || []).filter(match),
+      invoices:   visibleInvoices,
+      clients:    (data.clients    || []).filter(matchClient),
       savedItems: (data.savedItems || []).filter(matchItem),
       expenses:   (data.expenses   || []).filter(match),
     };
