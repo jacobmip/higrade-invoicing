@@ -5,6 +5,14 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.28.7 — 2026-10-27
+
+- History tab: version snapshots now record the event that caused them. Four new tagged snapshots: line item added, line item deleted, email sent, text sent (manual text or On My Way). Each stores who did it (id, display name, tier).
+- Migration 091: `invoice_versions.event_type`, `triggered_by`, `triggered_by_name`, `triggered_by_tier` (nullable, additive). Applied.
+- `db.recordInvoiceVersion()` takes an optional event type; all snapshots still go through that one function.
+- History cards show a readable label ("Line item added", "Email sent", "Text sent") with the actor. Email and text events draw in blue.
+- History card dates read `sent_at` (the cards read a `created_at` column that does not exist).
+
 ## v1.28.6 — 2026-10-27
 
 - **Clock in/out strip now shows for everyone.** It was gated on `!isAdmin`, so Jake never saw it. Any saved, non-deleted job shows it.

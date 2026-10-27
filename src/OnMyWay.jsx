@@ -8,7 +8,7 @@ function buildDestination(jobAddress) {
   return parts.join(", ");
 }
 
-export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAddress }) {
+export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAddress, onSent }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -21,6 +21,7 @@ export default function OnMyWay({ clientName, clientPhone, jobAddress, billingAd
       ? `Aloha ${firstName}, this is Jake from HI Grade Plumbing. I'm on my way and should arrive in approximately ${etaMinutes} minutes. See you soon!`
       : `Aloha ${firstName}, this is Jake from HI Grade Plumbing. I'm on my way! See you soon!`;
     const phone = (clientPhone || "").replace(/\D/g, "");
+    try { onSent?.(); } catch { /* snapshot is best-effort */ }
     window.location.href = `sms:${phone}&body=${encodeURIComponent(body)}`;
   }
 

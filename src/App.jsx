@@ -766,6 +766,11 @@ function useLongPress(onLongPress, { ms = 500, moveTolerance = 8 } = {}) {
   };
 }
 
+// Version snapshot event labels (v1.28.7). Email and text sends draw in blue.
+const EVENT_LABELS = { line_item_added: "Line item added", line_item_deleted: "Line item deleted", email_sent: "Email sent", sms_sent: "Text sent" };
+const isBlue = (t) => t === "email_sent" || t === "sms_sent";
+const TIER_LABELS = { admin: "Admin", journeyman: "Journeyman", service_tech: "Service Tech", apprentice: "Apprentice", plumber: "Plumber" };
+
 const S = {
   btn: (v = "primary") => ({
     background: v === "primary" ? ORANGE : v === "navy" ? NAVY : v === "green" ? "#27ae60" : "#e8ecf4",
@@ -4071,12 +4076,35 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const lateFeeWouldApply = !isEstimate && !!form.lateFeeWaived && calcLateFee({ ...form, lateFeeWaived: false }, t).fee > 0;
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
-  const addItem = (name = "", price = 0) => setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name, price }] }));
-  const removeItem = (i) => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }));
+  // v1.28.7: snapshot through the one existing version path, tagged with the
+  // event and the acting user. `next` is the form as it will be after the
+  // change, since setForm has not rendered yet. Skipped until the document has
+  // a saved row (the version table references invoices). Best-effort.
+  const snapshotEvent = (eventType, note, next) => {
+    const id = form.id || autoSavedId;
+    if (!id) return;
+    db.recordInvoiceVersion({ ...(next || formRef.current), id }, null, note, eventType)
+      .then(() => refreshHistory())
+      .catch(e => console.warn('Version snapshot failed:', e));
+  };
+  const addItem = (name = "", price = 0) => {
+    const cur = formRef.current;
+    const next = { ...cur, items: [...cur.items, { ...blankItem, name, price }] };
+    setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name, price }] }));
+    snapshotEvent('line_item_added', "Line item added", next);
+  };
+  const removeItem = (i) => {
+    const cur = formRef.current;
+    const next = { ...cur, items: cur.items.filter((_, j) => j !== i) };
+    setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }));
+    snapshotEvent('line_item_deleted', "Line item deleted", next);
+  };
   const moveItem = (from, to) => setForm(f => { const items = [...f.items]; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...f, items }; });
 
   const handleAddFromAI = (items, notes) => {
-    setForm(f => ({ ...f, items: [...f.items.filter(it => it.name || it.desc || it.price), ...items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty, price: it.price }))], notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes }));
+    const build = (f) => ({ ...f, items: [...f.items.filter(it => it.name || it.desc || it.price), ...items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty, price: it.price }))], notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes });
+    setForm(build);
+    if (items.length) snapshotEvent('line_item_added', "Line item added", build(formRef.current));
     setShowAI(false);
   };
 
@@ -4144,6 +4172,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         const idx = (a.itemIndex || 0) - 1;
         if (idx < 0) return false;
         setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+        snapshotEvent('line_item_deleted', "Line item deleted", { ...formRef.current, items: formRef.current.items.filter((_, i) => i !== idx) });
         return true;
       }
       case "update_item": {
@@ -4265,7 +4294,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       if (form.id) {
         try { await db.recordInvoiceEvent(form.id, 'sent', phone, { kind: isEst ? 'estimate' : 'invoice', channel: 'sms' }); }
         catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-        try { await db.recordInvoiceVersion(form, phone, isEst ? "Estimate texted" : "Invoice texted"); }
+        try { await db.recordInvoiceVersion(form, phone, isEst ? "Estimate texted" : "Invoice texted", "sms_sent"); }
         catch (e) { console.warn('Version snapshot failed:', e); }
         refreshEvents?.();
       }
@@ -4315,7 +4344,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         if (form.id) {
           try { await db.recordInvoiceEvent(form.id, 'sent', primaryEmail, { kind: 'estimate' }); }
           catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-          try { await db.recordInvoiceVersion(form, primaryEmail, "Estimate sent"); }
+          try { await db.recordInvoiceVersion(form, primaryEmail, "Estimate sent", "email_sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
         }
         alert("Estimate sent. The link in the email will be tracked when opened.");
@@ -4328,7 +4357,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (form.id) {
             try { await db.recordInvoiceEvent(form.id, 'sent', primaryEmail, { kind: 'invoice' }); }
             catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-            try { await db.recordInvoiceVersion(form, primaryEmail, "Invoice sent"); }
+            try { await db.recordInvoiceVersion(form, primaryEmail, "Invoice sent", "email_sent"); }
             catch (e) { console.warn('Version snapshot failed:', e); }
           }
         }
@@ -4633,7 +4662,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         <PriceBook
           items={savedItems}
           onSelect={item => {
-            setForm(f => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] }));
+            const add = (f) => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] });
+            setForm(add);
+            snapshotEvent('line_item_added', "Line item added", add(formRef.current));
             setShowPriceBook(false);
           }}
           onClose={() => setShowPriceBook(false)}
@@ -4955,6 +4986,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 clientName={effectiveClientInfo?.name || form.client || ""}
                 clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
                 jobAddress={form.jobAddress || null}
+                onSent={() => snapshotEvent('sms_sent', "Text sent (On My Way)")}
                 billingAddress={
                   form.billingAddress ||
                   (effectiveClientInfo?.address1 ? { line1: effectiveClientInfo.address1, line2: effectiveClientInfo.address2 || "", line3: effectiveClientInfo.address3 || "" } : null)
@@ -5506,13 +5538,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 const fmtTs = (ts) => { try { return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ts; } };
                 const itemCount = (snap.items || []).length;
                 return (
-                  <div key={v.id} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                  <div key={v.id} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", ...(isBlue(v.event_type) ? { borderLeft: "4px solid #2980b9", background: "#f3f8fd" } : {}) }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>
-                          v{v.version_number} — {v.note || "Snapshot"}
+                        <div style={{ fontSize: 13, fontWeight: 700, color: isBlue(v.event_type) ? "#2980b9" : "#1a1a1a" }}>
+                          v{v.version_number} — {EVENT_LABELS[v.event_type] || v.note || "Snapshot"}
                         </div>
-                        <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{fmtTs(v.created_at)}</div>
+                        {v.event_type && <div style={{ fontSize: 11, fontWeight: 600, color: v.event_type === "email_sent" || v.event_type === "sms_sent" ? "#2980b9" : "#777", marginTop: 2 }}>
+                          {v.triggered_by_name ? `By ${v.triggered_by_name}` : "By unknown user"}{v.triggered_by_tier ? ` (${TIER_LABELS[v.triggered_by_tier] || v.triggered_by_tier})` : ""}
+                        </div>}
+                        <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{fmtTs(v.sent_at || v.created_at)}</div>
                         <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
                           {itemCount} line item{itemCount !== 1 ? "s" : ""} · Total {fmt(snapTotals.total)}
                         </div>

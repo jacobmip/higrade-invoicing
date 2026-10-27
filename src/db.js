@@ -857,7 +857,23 @@ export async function setEstimateDeclined(id, declined, reason) {
 
 // ─── Invoice version snapshots ────────────────────────────────────────────────
 
-export async function recordInvoiceVersion(inv, sentTo, note) {
+// eventType (v1.28.7): 'line_item_added' | 'line_item_deleted' | 'email_sent' |
+// 'sms_sent', or omitted for a plain save/manual snapshot. When given, the
+// acting user (id, name, tier) is stamped on the row. Best-effort: a profile
+// lookup failure never blocks the snapshot.
+export async function recordInvoiceVersion(inv, sentTo, note, eventType) {
+  let actor = {}
+  if (eventType) {
+    try {
+      const me = await getMyProfile()
+      if (me) actor = {
+        triggered_by: me.id,
+        triggered_by_name: me.display_name || null,
+        triggered_by_tier: me.tier || me.role || null,
+      }
+    } catch (e) { console.warn('version actor lookup failed:', e) }
+  }
+
   // Get next version number for this invoice
   const { data: existing } = await supabase
     .from('invoice_versions')
@@ -873,6 +889,7 @@ export async function recordInvoiceVersion(inv, sentTo, note) {
     snapshot: inv,
     sent_to: sentTo || null,
     note: note || null,
+    ...(eventType ? { event_type: eventType, ...actor } : {}),
   })
   if (error) throw error
   return nextVersion
