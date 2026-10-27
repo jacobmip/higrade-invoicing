@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js'
 import { canonicalMethod } from './paymentMethods.js'
+import * as GCal from './googleCalendar.js'
 
 // ─── Shape helpers ────────────────────────────────────────────────────────────
 
@@ -1409,9 +1410,37 @@ export async function setTechPay(techId, { hourlyRate, commissionPct }) {
 // fields to their existing value for anyone but the owner (migration 075), so
 // calling these as a non-admin is a harmless no-op, not an error.
 export async function setInvoiceCommissionTech(invoiceId, techId) {
+  const { data: before } = await supabase.from('invoices')
+    .select('commission_tech_id').eq('id', invoiceId).maybeSingle()
+  const prevTechId = before?.commission_tech_id || null
   const { error } = await supabase.from('invoices')
     .update({ commission_tech_id: techId || null }).eq('id', invoiceId)
   if (error) throw error
+  // The save is the source of truth; the calendar invite is best effort and
+  // must never fail it (Google not connected, no event yet, tech has no email).
+  if ((techId || null) !== prevTechId) {
+    try {
+      const [next, prev] = await Promise.all([
+        techId ? GCal.techEmail(techId) : null,
+        prevTechId ? GCal.techEmail(prevTechId) : null,
+      ])
+      await updateCalendarAttendee(invoiceId, next, prev)
+    } catch (e) { console.warn('updateCalendarAttendee failed:', e) }
+  }
+}
+
+// Puts the apprentice on the job's Google Calendar event so Google sends him
+// the standard invite, and takes the previous one off. Acts through /api/gcal
+// with Jake's stored grant. No-op when the job has no event yet.
+export async function updateCalendarAttendee(invoiceId, techEmail, prevEmail = null) {
+  if (!techEmail && !prevEmail) return false
+  if (techEmail && techEmail === prevEmail) return false
+  const { data, error } = await supabase.from('invoices')
+    .select('gcal_event_id').eq('id', invoiceId).maybeSingle()
+  if (error) throw error
+  if (!data?.gcal_event_id) return false
+  await GCal.setEventAttendee(data.gcal_event_id, { add: techEmail, remove: prevEmail })
+  return true
 }
 
 // Writes the entry list and its sum together; material_cost is what

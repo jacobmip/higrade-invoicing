@@ -117,7 +117,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   register-device.js       — APNs token upsert
   vapi-call-ended.js       — Vapi end-of-call webhook + call record email; also `GET ?recording=<callId>` (admin session) for a call's recording link
   sms-inbound.js           — Twilio inbound SMS webhook
-  gcal.js                  — Google Calendar: server-side OAuth, callback, read/write
+  gcal.js                  — Google Calendar: server-side OAuth, callback, read/write, and attendee ops (`attendee`, `tech_email`) that invite the commission apprentice to a job's event (v1.27.5)
   eta.js / geocode.js      — travel time + address lookup
   _lib/notify.js           — APNs JWT + push fan-out
   _lib/sms.js              — Twilio send helper

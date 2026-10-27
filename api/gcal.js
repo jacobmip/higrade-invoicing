@@ -11,6 +11,9 @@
 //   { op: 'create', event }            → the created event
 //   { op: 'update', id, patch }        → the patched event
 //   { op: 'delete', id }               → { ok: true }
+//   { op: 'tech_email', techId }       → { email }  (admin only; email is not on profiles)
+//   { op: 'attendee', id, add, remove } → the patched event; add/remove are emails,
+//                                         Google sends the invite / cancellation mail
 //   { op: 'disconnect' }               → { ok: true }
 //
 // GET ?code=...&state=...              → Google's redirect after consent.
@@ -33,7 +36,7 @@
 import {
   GOOGLE_SCOPE, calendarFetch, getCredentials, saveCredentials, requireUser,
   isConfigured, clearTokenCache, clientId, clientSecret, redirectUri,
-  signState, verifyState,
+  signState, verifyState, supaUrl,
 } from './_lib/gcal.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
@@ -91,19 +94,28 @@ function readCalendars(cred) {
 // while new ones are written to the Work calendar. Patching a legacy job on
 // Work returns 404, so a reschedule would fail on exactly the jobs that
 // predate this change. Try each calendar until one owns the event.
-async function onEventCalendar(cred, id, opts) {
+async function onEventCalendar(cred, id, opts, query = '') {
   const write = cred?.calendar_id || 'primary';
   const candidates = Array.from(new Set([write, ...readCalendars(cred)]));
   let lastNotFound = null;
   for (const calId of candidates) {
     try {
-      return await calendarFetch(`${cal(calId)}/${encodeURIComponent(id)}`, opts);
+      return await calendarFetch(`${cal(calId)}/${encodeURIComponent(id)}${query}`, opts);
     } catch (e) {
       if (e.status === 404 || e.status === 410) { lastNotFound = e; continue; }
       throw e;
     }
   }
   throw lastNotFound || Object.assign(new Error('Event not found'), { status: 404 });
+}
+
+async function isAdminUser(uid) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const r = await fetch(`${supaUrl()}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=role&limit=1`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  const rows = await r.json().catch(() => []);
+  return rows?.[0]?.role === 'admin';
 }
 
 function missingConfig() {
@@ -227,7 +239,19 @@ export default async function handler(req, res) {
       // otherwise surface as a generic 500 that looks like "Google is down".
       const missing = missingConfig();
       if (missing.length) return json(res, 200, { configured: false, connected: false, missing });
-      const cred = await getCredentials();
+      if (op === 'tech_email') {
+      // Email lives only in auth.users (profiles is world-readable, so it is
+      // deliberately not there). Admin only, or this lists anyone's address.
+      if (!(await isAdminUser(user.id))) return json(res, 403, { error: 'admin_only' });
+      if (!body.techId) return json(res, 400, { error: 'techId is required' });
+      const r = await fetch(`${supaUrl()}/auth/v1/admin/users/${encodeURIComponent(body.techId)}`, {
+        headers: { apikey: process.env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
+      });
+      const u = await r.json().catch(() => ({}));
+      return json(res, 200, { email: r.ok ? (u.email || null) : null });
+    }
+
+    const cred = await getCredentials();
       return json(res, 200, {
         configured: isConfigured(),
         connected: Boolean(cred?.refresh_token),
@@ -329,6 +353,25 @@ export default async function handler(req, res) {
       const updated = await onEventCalendar(cred, body.id, {
         method: 'PATCH', body: JSON.stringify(body.patch),
       });
+      return json(res, 200, updated);
+    }
+
+    if (op === 'attendee') {
+      if (!body.id) return json(res, 400, { error: 'id is required' });
+      if (!(await isAdminUser(user.id))) return json(res, 403, { error: 'admin_only' });
+      const lc = e => String(e || '').trim().toLowerCase();
+      const add = lc(body.add), remove = lc(body.remove);
+      // PATCH replaces the whole attendees array, so read it first and send
+      // back everyone already on the event, not just the apprentice.
+      const ev = await onEventCalendar(cred, body.id, { method: 'GET' });
+      let list = Array.isArray(ev?.attendees) ? ev.attendees : [];
+      if (remove) list = list.filter(a => lc(a.email) !== remove);
+      if (add && !list.some(a => lc(a.email) === add)) list.push({ email: add });
+      // sendUpdates=all is what makes Google email the invite (and the
+      // cancellation to a removed attendee).
+      const updated = await onEventCalendar(cred, body.id, {
+        method: 'PATCH', body: JSON.stringify({ attendees: list }),
+      }, '?sendUpdates=all');
       return json(res, 200, updated);
     }
 

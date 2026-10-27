@@ -5,6 +5,12 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.5 — 2026-10-27
+
+- Apprentice on the Google Calendar event. Setting the Apprentice dropdown on a job that has a `gcal_event_id` adds his email as an attendee, so Google sends him the standard invite. Clearing or changing it removes the previous apprentice (Google sends the cancellation). Best effort: a failure is logged and never blocks the save.
+- `updateCalendarAttendee(invoiceId, techEmail, prevEmail)` in `src/db.js`, called from `setInvoiceCommissionTech`. Two new named ops in the existing `/api/gcal` route (no new function, still at the cap): `attendee` reads the event's current attendees, adds/removes one, PATCHes with `sendUpdates=all`; `tech_email` looks the email up in auth (not on `profiles`, which is world-readable). Both admin only.
+- Only the job's first event (`gcal_event_id`) is updated; later entries in `visits` are not.
+
 ## v1.27.4 — 2026-10-27
 
 - View-as fix: it is a UI filter on already-loaded data (the queries still run as the admin), and it matched `ownerId` only. Jobs Jake created and assigned to Kaulana are owned by Jake, so "view as Kaulana" showed an empty list. It now mirrors `invoices_select`: owned, assigned (`assignedTechId`), or commission job (`commissionTechId`, non-deleted). Clients follow the assigned jobs. Migration 086 was confirmed live in `pg_policies`; the policy was never the problem.

@@ -167,3 +167,16 @@ export async function updateEvent(id, patch) {
 export async function deleteEvent(id) {
   await call({ op: 'delete', id });
 }
+
+// Attendee changes on an existing event. The server reads the current attendee
+// list first (PATCH replaces it) and has Google email the invite or the
+// cancellation. Either side may be empty.
+export async function setEventAttendee(id, { add, remove } = {}) {
+  return call({ op: 'attendee', id, add: add || null, remove: remove || null });
+}
+
+// Email is not on profiles, so the server looks it up (admin only).
+export async function techEmail(techId) {
+  const d = await call({ op: 'tech_email', techId });
+  return d?.email || null;
+}
