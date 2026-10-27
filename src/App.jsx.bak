@@ -4681,21 +4681,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {invoice ? invoice.id : autoSavedId || (isEstimate ? "New Estimate" : "New Invoice")}
           {autoSaving && <span style={{ fontSize: 10, fontWeight: 500, color: "#8899bb", letterSpacing: 0.5, textTransform: "none" }}>Saving…</span>}
         </span>
-        {!lockedView && !isReadOnly && <button onClick={() => {
-          if (activeTab !== "edit") goToTab("edit");
-          flushSync(() => { setShowAI(true); setShowPriceBook(false); });
-          aiInputRef.current?.focus();
-          setTimeout(() => aiSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-        }} style={{ background: showAI ? ORANGE : "rgba(255,255,255,0.15)", border: "none", color: "#fff", borderRadius: 14, padding: "4px 12px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, cursor: "pointer" }}>AI</button>}
-        {!lockedView && !viewerIsApprentice && (invoice || autoSavedId) && onDelete && <button onClick={() => {
-          if (!confirm("Delete this?")) return;
-          // Cancel any pending debounced autosave AND block the unmount-flush.
-          // Without this, the unmount handler would re-insert the row we're
-          // about to delete, which is exactly what made delete look broken.
-          skipFlushRef.current = true;
-          if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
-          onDelete((invoice && invoice.id) || autoSavedId);
-        }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}><Icon name="trash" size={20} color="#cc4444" /></button>}
         {isReadOnly
           ? <button onClick={() => { skipFlushRef.current = true; if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; } onRestore?.(form.id); }} style={S.btn("primary")}>Restore</button>
           : <button onClick={handleSave} style={S.btn("primary")}>Done</button>}
@@ -5674,7 +5659,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 //   estimate: Delete · Share · Send · Print · Get link · Convert to invoice · Duplicate
 // Stays a controlled component so the parent owns dismissal and can
 // chain follow-up UI (e.g. opening the form after Duplicate).
-function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onConvert, onDuplicate, onToggleDeclined }) {
+function InvoiceQuickActionsMenu({ inv, onClose, canDelete, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onConvert, onDuplicate, onToggleDeclined }) {
   if (!inv) return null;
   const isEstimate = inv.type === 'estimate';
   const isPaid = inv.status === 'paid';
@@ -5715,7 +5700,7 @@ function InvoiceQuickActionsMenu({ inv, onClose, onDelete, onShare, onSend, onPr
       <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto' }}>
         <div style={sheet}>
           <div style={heading}>{inv.id}</div>
-          <button onClick={wrap(onDelete)} style={{ ...itemBase, color: '#cc4444', fontWeight: 700 }}>Delete</button>
+          {canDelete && <button onClick={wrap(onDelete)} style={{ ...itemBase, color: '#cc4444', fontWeight: 700 }}>Delete</button>}
           <button onClick={wrap(onShare)}    style={itemBase}>Share</button>
           <button onClick={wrap(onSend)}     style={itemBase}>Send</button>
           <button onClick={wrap(onPrint)}    style={itemBase}>Print</button>
@@ -5847,7 +5832,7 @@ function unsentIdsFor(allDocs) {
   ).map(d => d.id));
 }
 
-function InvoiceList({ invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onRecordPayment, onDuplicate, setSubHeader }) {
+function InvoiceList({ isAdmin, invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onRecordPayment, onDuplicate, setSubHeader }) {
   const TABS = ["all", "outstanding", "unsent", "paid"];
   const [tab, setTab] = useState("all");
   const [search, setSearch] = useState("");
@@ -6014,6 +5999,7 @@ function InvoiceList({ invoices, allDocs, onNew, onSelect, onDelete, onShare, on
       {menuInv && (
         <InvoiceQuickActionsMenu
           inv={menuInv}
+          canDelete={isAdmin}
           onClose={() => setMenuInv(null)}
           onDelete={() => { if (confirm(`Move invoice ${menuInv.id} to Recently Deleted?\n\nYou have 30 days to restore it.`)) onDelete?.(menuInv.id); }}
           onShare={() => onShare?.(menuInv)}
@@ -6041,7 +6027,7 @@ function InvoiceList({ invoices, allDocs, onNew, onSelect, onDelete, onShare, on
 }
 
 // ─── Estimates Tab ────────────────────────────────────────────────────────────
-function EstimatesTab({ invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, onToggleDeclined, setSubHeader }) {
+function EstimatesTab({ isAdmin, invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onConvert, onDuplicate, onToggleDeclined, setSubHeader }) {
   const TABS = ["all", "open", "unsent", "closed"];
   const [tab, setTab] = useState("all");
   const unsentIds = unsentIdsFor(allDocs || invoices);
@@ -6225,6 +6211,7 @@ function EstimatesTab({ invoices, allDocs, onNew, onSelect, onDelete, onShare, o
       {menuInv && (
         <InvoiceQuickActionsMenu
           inv={menuInv}
+          canDelete={isAdmin}
           onClose={() => setMenuInv(null)}
           onDelete={() => { if (confirm(`Move estimate ${menuInv.id} to Recently Deleted?\n\nYou have 30 days to restore it.`)) onDelete?.(menuInv.id); }}
           onShare={() => onShare?.(menuInv)}
@@ -13263,8 +13250,8 @@ export default function App() {
             {subHeader.content}
           </div>
         )}
-        {tab === "invoices"  && <InvoiceList invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
-        {tab === "estimates" && <EstimatesTab invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
+        {tab === "invoices"  && <InvoiceList isAdmin={isAdmin} invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
+        {tab === "estimates" && <EstimatesTab isAdmin={isAdmin} invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
         {tab === "messages"  && <MessagesTab clients={data.clients} isAdmin={isAdmin} onUnreadChange={refreshUnreadMessages} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
