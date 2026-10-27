@@ -1,6 +1,7 @@
-// Simplified job screen for apprentice-tier users: who, where, when, notes and
-// three buttons. Deliberately shows nothing financial: no line items, prices,
-// totals, tax, payments, signature or edit controls.
+// Header block for apprentice-tier users, rendered above the read-only Preview
+// tab of the normal invoice form: who, where, when, internal notes and the
+// Call / On My Way / Navigate buttons. The line items, prices and totals come
+// from the Preview below it; this block adds no editing of any kind.
 import { linesOf } from "./billTo.js";
 
 const NAVY = "#0a1628";
@@ -36,7 +37,7 @@ function mapsUrl(address) {
     : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
 }
 
-export default function ApprenticeJobView({ invoice, clients, techName, onBack }) {
+export default function ApprenticeJobView({ invoice, clients, techName }) {
   const client = (clients || []).find(c => c.id === invoice.client_id)
     || (clients || []).find(c => c.name === invoice.client);
   const info = invoice.clientInfo || {};
@@ -49,8 +50,6 @@ export default function ApprenticeJobView({ invoice, clients, techName, onBack }
   const addressLines = siteLines.length ? siteLines : fallbackLines;
   const address = addressLines.join(", ");
 
-  const jobTitle = (invoice.items || []).map(i => i?.name).find(Boolean)
-    || (invoice.type === "estimate" ? "Estimate visit" : "Service call");
   const when = formatWhen(firstVisitStart(invoice));
   const status = STATUS_LABELS[invoice.status] || (invoice.status || "").replace(/^./, c => c.toUpperCase());
 
@@ -70,15 +69,13 @@ export default function ApprenticeJobView({ invoice, clients, techName, onBack }
   });
 
   return (
-    <div style={{ minHeight: "100%", background: LIGHT, paddingBottom: 32 }}>
-      <div style={{ background: NAVY, color: "#fff", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: 18, letterSpacing: 1, cursor: "pointer", padding: 4 }}>&lsaquo; BACK</button>
-      </div>
-
-      <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-        <div style={{ fontFamily: HEAD, fontWeight: 700, fontSize: 26, color: NAVY, lineHeight: 1.15 }}>{jobTitle}</div>
-        {status && <span style={{ background: NAVY, color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: 13, letterSpacing: 1, padding: "4px 10px", borderRadius: 999, textTransform: "uppercase", whiteSpace: "nowrap" }}>{status}</span>}
-      </div>
+    <div style={{ background: LIGHT, paddingBottom: 4 }}>
+      {status && (
+        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={label}>Status</div>
+          <span style={{ background: NAVY, color: "#fff", fontFamily: HEAD, fontWeight: 700, fontSize: 13, letterSpacing: 1, padding: "4px 10px", borderRadius: 999, textTransform: "uppercase", whiteSpace: "nowrap" }}>{status}</span>
+        </div>
+      )}
 
       <div style={card}>
         <div style={label}>Client</div>
@@ -100,12 +97,12 @@ export default function ApprenticeJobView({ invoice, clients, techName, onBack }
 
       {invoice.internalNotes && (
         <div style={card}>
-          <div style={label}>Job notes</div>
+          <div style={label}>Internal job notes</div>
           <div style={{ fontSize: 16, color: NAVY, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{invoice.internalNotes}</div>
         </div>
       )}
 
-      <div style={{ margin: "16px 16px 0", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ margin: "12px 16px 0", display: "flex", flexDirection: "column", gap: 12 }}>
         <a href={phone ? `tel:${phoneDigits}` : undefined} style={action(!!phone)}>Call</a>
         <button type="button" onClick={onMyWay} disabled={!phone} style={action(!!phone)}>On My Way</button>
         <a href={address ? mapsUrl(address) : undefined} style={action(!!address)}>Navigate</a>
