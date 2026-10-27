@@ -277,7 +277,7 @@ export async function listAllUsers() {
     // Pay band / scorecard selector (migration 054). Falls back to a
     // revenue tier so a profile predating the column is never mistaken for
     // an apprentice and measured on the wrong thing.
-    tier: p.tier || (p.role === 'admin' ? 'admin' : 'technician'),
+    tier: p.tier || (p.role === 'admin' ? 'admin' : 'service_tech'),
     createdAt: p.created_at,
     invoiceCount: invCount.get(p.id) || 0,
     estimateCount: estCount.get(p.id) || 0,
@@ -359,7 +359,7 @@ export async function setCompetency(techId, skillKey, level, note) {
 
 // Sets a profile's pay band / scorecard tier. Admin-only by the profiles RLS.
 export async function setUserTier(userId, tier) {
-  if (!['apprentice', 'technician', 'service_tech', 'journeyman', 'admin'].includes(tier)) {
+  if (!['apprentice', 'service_tech', 'journeyman', 'admin'].includes(tier)) {
     throw new Error(`invalid tier: ${tier}`)
   }
   const { error } = await supabase.from('profiles').update({ tier }).eq('id', userId)

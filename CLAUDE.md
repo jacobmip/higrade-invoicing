@@ -190,7 +190,7 @@ no line items and no phone number.
 Grant SELECT on payments without DELETE and the caller reads them, sends them back, deletes
 none (RLS filters it silently) and inserts copies — a duplicate payment row per save.
 
-- `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('pending'|'apprentice'|'technician'|'service_tech'|'journeyman'|'admin'), created_at
+- `profiles` — id (FK auth.users), display_name, role ('admin'|'plumber'), tier ('pending'|'apprentice'|'service_tech'|'journeyman'|'admin'), created_at
   - **Employee tiers and what each is meant to do: see "Employee tiers" below.**
   - **`tier` is not `role`.** `role` drives `is_admin()` and therefore every RLS policy; `tier` (migration 054) is pay band and which Reports scorecard the person gets, and touches no policy. Never fold one into the other.
 - `tech_competencies` — tech_id, skill_key, level 0–4, note, updated_at, updated_by, plus **self_level, self_note, self_updated_at (migration 071)**. `level` is the owner's sign-off and the only input to the graduation gate. `self_level` is the tech's own claim, writable only on his own rows, enforced by a BEFORE trigger (`guard_competency_signoff`) rather than RLS or a grant — RLS cannot restrict which columns an UPDATE touches, and a column grant would be per-role, which here is the same `authenticated` role as the owner. `skill_key` matches a `key` in `src/competencies.js` — the catalog is code, not a table, so it is versioned. A stored row whose skill has been removed from the catalog is orphaned and ignored, never deleted.
@@ -312,8 +312,10 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **082** — **applied 2026-10-27.** `profiles_tier_check` widened to `pending | apprentice | technician | service_tech | journeyman | admin`. A text CHECK, not a Postgres enum. Additive, touches no policy.
 - **083** — **written and dry-run 2026-10-27, NOT applied** (apply when the `/welcome` build deploys). `handle_new_user()` files new logins as tier `pending`; `complete_my_onboarding(name)` lets a pending person set his own `display_name` (profiles has no self-update policy). Exercised as the test journeyman inside a rolled-back transaction: name set, self tier write refused, rollback left the live rows unchanged.
+- **083** applied 2026-10-27 (with 078, Kaulana's $25/hr).
+- **084** — **applied 2026-10-27.** Merged `technician` into `service_tech`: rows updated, `profiles_tier_check` is now `pending | apprentice | service_tech | journeyman | admin`, column default `service_tech`.
 
-Next migration is `084_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+Next migration is `085_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 
@@ -325,14 +327,12 @@ policy; `role` still decides `is_admin()`. Nothing below is enforced yet except 
 |---|---|---|
 | `pending` | nothing: sees only the Pending-setup screen until Jake assigns a tier | built (gate in `App()`, set by 083 trigger) |
 | `apprentice` | limited: works jobs assigned to him (migration 069), clocks in, fills own skill sheet, own hourly rate. No pricing authority, no commission | built as described |
-| `technician` / `service_tech` | solo jobs, create and price his own documents, see own financials (own `tech_pay`, own commission, own revenue scorecard). No other tech's money, no admin settings | partly built: scorecard and own pay rows exist; "own financials" screen does not |
+| `service_tech` | solo jobs, create and price his own documents, see own financials (own `tech_pay`, own commission, own revenue scorecard). No other tech's money, no admin settings | partly built: scorecard and own pay rows exist; "own financials" screen does not |
 | `journeyman` | nearly full access minus admin settings: all jobs and clients, pricing, reports, no Users/Settings secrets, no pay rates of others, no deleting history | not built: only the Settings button and the check value exist |
 | `admin` | everything (`role = 'admin'`) | built |
 
-**`technician` vs `service_tech`.** The app has always stored Service Tech as `technician` (the Settings button
-says "Service Tech"). 082 also allows the spelling `service_tech`; Settings shows `service_tech` as the same
-button and nothing writes it. To collapse: `update profiles set tier='service_tech' where tier='technician'`,
-change the column default, and replace the `"technician"` fallbacks in `db.js` and `App.jsx` together.
+**`technician` is gone (migration 084).** It was the original spelling of Service Tech; rows were moved to `service_tech`,
+the CHECK no longer allows it, and the column default is `service_tech`. Do not reintroduce it.
 
 **To build before the tiers mean anything:** a `my_tier()` SECURITY DEFINER helper for policies (like
 `is_admin_uid`, to avoid profiles RLS recursion); journeyman policies on invoices/clients/payments/reports and a

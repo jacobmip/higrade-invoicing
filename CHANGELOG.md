@@ -5,6 +5,11 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.27.1 — 2026-10-27
+
+- Merged the `technician` tier into `service_tech` (migration 084). Settings, the roster and the scorecard fallbacks now use `service_tech`; `setUserTier` no longer accepts `technician`.
+- Migrations 083 (new logins start as `pending`) and 078 (apprentice $25/hr) applied.
+
 ## v1.27.0 — 2026-10-27
 
 ### Employee onboarding page and the Journeyman tier (migrations 082, 083)
