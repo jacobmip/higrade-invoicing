@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import * as COMP from "./competencies";
 import TimeClockTab from "./TimeClockTab";
 import * as TC from "./timeclock";
+import HoursTracker from "./HoursTracker";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -10080,6 +10081,7 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         yearStart={yearStart}
         yearEnd={yearEnd}
       />
+      {isAdmin && <HoursTracker users={users} />}
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
         <svg viewBox="0 0 340 115" style={{ width: "100%", height: 115, display: "block" }}>

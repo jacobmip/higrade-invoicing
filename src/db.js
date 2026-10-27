@@ -1548,3 +1548,21 @@ export async function setInvoiceMaterialCost(invoiceId, cost) {
     .update({ material_cost: Number(cost) || 0 }).eq('id', invoiceId)
   if (error) throw error
 }
+
+// Admin correction of a shift's start and end. Only the two timestamps are
+// sent: minutes, the on-site flags and edited_by_admin are all set by the
+// trigger (migration 072). A non-admin's edit of a closed shift is refused by
+// that trigger with FORBIDDEN, but RLS-filtered zero rows would be silent, so
+// .single() makes a miss throw. clockOutAt null leaves the shift open.
+export async function updateTimeEntryTimes(entryId, { clockInAt, clockOutAt }) {
+  const { data, error } = await supabase
+    .from('time_entries')
+    .update({ clock_in_at: clockInAt, clock_out_at: clockOutAt })
+    .eq('id', entryId)
+    .select(TIME_ENTRY_COLS).single()
+  if (error) {
+    if (error.code === '23505') throw new Error('That person already has another open shift.')
+    throw new Error(String(error.message || error).replace(/^(INVALID_INPUT|FORBIDDEN):\s*/, ''))
+  }
+  return toTimeEntry(data)
+}
