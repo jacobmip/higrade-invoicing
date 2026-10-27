@@ -41,6 +41,11 @@ function toInvoice(row, items = [], payments = []) {
     declinedReason: row.declined_reason || null,
     viewToken: row.view_token || null,
     jobAddress: row.job_address || null,
+    // Geofence centre for the time clock (migration 072). Cached from the job
+    // address so a clock-in in a dead zone needs no network.
+    jobLat: row.job_lat ?? null,
+    jobLng: row.job_lng ?? null,
+    jobGeoAt: row.job_geo_at || null,
     billingAddress: row.billing_address || null,
     showBillingAddress: row.show_billing_address ?? true,
     lateFeeWaived: row.late_fee_waived ?? false,
@@ -56,8 +61,9 @@ function toInvoice(row, items = [], payments = []) {
     updatedAt: row.updated_at || null,
     ownerId: row.owner_id || null,
     // The tech who RAN the job (migration 053). Distinct from ownerId, which
-    // is only who created the record and gets restamped on every save.
-    // This is what the per-tech KPI scorecard groups by.
+    // is only who created the record. Since migration 069 a save no longer
+    // restamps ownerId, but this is still the only field that means "who did
+    // the work", and it is what the per-tech KPI scorecard groups by.
     assignedTechId: row.assigned_tech_id || null,
     deletedAt: row.deleted_at || null,
     items: items
@@ -280,18 +286,52 @@ export async function listAllUsers() {
 // Skills never signed off simply have no row, so the caller treats a missing
 // key as level 0 rather than needing the catalog seeded per person.
 export async function loadCompetencies() {
-  const { data, error } = await supabase
-    .from('tech_competencies').select('tech_id, skill_key, level, note, updated_at')
+  // self_level arrives with migration 071. Asked for separately with a
+  // fallback, the same way getMyProfile handles `tier`: a purely additive
+  // column must never make the whole skill sheet come back empty because a
+  // deploy landed before its migration.
+  let { data, error } = await supabase
+    .from('tech_competencies')
+    .select('tech_id, skill_key, level, note, updated_at, self_level, self_updated_at')
   if (error) {
-    console.warn('loadCompetencies failed:', error.message)
-    return {}
+    const res = await supabase
+      .from('tech_competencies').select('tech_id, skill_key, level, note, updated_at')
+    if (res.error) {
+      console.warn('loadCompetencies failed:', res.error.message)
+      return { signed: {}, self: {} }
+    }
+    data = res.data
   }
-  const out = {}
+  const signed = {}
+  const self = {}
   for (const r of (data || [])) {
-    if (!out[r.tech_id]) out[r.tech_id] = {}
-    out[r.tech_id][r.skill_key] = r.level ?? 0
+    if (!signed[r.tech_id]) signed[r.tech_id] = {}
+    signed[r.tech_id][r.skill_key] = r.level ?? 0
+    if (r.self_level !== null && r.self_level !== undefined) {
+      if (!self[r.tech_id]) self[r.tech_id] = {}
+      self[r.tech_id][r.skill_key] = r.self_level
+    }
   }
-  return out
+  return { signed, self }
+}
+
+// A tech's own rating of one skill. Migration 071: the database trigger lets
+// this through and refuses any attempt to move `level`, so the sign-off stays
+// the owner's alone. Deliberately does NOT send level — on a row that does not
+// exist yet the column defaults to 0 and the trigger pins it there, so rating
+// a brand-new skill can never create it pre-signed.
+export async function setSelfCompetency(skillKey, selfLevel) {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const me = sessionData?.session?.user?.id
+  if (!me) throw new Error('not signed in')
+  const { error } = await supabase
+    .from('tech_competencies')
+    .upsert({
+      tech_id: me,
+      skill_key: skillKey,
+      self_level: Math.max(0, Math.min(4, Number(selfLevel) || 0)),
+    }, { onConflict: 'tech_id,skill_key' })
+  if (error) throw error
 }
 
 // Signs a single skill off at a level. Admin-only by RLS — a tech grading
@@ -1184,4 +1224,139 @@ export function subscribeNotifications(onInsert) {
 
 export function unsubscribeChannel(channel) {
   if (channel) supabase.removeChannel(channel)
+}
+
+// ─── Time clock (migration 072) ──────────────────────────────────────────────
+// Everything that matters about a shift — the distance to the job, whether
+// that counts as on site, and how many minutes it ran — is computed by a
+// database trigger. Nothing here sends those values, because the phone doing
+// the sending belongs to the person being measured. All the client supplies
+// is the raw position the device reported.
+
+const TIME_ENTRY_COLS =
+  'id, tech_id, invoice_id, kind, clock_in_at, clock_in_lat, clock_in_lng, ' +
+  'clock_in_accuracy, clock_in_m, clock_in_on_site, clock_out_at, clock_out_lat, ' +
+  'clock_out_lng, clock_out_accuracy, clock_out_m, clock_out_on_site, minutes, ' +
+  'note, reviewed_at, reviewed_by, edited_by_admin, alert_status, created_at'
+
+function toTimeEntry(r) {
+  return {
+    id: r.id,
+    techId: r.tech_id,
+    invoiceId: r.invoice_id || null,
+    kind: r.kind || 'job',
+    clockInAt: r.clock_in_at,
+    clockInLat: r.clock_in_lat,
+    clockInLng: r.clock_in_lng,
+    clockInAccuracy: r.clock_in_accuracy,
+    clockInM: r.clock_in_m,
+    clockInOnSite: r.clock_in_on_site,
+    clockOutAt: r.clock_out_at || null,
+    clockOutLat: r.clock_out_lat,
+    clockOutLng: r.clock_out_lng,
+    clockOutAccuracy: r.clock_out_accuracy,
+    clockOutM: r.clock_out_m,
+    clockOutOnSite: r.clock_out_on_site,
+    minutes: r.minutes ?? null,
+    note: r.note || '',
+    reviewedAt: r.reviewed_at || null,
+    reviewedBy: r.reviewed_by || null,
+    editedByAdmin: !!r.edited_by_admin,
+    alertStatus: r.alert_status || null,
+    createdAt: r.created_at,
+  }
+}
+
+// The caller's currently open shift, or null. A partial unique index in the
+// database guarantees there is at most one, so a double-tap on Clock In
+// cannot produce two.
+export async function loadOpenTimeEntry() {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const me = sessionData?.session?.user?.id
+  if (!me) return null
+  const { data, error } = await supabase
+    .from('time_entries').select(TIME_ENTRY_COLS)
+    .eq('tech_id', me).is('clock_out_at', null)
+    .order('clock_in_at', { ascending: false }).limit(1)
+  if (error) { console.warn('loadOpenTimeEntry failed:', error.message); return null }
+  return data && data[0] ? toTimeEntry(data[0]) : null
+}
+
+// RLS decides the scope: a tech gets his own shifts, an admin gets everyone's.
+export async function loadTimeEntries({ from, to } = {}) {
+  let q = supabase.from('time_entries').select(TIME_ENTRY_COLS)
+    .order('clock_in_at', { ascending: false })
+  if (from) q = q.gte('clock_in_at', from)
+  if (to) q = q.lte('clock_in_at', to)
+  const { data, error } = await q
+  if (error) { console.warn('loadTimeEntries failed:', error.message); return [] }
+  return (data || []).map(toTimeEntry)
+}
+
+export async function clockIn({ invoiceId = null, kind = 'job', coords = null, note = '' }) {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const me = sessionData?.session?.user?.id
+  if (!me) throw new Error('not signed in')
+  const row = {
+    tech_id: me,
+    invoice_id: invoiceId,
+    kind,
+    clock_in_at: new Date().toISOString(),
+    clock_in_lat: coords?.lat ?? null,
+    clock_in_lng: coords?.lng ?? null,
+    clock_in_accuracy: coords?.accuracy ?? null,
+    note: note || null,
+  }
+  const { data, error } = await supabase
+    .from('time_entries').insert(row).select(TIME_ENTRY_COLS).single()
+  if (error) {
+    // The partial unique index surfaces as 23505. Translate it, because
+    // "duplicate key value violates unique constraint" is not a sentence
+    // anyone should read while standing in a crawlspace.
+    if (error.code === '23505') {
+      const e = new Error('ALREADY_CLOCKED_IN')
+      e.code = 'ALREADY_CLOCKED_IN'
+      throw e
+    }
+    throw error
+  }
+  return toTimeEntry(data)
+}
+
+export async function clockOut(entryId, { coords = null, note } = {}) {
+  const patch = {
+    clock_out_at: new Date().toISOString(),
+    clock_out_lat: coords?.lat ?? null,
+    clock_out_lng: coords?.lng ?? null,
+    clock_out_accuracy: coords?.accuracy ?? null,
+  }
+  if (note !== undefined) patch.note = note || null
+  const { data, error } = await supabase
+    .from('time_entries').update(patch).eq('id', entryId)
+    .select(TIME_ENTRY_COLS).single()
+  if (error) throw error
+  return toTimeEntry(data)
+}
+
+// Admin only by RLS and by the trigger. Marks a shift as looked at so the
+// flagged ones stop demanding attention.
+export async function reviewTimeEntry(entryId) {
+  const { data: sessionData } = await supabase.auth.getSession()
+  const me = sessionData?.session?.user?.id
+  const { error } = await supabase.from('time_entries')
+    .update({ reviewed_at: new Date().toISOString(), reviewed_by: me || null })
+    .eq('id', entryId)
+  if (error) throw error
+}
+
+// Caches the geocode of a job address as the geofence centre. A narrow update
+// on purpose: it must not go through upsertInvoice, which sends the whole
+// document and carries an optimistic-lock token. The database refuses to let a
+// non-admin move coordinates that are already set (migration 072), so calling
+// this on a job that already has them is a no-op rather than an error.
+export async function setJobCoords(invoiceId, lat, lng, source = 'geocode') {
+  const { error } = await supabase.from('invoices')
+    .update({ job_lat: lat, job_lng: lng, job_geo_source: source })
+    .eq('id', invoiceId)
+  if (error) throw error
 }

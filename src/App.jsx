@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import * as COMP from "./competencies";
+import TimeClockTab from "./TimeClockTab";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -9083,10 +9084,17 @@ function ExpensesTab({ expenses, onSave, onDelete, newToken }) {
 // measured on the only thing they do control: how fast they are learning the
 // trade. Tier flips them onto the revenue board at graduation.
 
-function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
+function CompetencyModal({ tech, levels, selfLevels, canEdit, canRateSelf, onSet, onSetSelf, onClose }) {
   const [open, setOpen] = useState(() => new Set([COMP.DOMAINS[0].key]));
   const [saving, setSaving] = useState(null);
+  const [savingSelf, setSavingSelf] = useState(null);
   const prog = COMP.progressFor(levels);
+  const selfProg = COMP.progressFor(selfLevels || {});
+  // How many skills he has rated at all. A sheet he has never filled in reads
+  // identically to one he rated all zeros unless this is counted separately.
+  const ratedCount = COMP.ALL_SKILLS.filter(
+    sk => (selfLevels || {})[sk.key] !== undefined
+  ).length;
 
   const toggle = (k) => setOpen(s => {
     const n = new Set(s);
@@ -9100,6 +9108,12 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
     try { await onSet(skillKey, level); } finally { setSaving(null); }
   };
 
+  const pickSelf = async (skillKey, level) => {
+    if (!canRateSelf) return;
+    setSavingSelf(skillKey);
+    try { await onSetSelf(skillKey, level); } finally { setSavingSelf(null); }
+  };
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 2000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#f5f7fb", width: "100%", maxWidth: 520, borderRadius: "16px 16px 0 0", maxHeight: "92vh", display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
@@ -9107,7 +9121,14 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tech.name}</div>
-              <div style={{ color: "#8899bb", fontSize: 11 }}>Apprentice · {Math.round(prog.overallPct * 100)}% overall</div>
+              <div style={{ color: "#8899bb", fontSize: 11 }}>
+                Apprentice · {Math.round(prog.overallPct * 100)}% signed off
+                {canRateSelf
+                  ? ` · you have rated ${ratedCount}/${COMP.SKILL_COUNT}`
+                  : ratedCount > 0
+                    ? ` · he rates himself ${Math.round(selfProg.overallPct * 100)}% (${ratedCount}/${COMP.SKILL_COUNT} rated)`
+                    : " · he has not rated himself yet"}
+              </div>
             </div>
             <button onClick={onClose} style={{ background: "rgba(255,255,255,0.12)", border: "none", color: "#fff", borderRadius: 8, padding: "7px 13px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", flexShrink: 0 }}>Done</button>
           </div>
@@ -9136,6 +9157,12 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
                   <div style={{ padding: "0 14px 12px" }}>
                     {d.skills.map(sk => {
                       const lv = Math.max(0, Math.min(COMP.MAX_LEVEL, levels[sk.key] ?? 0));
+                      const claim = (selfLevels || {})[sk.key];
+                      const hasClaim = claim !== undefined;
+                      // Only flag a claim that runs AHEAD of the sign-off.
+                      // Behind is normal and means nothing; ahead is the one
+                      // that says "check me on this".
+                      const claimsMore = hasClaim && claim > lv;
                       return (
                         <div key={sk.key} style={{ padding: "9px 0", borderTop: "1px solid #f4f6fa" }}>
                           <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 6 }}>
@@ -9144,6 +9171,13 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
                               <span title="Must be Solo before running a van" style={{ flexShrink: 0, background: "#fff1ec", color: ORANGE, fontSize: 8, fontWeight: 700, letterSpacing: 0.6, padding: "2px 5px", borderRadius: 3, textTransform: "uppercase" }}>Gate</span>
                             )}
                           </div>
+                          {/* The owner's sign-off. The only number the
+                              graduation gate reads. */}
+                          {canRateSelf && (
+                            <div style={{ fontSize: 8.5, color: "#aab4c8", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 3 }}>
+                              Signed off by Jake
+                            </div>
+                          )}
                           <div style={{ display: "flex", gap: 3, opacity: saving === sk.key ? 0.45 : 1 }}>
                             {COMP.LEVELS.map(L => {
                               const on = lv === L.v;
@@ -9167,6 +9201,51 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
                               );
                             })}
                           </div>
+
+                          {/* His own call. A second, separate number — the
+                              database refuses to let him move the one above
+                              (migration 071), so this is not a shortcut to
+                              graduating, it is him telling Jake where he
+                              thinks he is. */}
+                          {canRateSelf && (
+                            <>
+                              <div style={{ fontSize: 8.5, color: claimsMore ? ORANGE : "#aab4c8", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", margin: "7px 0 3px" }}>
+                                {hasClaim ? "Your call" : "Your call — not rated yet"}
+                              </div>
+                              <div style={{ display: "flex", gap: 3, opacity: savingSelf === sk.key ? 0.45 : 1 }}>
+                                {COMP.LEVELS.map(L => {
+                                  const on = hasClaim && claim === L.v;
+                                  return (
+                                    <button
+                                      key={L.v}
+                                      onClick={() => pickSelf(sk.key, L.v)}
+                                      title={L.label}
+                                      style={{
+                                        flex: 1, padding: "5px 2px", borderRadius: 6, cursor: "pointer",
+                                        border: on ? `2px solid ${NAVY}` : "1px dashed #dde2ee",
+                                        background: on ? "#eef1f7" : "#fff",
+                                        color: on ? NAVY : "#bbc3d4",
+                                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 9.5,
+                                        letterSpacing: 0.3, textTransform: "uppercase", lineHeight: 1.2,
+                                      }}
+                                    >
+                                      {L.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+
+                          {/* Owner's view: his claim, flagged only when it
+                              runs ahead of the sign-off. */}
+                          {!canRateSelf && hasClaim && (
+                            <div style={{ marginTop: 5, fontSize: 10.5, color: claimsMore ? ORANGE : "#99a3b8", display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", fontSize: 8.5 }}>He says</span>
+                              <span style={{ fontWeight: 600 }}>{COMP.LEVELS[claim]?.label || claim}</span>
+                              {claimsMore && <span style={{ fontSize: 9.5 }}>· ahead of your sign-off</span>}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -9178,7 +9257,9 @@ function CompetencyModal({ tech, levels, canEdit, onSet, onClose }) {
 
           {!canEdit && (
             <div style={{ fontSize: 11, color: "#aaa", textAlign: "center", padding: "6px 10px", lineHeight: 1.5 }}>
-              Read only. Only the owner can sign a skill off.
+              {canRateSelf
+                ? "Rate yourself on every skill — that is your half of this. Only Jake can sign one off, and the sign-off is what counts toward Service Technician."
+                : "Read only. Only the owner can sign a skill off."}
             </div>
           )}
         </div>
@@ -9218,7 +9299,7 @@ function GraduationCard({ prog }) {
       {prog.ready ? (
         <div style={{ fontSize: 11, color: "#1f6f3a", lineHeight: 1.5 }}>
           Both bars are met. Switch their tier to Technician in Settings to move
-          them onto the revenue scorecard and turn commission on.
+          them onto the revenue scorecard.
         </div>
       ) : (
         <div style={{ fontSize: 11, color: "#889", lineHeight: 1.5 }}>
@@ -9233,7 +9314,7 @@ function GraduationCard({ prog }) {
   );
 }
 
-function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
+function ApprenticeScorecard({ techs, competencies, selfLevels, canEdit, myId, onSet, onSetSelf }) {
   const [openTech, setOpenTech] = useState(null);
   if (!techs.length) return null;
 
@@ -9243,7 +9324,8 @@ function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
         Apprentice Progress
       </div>
       <div style={{ fontSize: 10.5, color: "#aaa", marginBottom: 12, lineHeight: 1.45 }}>
-        Measured on learning, not revenue. Commission starts at Service Technician.
+        Measured on learning, not revenue. Commission on a job is a separate
+        test — solo, sold it, collected it.
       </div>
 
       {techs.map((t, i) => {
@@ -9277,6 +9359,9 @@ function ApprenticeScorecard({ techs, competencies, canEdit, onSet }) {
 
       {openTech && (
         <CompetencyModal
+          selfLevels={(selfLevels || {})[openTech.id] || {}}
+          canRateSelf={!canEdit && openTech.id === myId}
+          onSetSelf={onSetSelf}
           tech={openTech}
           levels={competencies[openTech.id] || {}}
           canEdit={canEdit}
@@ -9521,7 +9606,7 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
 }
 
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
-function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName, competencies, onSetCompetency }) {
+function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myName, competencies, selfLevels, onSetCompetency, onSetSelfLevel }) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
@@ -9656,6 +9741,9 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
       <ApprenticeScorecard
         techs={apprentices}
         competencies={competencies || {}}
+        selfLevels={selfLevels || {}}
+        myId={myId}
+        onSetSelf={onSetSelfLevel}
         canEdit={isAdmin}
         onSet={onSetCompetency}
       />
@@ -10732,16 +10820,55 @@ export default function App() {
     try { setAllUsers(await db.listAllUsers()); } catch (e) { console.warn(e); }
   };
 
-  // Apprentice competency levels, shaped { techId: { skillKey: level } }.
-  // RLS scopes it: an admin gets everyone, a tech gets only themselves.
+  // Apprentice competency levels, both shaped { techId: { skillKey: level } }.
+  // RLS scopes them: an admin gets everyone, a tech gets only themselves.
+  //
+  // Two separate numbers on purpose (migration 071). `competencies` is the
+  // owner's sign-off and the only thing the graduation gate reads.
+  // `selfLevels` is the tech's own claim, which he writes himself. They are
+  // useful precisely where they disagree.
   const [competencies, setCompetencies] = useState({});
+  const [selfLevels, setSelfLevels] = useState({});
   useEffect(() => {
-    if (!session) { setCompetencies({}); return; }
+    if (!session) { setCompetencies({}); setSelfLevels({}); return; }
     let cancelled = false;
     db.loadCompetencies()
-      .then(c => { if (!cancelled) setCompetencies(c); })
+      .then(c => {
+        if (cancelled) return;
+        setCompetencies(c.signed || {});
+        setSelfLevels(c.self || {});
+      })
       .catch(e => console.warn("loadCompetencies failed:", e));
     return () => { cancelled = true; };
+  }, [session]);
+
+  // An open shift, polled lightly, so the banner is right from whatever tab
+  // he is on. A forgotten clock-out is a payroll problem that only shows up a
+  // week later, and the clock tab is not where he spends his day.
+  //
+  // Intentionally not a realtime subscription: this is one small row for one
+  // user, the clock is driven from this same device, and a dropped socket
+  // failing silently would make the banner lie.
+  const [openShift, setOpenShift] = useState(null);
+  const refreshOpenShift = async () => {
+    if (!session) { setOpenShift(null); return; }
+    try { setOpenShift(await db.loadOpenTimeEntry()); }
+    catch (e) { console.warn("loadOpenTimeEntry failed:", e); }
+  };
+  useEffect(() => {
+    if (!session) { setOpenShift(null); return; }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const o = await db.loadOpenTimeEntry();
+        if (!cancelled) setOpenShift(o);
+      } catch (e) { /* offline: keep whatever the banner already shows */ }
+    };
+    tick();
+    const iv = setInterval(tick, 120000);
+    const onFocus = () => tick();
+    window.addEventListener("focus", onFocus);
+    return () => { cancelled = true; clearInterval(iv); window.removeEventListener("focus", onFocus); };
   }, [session]);
 
   const handleSetTier = async (userId, tier) => {
@@ -10768,6 +10895,27 @@ export default function App() {
       console.warn("setCompetency failed:", e);
       setCompetencies(c => ({ ...c, [techId]: { ...(c[techId] || {}), [skillKey]: prev } }));
       alert("Could not save that skill level. Check your connection and try again.");
+    }
+  };
+
+  // A tech rating his own skill. Always writes his own row — the database
+  // refuses any other tech_id — so this takes no techId argument, which is
+  // also what stops a UI bug from aiming it at someone else.
+  const handleSetSelfLevel = async (skillKey, level) => {
+    const me = session?.user?.id;
+    if (!me) return;
+    const prev = selfLevels[me]?.[skillKey];
+    setSelfLevels(c => ({ ...c, [me]: { ...(c[me] || {}), [skillKey]: level } }));
+    try {
+      await db.setSelfCompetency(skillKey, level);
+    } catch (e) {
+      console.warn("setSelfCompetency failed:", e);
+      setSelfLevels(c => {
+        const next = { ...(c[me] || {}) };
+        if (prev === undefined) delete next[skillKey]; else next[skillKey] = prev;
+        return { ...c, [me]: next };
+      });
+      alert("Could not save your rating. Check your connection and try again.");
     }
   };
   // Apply the View-as filter to in-memory data. Admins viewing themselves or
@@ -12526,6 +12674,7 @@ export default function App() {
     { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
+    { id: "timeclock", label: "Time Clock", icon: "clock"    },
     { id: "payments",  label: "Payments",   icon: "dollar"   },
     { id: "pricebook", label: "Price Book", icon: "items"    },
     { id: "reports",   label: "Reports",    icon: "chart"    },
@@ -12612,6 +12761,28 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {/* On the clock. Lives in the fixed header so it follows him across
+            every tab — an open shift he forgets about is a timesheet Jake has
+            to reconstruct from memory a week later. Tapping it goes to the
+            clock, which is where the Clock Out button is. */}
+        {openShift && (
+          <button
+            onClick={() => { setView("list"); setTab("timeclock"); }}
+            style={{
+              width: "100%", border: "none", cursor: "pointer", background: "#16a085",
+              color: "#fff", padding: "7px 20px", display: "flex", alignItems: "center",
+              justifyContent: "space-between", gap: 8, textAlign: "left",
+            }}
+          >
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              On the clock{openShift.invoiceId ? ` · ${openShift.invoiceId}` : ""}
+            </span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
+              Clock out →
+            </span>
+          </button>
+        )}
       </div>
 
       {view === "list" && (tab === "invoices" || tab === "estimates" || tab === "expenses") && (
@@ -12639,8 +12810,9 @@ export default function App() {
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
-        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} onSetCompetency={handleSetCompetency} />}
+        {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} selfLevels={selfLevels} onSetCompetency={handleSetCompetency} onSetSelfLevel={handleSetSelfLevel} />}
         {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
+        {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab

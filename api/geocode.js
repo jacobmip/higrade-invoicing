@@ -43,7 +43,18 @@ export default async function handler(req) {
   const state = getShort('administrative_area_level_1') || '';
   const zip = get('postal_code') || '';
 
-  return new Response(JSON.stringify({ city, state, zip }), {
+  // Coordinates, for the clock-in geofence (migration 072). Purely additive —
+  // the existing callers destructure city/state/zip and ignore the rest.
+  // `location_type` matters: ROOFTOP is the house, APPROXIMATE can be the
+  // middle of a zip code, which would make a geofence meaningless. The caller
+  // decides what to do with a weak fix rather than being handed a number with
+  // no provenance.
+  const loc = data.results[0].geometry?.location || null;
+  const lat = typeof loc?.lat === 'number' ? loc.lat : null;
+  const lng = typeof loc?.lng === 'number' ? loc.lng : null;
+  const precision = data.results[0].geometry?.location_type || null;
+
+  return new Response(JSON.stringify({ city, state, zip, lat, lng, precision, formatted: data.results[0].formatted_address || '' }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

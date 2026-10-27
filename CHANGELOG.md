@@ -5,6 +5,66 @@ Each entry is tagged with its version number and date so incidents can be traced
 
 ---
 
+## v1.25.0 — 2026-10-26
+
+### Clock in and clock out on a job, with GPS at both ends (migrations 071, 072, 073)
+
+- **A Time Clock tab.** One button. Pick a job — today's work sorts to the top — or clock on
+  to Driving, a Supply run, Shop time or Other, because drive and shop hours are paid hours and
+  a timesheet that can't hold them is one Jake fixes by hand every week. An open shift shows a
+  running total in the header from every tab, so a forgotten clock-out can't quietly become a
+  week-old argument.
+- **The phone supplies its position and nothing else.** Distance to the job, whether that
+  counts as on site, and how many minutes a shift ran are all computed by a database trigger.
+  Proven by sending a deliberately false payload — 480 minutes and 0 metres on an off-site
+  clock-in — and watching every value get recomputed and discarded.
+- **Off site clocks in anyway, and texts Jake immediately.** Jake's call: a bad GPS fix in a
+  crawlspace must not lock a man out of his own timesheet. The entry is stamped with the
+  distance, flagged for review, and the database texts Jake through Twilio.
+- **No GPS fix reads as unknown, never as off site.** Three states, not two. An unknown
+  location raises no alert and accuses nobody.
+- **What a tech cannot do:** be on the clock twice at once, reopen a closed shift, backdate his
+  own start, log hours against anyone else, or delete a shift. Each one attempted as a
+  non-admin and refused. Jake can edit any entry; an edited one is marked as edited.
+- **The geofence centre is the geocoded job address,** cached on first use so a clock-in in a
+  dead zone needs no network. A tech may fill it in when it's empty and cannot move one that's
+  already set. A weak geocode is rejected rather than stored — Google answers an unrecognised
+  address with the middle of a zip code, and a geofence that size would call everywhere on site.
+  `/api/geocode` now returns coordinates; no new Vercel function, so the 12-function cap holds.
+- **Radius is `settings.geofence_radius_m`, default 150m,** so the first long driveway or condo
+  tower that throws a false flag is a one-line fix, not a migration.
+
+### The database can text Jake (migration 073)
+
+- **`send_owner_sms()` sends through Twilio from Postgres,** using the `http` extension, since
+  Twilio needs form-encoded parameters that pg_net cannot produce and no API route here relays
+  SMS. SECURITY DEFINER: an apprentice triggers the text but cannot read the credentials that
+  send it, which migration 070 had just taken away from him.
+- **It records Twilio's own message SID and status rather than assuming.**
+  `references/a2p-10dlc.md` warned that Twilio answers 201 on a message a carrier later drops —
+  exactly how the old error-30034 failures looked like successes for a week.
+- **First real send verified 2026-10-26.** Twilio's record came back `delivered`, no error code.
+  That also closes the open item in `a2p-10dlc.md`: the app's own send path had never sent
+  anything until now.
+
+### An apprentice fills out his own skill sheet (migration 071)
+
+- **Two numbers per skill, not one.** `level` is Jake's sign-off and is still the only thing the
+  graduation gate reads. `self_level` is the apprentice's own claim, which he writes himself.
+  They're useful exactly where they disagree: claims Solo but signed at Assisted means check
+  him; signed at Solo but claims Watched means he doesn't know he's trusted yet. Jake's view
+  flags only a claim that runs *ahead* of the sign-off.
+- **Enforced by a trigger, not a policy or a grant.** RLS can't restrict which columns an UPDATE
+  touches, and column grants are per-role — the owner is the same `authenticated` role as the
+  apprentice, so revoking table UPDATE to grant the self columns would have stopped Jake
+  writing `level` too.
+- **Verified by attacking it as the apprentice:** raising one level, raising all sixty at once,
+  raising one through an upsert, creating a brand-new row pre-signed at Solo, forging the
+  sign-off trail, and deleting a row to erase a sign-off. All refused or neutralised; only the
+  claim lands. Jake's sign-off still works and still stamps who signed it.
+- Commission is no longer described as starting at Service Technician — it's a per-job test now
+  (solo, sold it, collected it), so the copy that said otherwise was wrong.
+
 ## v1.24.0 — 2026-10-26
 
 ### An apprentice can actually work a job you assign him (migrations 069, 070)
