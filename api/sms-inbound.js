@@ -14,13 +14,24 @@
 // when a ?k=<secret> matching SMS_WEBHOOK_SECRET is present as a fallback.
 //
 // Responds with empty TwiML: Twilio requires a 200 with valid XML, and an
-// empty <Response/> means "no auto-reply". Auto-replying would be an outbound
-// message and would be dropped by carriers anyway.
+// empty <Response/> means "no auto-reply from TwiML". The reply, when there is
+// one, goes out through the Twilio API instead so it can be logged in the
+// thread and so a delivery failure is visible.
+//
+// A2P 10DLC cleared, so outbound works now and the comment that used to sit
+// here (saying a reply "would be dropped by carriers anyway") is out of date.
+// settings.sms_outbound_enabled is 'true' as of 2026-10-27.
+//
+// GET ?preview=<phone>&k=<secret> returns what Lisa WOULD reply to that
+// thread, without sending anything. That is how a change to her prompt gets
+// checked before a customer sees it. It lives on this route because the
+// project is at Vercel Hobby's 12-function cap.
 
 import {
   rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature, twilioAuthToken,
   rehostTwilioMedia, getSetting,
 } from './_lib/sms.js';
+import { autoReply, draftReply } from './_lib/sms-agent.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -42,6 +53,33 @@ function deny(res, reason) {
 }
 
 export default async function handler(req, res) {
+  // Dry run: what would Lisa say to this thread? Sends nothing, writes nothing.
+  if (req.method === 'GET') {
+    const url = new URL(fullUrl(req));
+    const phone = url.searchParams.get('preview');
+    if (!phone) {
+      res.statusCode = 405;
+      return res.end('Method not allowed');
+    }
+    if (!secretMatches(url.searchParams.get('k'), await webhookSecret())) {
+      return deny(res, 'preview without a valid ?k= secret');
+    }
+    try {
+      const out = await draftReply({
+        phone,
+        clientName: url.searchParams.get('name') || null,
+        hasOpenEstimate: url.searchParams.get('open') === '1',
+      });
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({ ok: true, phone, draft: out }, null, 1));
+    } catch (e) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+    }
+  }
+
   if (req.method !== 'POST') {
     res.statusCode = 405;
     return res.end('Method not allowed');
@@ -146,9 +184,29 @@ export default async function handler(req, res) {
       console.error('[sms-inbound] alert email failed:', e.message || e);
     }
 
+    // ─── Lisa answers ───────────────────────────────────────────────────
+    // Last, deliberately. The message is already logged, the photo is already
+    // on the job and Jake is already emailed, so a bad day for the model or
+    // for Anthropic cannot cost us the message itself. Gated by
+    // settings.sms_autoreply_enabled.
+    let replied = 'not attempted';
+    try {
+      replied = await autoReply({
+        phone: from,
+        body: String(body),
+        clientName: result?.client_name || null,
+        clientId: result?.client_id || null,
+        secret,
+      });
+    } catch (e) {
+      replied = `failed: ${e.message || e}`;
+      console.error('[sms-inbound] autoreply failed:', e.message || e);
+    }
+
     console.log('[sms-inbound] logged', {
       from, matched: result?.matched, client: result?.client_name || null,
       media: media.length, attachedTo: attached?.estimate_id || null,
+      replied,
     });
   } catch (e) {
     // Swallow: returning non-200 makes Twilio retry, and a retry storm would
