@@ -96,6 +96,7 @@ src/
   JobActions.jsx    — Call / On My Way / Navigate row (Preview tab) and the clock in/out button, both for non-admin users in the standard form
   Communications.jsx — client profile Communications tab: texts + calls timeline (admin), plays audio via /api/call-recording
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
+  TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
   HoursTracker.jsx   — admin Hours card in Reports: all workers' time_entries by week or range, admin edit of start/end (v1.28.8)

@@ -1667,3 +1667,36 @@ export async function loadHomeBase() {
   return Number.isFinite(m.home_base_lat) && Number.isFinite(m.home_base_lng)
     ? { lat: m.home_base_lat, lng: m.home_base_lng } : null
 }
+
+// Admin Team Map: every tech with an open clock (time_entries, clock_out_at null),
+// each with the best position we have. The open time_activity segment carries the
+// 5-minute GPS reading and its category; a tech whose first reading has not landed
+// yet falls back to where he clocked in. RLS lets only an admin see other techs' rows.
+export async function loadTeamPositions() {
+  const [te, act] = await Promise.all([
+    supabase.from('time_entries')
+      .select('id, tech_id, invoice_id, kind, clock_in_at, clock_in_lat, clock_in_lng')
+      .is('clock_out_at', null),
+    supabase.from('time_activity').select(ACTIVITY_COLS).is('end_time', null),
+  ])
+  if (te.error) { console.warn('loadTeamPositions failed:', te.error.message); return [] }
+  const segs = new Map((act.data || []).map(r => [r.tech_id, toActivity(r)]))
+  const out = new Map()
+  for (const r of te.data || []) {
+    const seg = segs.get(r.tech_id)
+    const hasSeg = seg && seg.lat != null && seg.lng != null
+    const lat = hasSeg ? seg.lat : r.clock_in_lat
+    const lng = hasSeg ? seg.lng : r.clock_in_lng
+    if (lat == null || lng == null) continue
+    const row = {
+      techId: r.tech_id, lat, lng,
+      category: hasSeg ? seg.category : 'stationary',
+      invoiceId: hasSeg ? seg.invoiceId : (r.kind === 'day' ? null : r.invoice_id),
+      updatedAt: hasSeg ? seg.lastSeenAt : r.clock_in_at,
+    }
+    // A tech can have a day clock and a job shift open at once; one marker, newest reading.
+    const prev = out.get(r.tech_id)
+    if (!prev || new Date(row.updatedAt) > new Date(prev.updatedAt)) out.set(r.tech_id, row)
+  }
+  return [...out.values()]
+}

@@ -2,6 +2,12 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.35.0 — 2026-10-27
+
+- New: admin-only Team Map card in Reports (below Live Activity). Tap Show to open a Leaflet / OpenStreetMap map centered on Honolulu, zoom 11. Leaflet loads from unpkg the first time the card is opened. One marker per clocked-in tech, green On Job, blue Driving, yellow Parts Run, gray Shop / Stationary. Tap a marker for name, category, job and client (On Job only) and last-updated time. Refreshes every 60 seconds while open. Anyone not clocked in does not appear.
+- Data: the request's SQL named columns that do not exist (`start_time`, `location_lat` on `time_entries`). The map instead reads every open `time_entries` row (`clock_out_at` null) and takes position and category from that tech's open `time_activity` segment (migration 097); before the first 5-minute reading it falls back to the clock-in position, shown as Stationary. New `db.loadTeamPositions()`. No migration.
+- Same limit as v1.34.0: positions only update while the tech's app is open.
+
 ## v1.34.0 — 2026-10-27
 
 - New: automatic GPS activity tracking while clocked in. Every 5 minutes the phone's position is read and categorized: On Job (within 200 m of a job site assigned to the tech with a visit today, or the job the shift is clocked to), Parts Run (Ferguson Honolulu, Home Depot Pearl City, Home Depot Kapolei), Driving (over 10 mph since the last reading), Shop (within 200 m of `settings.home_base_lat/lng`, blank until set), otherwise Stationary. Haversine distance. Logic in `src/activity.js`.
