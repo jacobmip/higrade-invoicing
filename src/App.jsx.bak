@@ -11596,6 +11596,7 @@ export default function App() {
   // localStorage it could re-open client edit forms unexpectedly.
   useEffect(() => { try { localStorage.removeItem('higrade_clients_nav'); } catch {} }, []);
   const [view, setView] = useState("list");
+  const [openingDoc, setOpeningDoc] = useState(false);
   const [selected, setSelected] = useState(null);
   const FORM_SLIDE_MS = 300;
   const [formMounted, setFormMounted] = useState(false);
@@ -12889,10 +12890,25 @@ export default function App() {
   // is deliberately left alone: the form renders outside the tab switch, so
   // backing out returns you to wherever you came from rather than dumping you
   // on the Invoices list.
-  const openInvoiceById = (id) => {
+  const openInvoiceById = async (id) => {
     const inv = (data.invoices || []).find(i => i.id === id);
     if (!inv) { alert(`${id} could not be found. It may have been deleted.`); return; }
-    setSelected(withLists(inv));
+    // The calendar may hand us a bare invoices row. Fetch the line items and
+    // payments before the form mounts so it never renders without them.
+    if (!Array.isArray(inv.items) || !Array.isArray(inv.payments)) {
+      setOpeningDoc(true);
+      try {
+        const full = await db.loadInvoiceWithItems(id);
+        setSelected(withLists(full || inv));
+      } catch (e) {
+        alert(`Could not load ${id}: ${e?.message || e}`);
+        return;
+      } finally {
+        setOpeningDoc(false);
+      }
+    } else {
+      setSelected(inv);
+    }
     setView("form");
   };
 
@@ -13421,6 +13437,7 @@ export default function App() {
         </div>
       )}
       {deepLinkCallId && isAdmin && <CallRecordingModal callId={deepLinkCallId} onClose={() => setDeepLinkCallId(null)} />}
+      {openingDoc && <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: "#1a2b4a" }}>Loading...</div>}
       {showGlobalAI && <GlobalAIModal data={data} getData={() => dataRef.current} userLabel={`${profile?.display_name || session?.user?.email || "unknown"} (${isAdmin ? "admin" : "tech"})`} openDocId={() => (view === "form" ? selected?.id || null : null)} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
       <div ref={globalHeaderRef} style={{ position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: textZoom === 1 ? 480 : "none", zIndex: 600, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
