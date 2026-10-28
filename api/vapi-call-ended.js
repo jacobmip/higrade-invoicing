@@ -61,7 +61,8 @@ function json(res, status, body) {
 function extractDirection(p) {
   const m = p?.message || p || {};
   const type = m?.call?.type || p?.call?.type || null;
-  return type === 'outboundPhoneCall' ? 'outbound' : 'inbound';
+  const dir = m?.call?.direction || p?.call?.direction || null;
+  return type === 'outboundPhoneCall' || dir === 'outbound' ? 'outbound' : 'inbound';
 }
 
 function extractCaller(p) {
@@ -182,6 +183,7 @@ export default async function handler(req, res) {
 
   const to = extractCaller(params);
   const callId = extractCallId(params);
+  const outbound = extractDirection(params) === 'outbound';
 
   if (!to) {
     console.warn('[vapi-call-ended] no caller number in payload');
@@ -200,8 +202,12 @@ export default async function handler(req, res) {
   // capture_abandoned_call() no-ops when the call already filed a lead, so on
   // a normal completed call this does nothing. Runs before the SMS branch so
   // the lead is captured even while outbound texting is blocked by A2P.
+  //
+  // Never for an outbound call: we dialled the customer, so "no estimate was
+  // filed" is expected and capturing would turn our own call into a fake
+  // inbound lead and a duplicate estimate.
   let rescued = null;
-  try {
+  if (!outbound) try {
     rescued = await rpc('capture_abandoned_call', {
       p_secret: expected,
       p_caller_id: to,
@@ -274,6 +280,11 @@ export default async function handler(req, res) {
   } catch (e) {
     // Never let the archive email affect the call outcome.
     console.error('[vapi-call-ended] call archive email failed:', e.message || e);
+  }
+
+  // The kickoff text is for new inbound leads only.
+  if (outbound) {
+    return json(res, 200, { ok: true, skipped: 'outbound call: no lead capture, no kickoff SMS' });
   }
 
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';

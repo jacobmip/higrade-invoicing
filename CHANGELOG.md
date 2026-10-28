@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.35.1 — 2026-10-28
+
+- Fix: `/api/vapi-call-ended` treated outbound calls as abandoned inbound calls. `capture_abandoned_call` ran on every end-of-call report, so a call we placed to a customer with no estimate filed created a new lead (a duplicate estimate). Outbound is now detected from `call.type === 'outboundPhoneCall'` or `call.direction === 'outbound'`. For outbound calls the lead capture and the kickoff SMS are skipped; the call is still logged to `vapi_calls` with direction `outbound` (phone from `call.customer.number`) and the call archive email is still sent. No migration.
+
 ## v1.35.0 — 2026-10-27
 
 - New: admin-only Team Map card in Reports (below Live Activity). Tap Show to open a Leaflet / OpenStreetMap map centered on Honolulu, zoom 11. Leaflet loads from unpkg the first time the card is opened. One marker per clocked-in tech, green On Job, blue Driving, yellow Parts Run, gray Shop / Stationary. Tap a marker for name, category, job and client (On Job only) and last-updated time. Refreshes every 60 seconds while open. Anyone not clocked in does not appear.
