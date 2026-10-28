@@ -10,7 +10,7 @@
 //   { op: 'list', timeMin, timeMax }   → { items: [...] }
 //   { op: 'create', event }            → the created event
 //   { op: 'update', id, patch }        → the patched event
-//   { op: 'delete', id }               → { ok: true }
+//   { op: 'delete', id }               → { ok: true }  (also callable with the webhook secret as Bearer, from the soft-delete trigger)
 //   { op: 'tech_email', techId }       → { email }  (admin only; email is not on profiles)
 //   { op: 'attendee', id, add, remove } → the patched event; add/remove are emails,
 //                                         Google sends the invite / cancellation mail
@@ -205,6 +205,20 @@ async function handleCallback(req, res, url) {
   }
 }
 
+async function isWebhookSecret(provided) {
+  let expected = process.env.SMS_WEBHOOK_SECRET;
+  if (!expected) {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/settings?key=eq.sms_webhook_secret&select=value&limit=1`, {
+      headers: { apikey: process.env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
+    });
+    expected = r.ok ? (await r.json())?.[0]?.value : null;
+  }
+  if (!expected || expected.length !== provided.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
+  return diff === 0;
+}
+
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -224,11 +238,18 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
 
-  const user = await requireUser(req);
-  if (!user) return json(res, 401, { error: 'unauthorized' });
-
   const body = await readBody(req);
   const op = body?.op;
+
+  // The database calls this when a document is soft-deleted (migration 099),
+  // with the webhook secret instead of a user session. It may do exactly one
+  // thing: delete an event. Every other op still needs a signed-in user.
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const serverCall = op === 'delete' && bearer && await isWebhookSecret(bearer);
+  if (!serverCall) {
+    const user = await requireUser(req);
+    if (!user) return json(res, 401, { error: 'unauthorized' });
+  }
 
   try {
     // status, connect_url and disconnect must work with no grant stored, so

@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.36.1 — 2026-10-28
+
+- Deleting an invoice or estimate now deletes its Google Calendar event(s). Migration 099 adds a database trigger on `invoices.deleted_at`, so it applies to every writer (app, chat agent, API, SQL), not just the Delete button. It collects `gcal_event_id` and every visit's event id, asks `/api/gcal` to delete them, then clears `gcal_event_id`, `gcal_date`, `gcal_duration_minutes` and `visits` on the row.
+- An event still used by another live document is kept. Converting an invoice to an estimate moves the visits to the new estimate and then deletes the old invoice; without this check that would have removed the job's only calendar entry.
+- `api/gcal.js` accepts the webhook secret as Bearer for the `delete` op only (all other ops still need a signed-in user). No new route; still 12 functions.
+- Restoring a deleted document does not bring the calendar event back. Delete is fire-and-forget: if Google is disconnected at that moment the event is left in place.
+
 ## v1.36.0 — 2026-10-28
 
 - Estimates now have their own status words: Draft (gray-blue), Sent (blue), Approved (green), Declined (red), Expired (gray), Converted (green). "Outstanding" never shows on an estimate: the list pill, the form header, the desktop preview badge and the Edit tab's status buttons (Draft / Sent / Approved) all use `estimateDisplay()`. New estimates are created as `draft`, sending one by email sets `sent` (never walks back approved, declined or converted), and a manual conversion marks the estimate `converted`. Expired is computed from age (30 days), not stored. Estimates saved before this carry `outstanding` and read as Draft, since nothing on the row says whether they were sent.
