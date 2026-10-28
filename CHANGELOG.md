@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.4 — 2026-10-28
+
+- Phone kickoff text reworded (Aloha greeting, free ballpark estimate from a photo). It no longer carries "HELP for help".
+- Web leads from `/schedule` now get a follow-up text asking for the service address and photos. Sent only when the form's text-consent box was ticked, `sms_outbound_enabled` is true and the number is valid; otherwise skipped with a log line. Logged via `log_client_message` and snapshotted as `sms_sent` on the estimate.
+- Both texts are guarded against double sends: a row with the same body already in `client_messages` for that phone (last 10 digits) skips the send. The check fails closed.
+- Helpers `alreadySentMessage()` and `recordSmsSnapshot()` added to `api/_lib/sms.js`.
+
 ## v1.38.3 — 2026-10-28
 
 - `/api/sms-inbound` send op also accepts the webhook secret as the Bearer token (Lani on Telegram), so her texts are sent and logged like the reply box's. The `sms_outbound_enabled` kill switch still applies, and `place_call` stays session-only. An optional `invoice_id` in the body writes an `sms_sent` snapshot on that document's History.

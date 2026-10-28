@@ -130,6 +130,47 @@ export async function sendTwilioSms({ to, body, from }) {
   return json;
 }
 
+// True when this exact body has already gone out to this phone. The lead
+// follow-ups (kickoff after a call, web form reply) must fire once, and a Vapi
+// or form retry would otherwise text the customer twice. Matches on the last
+// ten digits because client_messages.phone_number is stored in mixed formats.
+// Keyed on the body, not on "any outbound row", so a returning customer who
+// was once replied to by hand still gets the kickoff on a new lead.
+export async function alreadySentMessage(phone, body) {
+  const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+  if (last10.length < 10) return false;
+  const k = supabaseKey();
+  const q = `phone_number=ilike.${encodeURIComponent('%' + last10.split('').join('%'))}`
+    + `&direction=eq.outbound&body=eq.${encodeURIComponent(body)}&select=id&limit=1`;
+  const res = await fetch(`${supabaseUrl()}/rest/v1/client_messages?${q}`,
+    { headers: { apikey: k, Authorization: `Bearer ${k}` } });
+  // Fail closed: if the check cannot run, do not risk a duplicate text.
+  if (!res.ok) throw new Error(`duplicate check failed ${res.status}`);
+  return (await res.json()).length > 0;
+}
+
+// History-tab snapshot for a text sent from a route (same row shape as
+// recordSmsSnapshot in sms-inbound.js).
+export async function recordSmsSnapshot(invoiceId, to, note) {
+  const key = supabaseKey();
+  const headers = { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` };
+  const base = `${supabaseUrl()}/rest/v1`;
+  const id = encodeURIComponent(invoiceId);
+  const inv = await fetch(`${base}/invoices?id=eq.${id}&select=*&limit=1`, { headers }).then(r => r.json());
+  if (!inv?.[0]) throw new Error(`invoice ${invoiceId} not found`);
+  const last = await fetch(
+    `${base}/invoice_versions?invoice_id=eq.${id}&select=version_number&order=version_number.desc&limit=1`,
+    { headers }).then(r => r.json());
+  const ins = await fetch(`${base}/invoice_versions`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      invoice_id: invoiceId, version_number: (last?.[0]?.version_number || 0) + 1, snapshot: inv[0],
+      sent_to: to, note, event_type: 'sms_sent', triggered_by_name: 'Lisa', triggered_by_tier: 'admin',
+    }),
+  });
+  if (!ins.ok) throw new Error(`snapshot insert ${ins.status}: ${(await ins.text()).slice(0, 200)}`);
+}
+
 // Read a urlencoded or JSON body off the classic Node request. Vercel's node
 // runtime may or may not have parsed it already depending on content type, so
 // handle both. public-invoice.js documents that returning a Web Response from

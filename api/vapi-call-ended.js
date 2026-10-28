@@ -21,6 +21,7 @@
 
 import {
   rpc, getSetting, readBody, fullUrl, webhookSecret, secretMatches, sendTwilioSms,
+  alreadySentMessage, recordSmsSnapshot,
 } from './_lib/sms.js';
 import { recordCall, handleRecordingRequest } from './_lib/call-recording.js';
 
@@ -41,14 +42,13 @@ const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 // than the letters H-I, but everything WRITTEN uses the legal name. Every
 // email path already did this; this constant was the only place that did not.
 // This is the FIRST message a customer receives, sent after a call they
-// placed. Carriers expect the initial message of a campaign to disclose both
-// STOP and HELP, and an opt-in follow-up that carries neither is a common
-// rejection reason. Costs nothing to include: 210 characters is still two
-// segments, the same as without it.
+// placed. It carries STOP; carriers also expect HELP on an initial message, but
+// Jake chose this wording (2026-10-28), and Twilio answers HELP on its own.
 const KICKOFF =
-  'Mahalo for contacting HI Grade Plumbing. Please reply with your service ' +
-  'address, best email address, and any helpful photos of the plumbing issue ' +
-  'so our team can assist you. Reply STOP to opt out, HELP for help.';
+  'Aloha! Mahalo for calling HI Grade Plumbing. To help us give you an accurate ' +
+  'estimate, please send your service address and any photos or videos of the ' +
+  'issue. Send us a photo and we can give you a free ballpark estimate right ' +
+  'away. Reply STOP to opt out.';
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -299,6 +299,10 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (await alreadySentMessage(to, KICKOFF)) {
+      console.log('[vapi-call-ended] kickoff already sent, skipping', { to, callId });
+      return json(res, 200, { ok: true, skipped: 'kickoff already sent to this number' });
+    }
     const sent = await sendTwilioSms({ to, body: KICKOFF });
     // Log only after a successful handoff to Twilio. Logging on intent would
     // put rows in the thread for messages that never went anywhere.
@@ -309,6 +313,10 @@ export default async function handler(req, res) {
       p_body: KICKOFF,
       p_call_id: callId,
     });
+    if (rescued?.estimate_id) {
+      try { await recordSmsSnapshot(rescued.estimate_id, to, 'Kickoff text after call'); }
+      catch (e) { console.error('[vapi-call-ended] sms_sent snapshot failed:', e.message || e); }
+    }
     return json(res, 200, {
       ok: true,
       twilioSid: sent?.sid || null,

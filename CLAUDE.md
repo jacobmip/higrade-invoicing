@@ -131,7 +131,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   eta.js / geocode.js      — travel time + address lookup; geocode.js also serves Places suggestions via `?mode=autocomplete&input=&sessiontoken=` (edge)
   on-my-way.js             — edge route: On My Way button. Reads the caller's GPS, gets an ETA (Google if a key exists, else OSRM), texts the client via Twilio, logs to client_messages. Gated by settings.sms_outbound_enabled; the invoice read runs under the caller's JWT so RLS decides access
   _lib/notify.js           — APNs JWT + push fan-out
-  _lib/sms.js              — Twilio send helper
+  _lib/sms.js              — Twilio send helper; `alreadySentMessage()` (once-only guard for lead texts) and `recordSmsSnapshot()` (v1.38.4)
   _lib/gcal.js             — Google token refresh + calendar helpers
   _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
   _lib/extract-client.js   — screenshot to client records (vision). A helper, not a route, to stay under the function cap

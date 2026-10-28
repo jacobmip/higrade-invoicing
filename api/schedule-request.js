@@ -23,7 +23,9 @@
 // Classic Node (req, res) handler: returning a Web Response makes Vercel's
 // nodejs runtime hang until timeout. Same note as api/public-invoice.js.
 
-import { rpc, readBody, getSetting } from './_lib/sms.js';
+import {
+  rpc, readBody, getSetting, sendTwilioSms, alreadySentMessage, recordSmsSnapshot,
+} from './_lib/sms.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
@@ -41,6 +43,35 @@ function resolveChannel(claimed) {
   const slug = String(claimed ?? '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_|_$/g, '');
   return CHANNELS.has(slug) ? slug : 'web';
 }
+// Sent once after a web lead is filed. Same offer as the phone kickoff, worded
+// for someone who filled in a form rather than called.
+const WEB_FOLLOWUP =
+  'Aloha! Mahalo for reaching out to HI Grade Plumbing. To help us prepare your ' +
+  'estimate, please send your service address and any photos or videos of the ' +
+  'issue - we can give you a free ballpark estimate from photos alone. ' +
+  'Reply STOP to opt out.';
+
+// Never throws: the lead is already filed and the customer has been promised a
+// confirmation, so a text failure must not turn into a 500.
+async function followUp({ phone, consented, estimateId, secret }) {
+  try {
+    if (digitsOnly(phone).length < 10) return console.log('[schedule-request] follow-up skipped: no phone');
+    if (!consented) return console.log('[schedule-request] follow-up skipped: no text consent', { estimateId });
+    const on = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
+    if (!on) return console.log('[schedule-request] follow-up skipped: sms_outbound_enabled is false', { estimateId });
+    if (await alreadySentMessage(phone, WEB_FOLLOWUP)) {
+      return console.log('[schedule-request] follow-up skipped: already sent', { estimateId });
+    }
+    await sendTwilioSms({ to: phone, body: WEB_FOLLOWUP });
+    await rpc('log_client_message', {
+      p_secret: secret, p_phone: phone, p_direction: 'outbound', p_body: WEB_FOLLOWUP, p_call_id: null,
+    });
+    if (estimateId) await recordSmsSnapshot(estimateId, phone, 'Follow-up text after web form');
+  } catch (e) {
+    console.error('[schedule-request] follow-up failed:', String(e?.message || e).split(secret).join('[lead_secret]'));
+  }
+}
+
 // A bot fills a form in milliseconds. A person cannot.
 const MIN_FILL_MS = 3000;
 
@@ -141,7 +172,8 @@ export default async function handler(req, res) {
 
   try {
     const out = await rpc('create_estimate_from_lead', args);
-    const reference = out?.number || out?.estimate_number || out?.doc_number || null;
+    const reference = out?.number || out?.estimate_number || out?.doc_number || out?.estimate_id || null;
+    await followUp({ phone, consented: !!params.sms_consent, estimateId: out?.estimate_id || null, secret });
     return send(res, 200, { ok: true, reference });
   } catch (err) {
     // Never leak the RPC error to the browser: it can carry the secret-gate
