@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.37.3 — 2026-10-28
+
+- Tapping a notification now opens what it is about. A text notification opens that client's thread in Messages; any notification with an invoice or estimate (lead, payment, signed, opened) opens it; one with only a client opens the client profile. A notification with no target just closes the panel. The off-site clock alert is an SMS only and writes no notification row, so it has nothing to open yet.
+
 ## v1.37.2 — 2026-10-28
 
 - Admin-only Undo button at the top of the Edit tab. Shown when the document has at least two saved versions and is not deleted. Tap, confirm "Undo last change?", and the form is restored to the version just before the latest one, using the same restore as the History tab's Restore button (one step only). A brief "Undone" toast confirms; the normal auto-save then persists it.

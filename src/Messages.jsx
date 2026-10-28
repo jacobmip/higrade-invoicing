@@ -269,7 +269,7 @@ export function ClientThread(props) {
   return <ThreadBoundary key={props.client?.id}><ClientThreadInner {...props} /></ThreadBoundary>;
 }
 
-export default function MessagesTab({ clients, isAdmin, onUnreadChange }) {
+export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [openKey, setOpenKey] = useState(null);
@@ -298,6 +298,17 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange }) {
       onUnreadChange?.();
     }
   };
+
+  // A tapped notification asks for one client's thread. Wait for the rows,
+  // then open it once per request (focus.n changes on every tap).
+  const handledFocus = useRef(null);
+  useEffect(() => {
+    if (!focus || !rows || handledFocus.current === focus.n) return;
+    const d = digits10(focus.phone);
+    const cv = convs.find(c => (focus.clientId && c.key === focus.clientId) || (d && digits10(c.phone) === d));
+    handledFocus.current = focus.n;
+    if (cv) openThread(cv);
+  }, [focus, rows, convs]);
 
   if (!isAdmin) return <div style={{ padding: 24, color: '#8899bb', textAlign: 'center' }}>Messages are available to the owner.</div>;
 
