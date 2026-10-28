@@ -4,6 +4,7 @@ import TimeClockTab from "./TimeClockTab";
 import * as TC from "./timeclock";
 import HoursTracker from "./HoursTracker";
 import { ActivityBadge, ActivityBoard } from "./ActivityBits.jsx";
+import TeamMap from "./TeamMap.jsx";
 import { useActivityTracking } from "./activity.js";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
@@ -10100,6 +10101,7 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         yearEnd={yearEnd}
       />
       {isAdmin && <ActivityBoard users={users} />}
+      {isAdmin && <TeamMap users={users} invoices={allInvoices || invoices} />}
       {isAdmin && <HoursTracker users={users} />}
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
