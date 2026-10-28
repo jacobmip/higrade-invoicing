@@ -133,6 +133,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   _lib/gcal.js             — Google token refresh + calendar helpers
   _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
   _lib/extract-client.js   — screenshot to client records (vision). A helper, not a route, to stay under the function cap
+  _lib/convert-estimate.js — estimate -> invoice conversion shared by `submit-signature.js` (Approve & Sign on `/v/<token>`) and `paypal-capture-order.js` (deposit): same number, items, visits and recorded deposits move to the invoice, estimate ends `converted` with `converted_to_id`. Also `telegramNotify()` (needs `TELEGRAM_TOKEN` in Vercel). A helper, not a route
   _lib/call-recording.js   — links each Vapi call to its estimate (`vapi_calls`) and fetches a short-lived recording link from Vapi. A helper, dispatched from `vapi-call-ended.js`
 public/
   estimator-test.html — standalone test harness for AI estimator + extractor
@@ -213,6 +214,7 @@ none (RLS filters it silently) and inserts copies — a duplicate payment row pe
 - `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, assigned_tech_id, deleted_at, updated_at
   - **`owner_id` is not `assigned_tech_id`.** `owner_id` is whoever created the row; `assigned_tech_id` (migration 053) is who *ran* the job. Anything that pays or scores a tech must use `assigned_tech_id`. **Migration 069 stopped the restamping:** the `on conflict` branch used to set `owner_id = excluded.owner_id`, handing the document to whoever saved it last, which was survivable only while the owner was the sole writer. It is now `coalesce(public.invoices.owner_id, excluded.owner_id)`. Deliberate transfer goes through `claimInvoiceOwner()`.
 - `invoices.apprentice_id` (migration 094) — the default apprentice, shown as a secondary label by Assigned Tech. Since 095 it grants SELECT on the invoice row only.
+- **Status vocabularies differ by type (v1.36.0).** Invoices: `outstanding`, `net30`, `partial`, `paid` (Overdue is computed). Estimates: `draft`, `sent`, `approved`, `declined`, `converted`; `Expired` is computed from age, not stored. `estimateDisplay()` in `App.jsx` is the one mapping; a legacy estimate row holding `outstanding` reads as Draft. Lisa's `create_estimate_from_lead` and `set_estimate_declined()` (restores to `outstanding`) still write the old word, so those rows rely on that mapping. Approval on the customer link auto-converts (see `_lib/convert-estimate.js`); the in-app in-person signature modal still only sets `approved`.
 - `invoice_items` — invoice_id, name, description, qty, price, unit, discount, taxable, sort_order
 - `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
 - `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`

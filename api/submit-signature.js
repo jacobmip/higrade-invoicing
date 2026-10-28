@@ -10,8 +10,12 @@
 // into a real INV#### with the down-payment recorded as a payment. See
 // /api/paypal-capture-order.js for that logic. This endpoint is now a
 // pure signature-recording handler.
+//
+// 2026-10-28: approval now auto-converts (see convert-estimate.js), the same
+// as a PayPal deposit does.
 
 import { notifyAll } from './_lib/notify.js';
+import { convertEstimateToInvoice, reconcileInvoiceStatus, telegramNotify } from './_lib/convert-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
@@ -102,12 +106,32 @@ export default async function handler(req, res) {
     return send(res, 500, { error: 'Database write failed: ' + (e.message || e) });
   }
 
+  // Approval converts the estimate: new INV with the same number, status
+  // 'outstanding', estimate 'converted' and linked, schedule moved across. The
+  // signature is already saved above, so a failure here never loses it; it is
+  // reported to Jake instead of vanishing, which is how an approved estimate
+  // used to sit unconverted with nothing to say so.
+  let invoiceId = null;
+  try {
+    const conv = await convertEstimateToInvoice(estimateId);
+    if (conv && conv.invoiceId && conv.invoiceId !== estimateId) {
+      invoiceId = conv.invoiceId;
+      try { await reconcileInvoiceStatus(invoiceId); }
+      catch (e) { console.error('[submit-signature] status reconcile failed:', e); }
+    }
+  } catch (e) {
+    console.error('[submit-signature] auto-convert failed:', e);
+  }
+  await telegramNotify(invoiceId
+    ? `\u2705 ${clientName || 'Client'} approved ${estimateId} \u2014 converted to ${invoiceId}`
+    : `${clientName || 'Client'} approved ${estimateId} but it did NOT convert to an invoice. Convert it by hand.`);
+
   // In-app notification (best effort).
   notifyAll({
     type: 'estimate_signed',
     title: 'Estimate signed',
-    body: `${clientName || 'Client'} approved ${estimateId}`,
-    invoiceId: estimateId,
+    body: `${clientName || 'Client'} approved ${estimateId}${invoiceId ? ` \u2014 converted to ${invoiceId}` : ''}`,
+    invoiceId: invoiceId || estimateId,
     data: { clientName, total, job },
   }).catch((e) => console.error('[submit-signature] notify failed:', e));
 
@@ -126,7 +150,7 @@ export default async function handler(req, res) {
             <p style="color: #8899bb; margin: 4px 0 0; font-size: 12px;">HI Grade Plumbing LLC</p>
           </div>
           <div style="padding: 32px; background: #f4f6fa;">
-            <p style="color: #444; font-size: 16px;"><strong>${clientName || 'Client'}</strong> has signed and approved estimate <strong>${estimateId}</strong>.</p>
+            <p style="color: #444; font-size: 16px;"><strong>${clientName || 'Client'}</strong> has signed and approved estimate <strong>${estimateId}</strong>.${invoiceId ? ' It was converted to invoice <strong>' + invoiceId + '</strong>.' : ''}</p>
             <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #fff; border-radius: 8px; overflow: hidden;">
               <tr style="border-bottom: 1px solid #eee;"><td style="padding: 10px 14px; color: #666;">Estimate</td><td style="padding: 10px 14px; font-weight: bold;">${estimateId}</td></tr>
               <tr style="border-bottom: 1px solid #eee;"><td style="padding: 10px 14px; color: #666;">Client</td><td style="padding: 10px 14px; font-weight: bold;">${clientName || ''}</td></tr>

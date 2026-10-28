@@ -657,7 +657,7 @@ export async function upsertInvoice(inv, isNew) {
       client_name: inv.client || '',
       date: inv.date || null,
       due_date: inv.dueDate || null,
-      status: inv.status || 'outstanding',
+      status: inv.status || (inv.type === 'estimate' ? 'draft' : 'outstanding'),
       tax: inv.tax ?? 4.712,
       discount: inv.discount ?? 0,
       discount_type: inv.discountType || '$',

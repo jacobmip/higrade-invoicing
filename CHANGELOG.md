@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.36.0 — 2026-10-28
+
+- Estimates now have their own status words: Draft (gray-blue), Sent (blue), Approved (green), Declined (red), Expired (gray), Converted (green). "Outstanding" never shows on an estimate: the list pill, the form header, the desktop preview badge and the Edit tab's status buttons (Draft / Sent / Approved) all use `estimateDisplay()`. New estimates are created as `draft`, sending one by email sets `sent` (never walks back approved, declined or converted), and a manual conversion marks the estimate `converted`. Expired is computed from age (30 days), not stored. Estimates saved before this carry `outstanding` and read as Draft, since nothing on the row says whether they were sent.
+- Fix: approving and signing an estimate on the customer link never converted it. `api/submit-signature.js` only set `status = approved`; conversion existed only inside the PayPal deposit path. It now converts the estimate to an invoice (same number, status from its payments, `outstanding` if none), marks the estimate `converted` with `converted_to_id`, moves the visits and Google event ids to the invoice (kind `job`) and any deposits already recorded on the estimate, and texts Jake on Telegram. If conversion fails the signature is still saved and Jake gets a Telegram message saying to convert by hand.
+- The conversion moved out of `api/paypal-capture-order.js` into `api/_lib/convert-estimate.js` so both paths share it (a helper, not a route; still 12 functions). PayPal deposits on an estimate already converted; they now also carry visits and deposits and send the Telegram message. Also fixes `require('node:crypto')` in an ES module, which would have thrown when minting the invoice's view token.
+- Needs `TELEGRAM_TOKEN` in the Vercel env (the HI Grade Manager bot's token; `TELEGRAM_CHAT_ID` optional, defaults to Jake's). Without it the conversion still happens and the message is skipped with a log line. No migration.
+
 ## v1.35.4 — 2026-10-28
 
 - Fix: "permission denied for table users" when converting an estimate to an invoice (and on any new admin-owned document). Not caused by v1.35.3: migration 094's `default_assigned_tech()` trigger checked the default apprentice with `select ... from auth.users`, which the signed-in role cannot read, so the invoice INSERT failed and only the local copy survived. Migration 098 checks `public.profiles` instead. Applied and exercised as Jake in a rolled-back insert: the row saves and `apprentice_id` is still stamped.
