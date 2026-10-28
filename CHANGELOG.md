@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.35.2 — 2026-10-28
+
+- Fix: the Calendar tab showed a tech or apprentice all of Jake's calendar. The invoice list was already limited by RLS (owner, assigned, commission, apprentice), but `CalendarTab` also drew every unlinked Google event on the shared Work calendar as a grey "Other" block. That loop now runs for the admin only, including when the admin uses View-as, so a viewed tech sees what the tech sees. Job blocks still come from the user's own invoices. No migration.
+
 ## v1.35.1 — 2026-10-28
 
 - Fix: `/api/vapi-call-ended` treated outbound calls as abandoned inbound calls. `capture_abandoned_call` ran on every end-of-call report, so a call we placed to a customer with no estimate filed created a new lead (a duplicate estimate). Outbound is now detected from `call.type === 'outboundPhoneCall'` or `call.direction === 'outbound'`. For outbound calls the lead capture and the kickoff SMS are skipped; the call is still logged to `vapi_calls` with direction `outbound` (phone from `call.customer.number`) and the call archive email is still sent. No migration.

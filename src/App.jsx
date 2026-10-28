@@ -7712,7 +7712,7 @@ function CalendarAgenda({ days, eventsByDate, onOpenInvoice, loading }) {
   );
 }
 
-function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed, onEventsFetched }) {
+function CalendarTab({ isAdmin, invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJobMinutes, onOpenInvoice, focusDate, onFocusConsumed, onEventsFetched }) {
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("higrade_cal_view") || "3day"; } catch { return "3day"; }
   });
@@ -7895,7 +7895,10 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
       }
     });
 
-    gcalEvents.forEach(ev => {
+    // Unlinked Google events are the whole shared calendar, not just this
+    // person's jobs. RLS already limits `invoices`; this loop is the other
+    // source, so only the admin gets it.
+    if (isAdmin) gcalEvents.forEach(ev => {
       if (merged.has(ev.id)) return;
       if (ev.start?.date) { push({ date: ev.start.date, allDay: true, label: ev.summary || "Event", color: GCAL_OTHER.hex, type: "gcal", kind: "other" }); return; }
       const s = ev.start?.dateTime ? calZonedParts(ev.start.dateTime) : null;
@@ -7915,7 +7918,7 @@ function CalendarTab({ invoices, gcalAuthed, gcalMissing, onAuthChange, defaultJ
       });
     });
     return out;
-  }, [invoices, gcalEvents, defaultJobMinutes]);
+  }, [invoices, gcalEvents, defaultJobMinutes, isAdmin]);
 
   // Counted before filtering, so a chip can say how much it is hiding.
   const kindCounts = useMemo(() => {
@@ -13369,7 +13372,7 @@ export default function App() {
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} selfLevels={selfLevels} onSetCompetency={handleSetCompetency} onSetSelfLevel={handleSetSelfLevel} />}
-        {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
+        {tab === "calendar"  && <CalendarTab isAdmin={isAdmin && !effectiveOwnerId} invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
         {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} activitySeg={activitySeg} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
