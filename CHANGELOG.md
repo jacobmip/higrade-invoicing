@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.4 — 2026-10-28
+
+- Moved Undo button to bottom of Edit tab, above Done button.
+
 ## v1.39.3 — 2026-10-28
 
 - Send Estimate/Invoice > Text Message no longer opens the native Messages app. It shows a preview with the message in an editable box and the destination number; "Send via Lisa" sends it from the business Twilio number through `/api/sms-inbound` (logged to `client_messages`, so it shows in the Messages thread). Failure shows the error in the modal and keeps it open. Success records the `sent` event (channel sms) and the `sms_sent` version snapshot.

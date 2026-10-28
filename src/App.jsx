@@ -4839,11 +4839,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           neighboring tab slide in horizontally. */}
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 0 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 0 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div>
-          {canUndo && (
-            <div style={{ padding: "12px 16px 0", display: "flex", justifyContent: "flex-end" }}>
-              <button onClick={() => setUndoConfirm(true)} style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 14px", border: "1px solid #dde2ee" }}>Undo</button>
-            </div>
-          )}
+
           {undoConfirm && (
             <div onClick={() => setUndoConfirm(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 5000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
               <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 20, width: "100%", maxWidth: 320 }}>
@@ -5560,7 +5556,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
 
           {/* Actions */}
           <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
+            {canUndo && (
+            <div style={{ padding: "16px 16px 0", display: "flex", justifyContent: "center" }}>
+              <button onClick={() => setUndoConfirm(true)} style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 14px", border: "1px solid #dde2ee" }}>Undo</button>
+            </div>
+          )}
+          <button onClick={handleSave} style={{ ...S.btn("primary"), fontSize: 16, padding: 14 }}>{isEstimate ? "Done — Save Estimate" : "Done — Save Invoice"}</button>
             <div style={{ display: "flex", gap: 10 }}>
               {!viewerIsApprentice && <button onClick={() => setShowPayment(true)} style={{ ...S.btn("green"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="payment" size={16} color="#fff" /> {isEstimate ? "Down Payment" : "Record Payment"}</button>}
               <button onClick={isEstimate ? handleSendEstimate : handleEmail} style={{ ...S.btn("navy"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="mail" size={16} color="#fff" /> {emailStatus || "Send Email"}</button>
