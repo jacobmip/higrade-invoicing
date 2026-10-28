@@ -3,6 +3,8 @@ import * as COMP from "./competencies";
 import TimeClockTab from "./TimeClockTab";
 import * as TC from "./timeclock";
 import HoursTracker from "./HoursTracker";
+import { ActivityBadge, ActivityBoard } from "./ActivityBits.jsx";
+import { useActivityTracking } from "./activity.js";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
@@ -10097,6 +10099,7 @@ function ReportsTab({ invoices, expenses, allInvoices, users, isAdmin, myId, myN
         yearStart={yearStart}
         yearEnd={yearEnd}
       />
+      {isAdmin && <ActivityBoard users={users} />}
       {isAdmin && <HoursTracker users={users} />}
       <div style={{ margin: "12px 12px 0", background: "#fff", borderRadius: 12, padding: "16px 14px 10px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}>
         <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: NAVY, letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Monthly Revenue — {selYear}</div>
@@ -11338,6 +11341,8 @@ export default function App() {
     const t = setInterval(() => setDayNow(Date.now()), 20000);
     return () => clearInterval(t);
   }, [openDay]);
+  // GPS activity category (migration 097), polled every 5 minutes while on the clock.
+  const activitySeg = useActivityTracking({ session: openDay || openShift, myId: session?.user?.id, invoices: data.invoices });
   const toggleDay = async () => {
     setDayErr(""); setDayBusy(true);
     try {
@@ -13308,6 +13313,7 @@ export default function App() {
           >
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase" }}>
               Day started · {TC.fmtMinutes(TC.elapsedMinutes(openDay, dayNow))}
+              <ActivityBadge seg={activitySeg} style={{ marginLeft: 8, background: "rgba(255,255,255,0.22)", padding: "1px 8px", fontSize: 12 }} />
             </span>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
               Clock →
@@ -13325,6 +13331,7 @@ export default function App() {
           >
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               On the clock{openShift.invoiceId ? ` · ${openShift.invoiceId}` : ""}
+              {!openDay && <ActivityBadge seg={activitySeg} style={{ marginLeft: 8, background: "rgba(255,255,255,0.22)", padding: "1px 8px", fontSize: 12 }} />}
             </span>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
               Clock out →
@@ -13361,7 +13368,7 @@ export default function App() {
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} selfLevels={selfLevels} onSetCompetency={handleSetCompetency} onSetSelfLevel={handleSetSelfLevel} />}
         {tab === "calendar"  && <CalendarTab invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
-        {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} />}
+        {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} activitySeg={activitySeg} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
           <RecentlyDeletedTab
