@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.3 — 2026-10-28
+
+- `/api/sms-inbound` send op also accepts the webhook secret as the Bearer token (Lani on Telegram), so her texts are sent and logged like the reply box's. The `sms_outbound_enabled` kill switch still applies, and `place_call` stays session-only. An optional `invoice_id` in the body writes an `sms_sent` snapshot on that document's History.
+
 ## v1.38.2 — 2026-10-28
 
 - Quick View As switcher: admins tap the header subtitle (a "Viewing as [name]" chip when active, "View as..." otherwise) to open a bottom sheet listing every user with their tier, plus a "View as myself" reset. Reuses `allUsers` and `setViewAsUserId`, so it stays in step with the Settings picker.

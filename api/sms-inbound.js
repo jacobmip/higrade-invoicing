@@ -25,7 +25,8 @@
 // POST with `Authorization: Bearer <admin session>` and no Twilio signature is
 // the Messages tab's reply box: `{ to, body }` sends one text and logs it. Same
 // reason it lives here: the 12-function cap. The AI chat's send_sms uses the same
-// call; its place_call sends `{ op: 'place_call', phone, name, about, context }`
+// call. The same send also accepts the webhook secret as the Bearer token (Lani
+// on Telegram) and an optional invoice_id for an sms_sent snapshot. Its place_call sends `{ op: 'place_call', phone, name, about, context }`
 // and queues an outbound call (see appPlaceCall).
 //
 // GET ?preview=<phone>&k=<secret> returns what Lisa WOULD reply to that
@@ -132,14 +133,48 @@ async function appPlaceCall(res, user, params) {
   return jsonOut(res, 200, { ok: true, id, phone, duplicate, outbound_calls_enabled: callsOn, telegram_sent: telegram });
 }
 
-// Admin-only. The sms_outbound_enabled gate applies here too, so the reply box
+async function recordSmsSnapshot(invoiceId, to, note) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) throw new Error('Server not configured');
+  const headers = { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` };
+  const base = `${supabaseUrl()}/rest/v1`;
+  const id = encodeURIComponent(invoiceId);
+  const inv = await fetch(`${base}/invoices?id=eq.${id}&select=*&limit=1`, { headers }).then(r => r.json());
+  if (!inv?.[0]) throw new Error(`invoice ${invoiceId} not found`);
+  const last = await fetch(
+    `${base}/invoice_versions?invoice_id=eq.${id}&select=version_number&order=version_number.desc&limit=1`,
+    { headers }).then(r => r.json());
+  const version = (last?.[0]?.version_number || 0) + 1;
+  const ins = await fetch(`${base}/invoice_versions`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      invoice_id: invoiceId, version_number: version, snapshot: inv[0],
+      sent_to: to, note, event_type: 'sms_sent', triggered_by_name: 'Lani', triggered_by_tier: 'admin',
+    }),
+  });
+  if (!ins.ok) throw new Error(`insert ${ins.status}: ${(await ins.text()).slice(0, 200)}`);
+  return version;
+}
+
+// Admin-only (session, or the webhook secret for texts). The sms_outbound_enabled gate applies here too, so the reply box
 // cannot send while Jake has outbound switched off.
 async function appSend(req, res) {
   try {
+    // Two ways in: an admin session, or the webhook secret as the Bearer token
+    // (Lani on Telegram; same pattern as gcal.js's delete op). The secret path
+    // sends texts only: place_call stays session-only.
     const user = await requireAdmin(req);
-    if (!user) return jsonOut(res, 403, { error: 'admin only' });
+    let viaSecret = false;
+    if (!user) {
+      const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      viaSecret = secretMatches(bearer, await webhookSecret());
+      if (!viaSecret) return jsonOut(res, 403, { error: 'admin only' });
+    }
     const { params } = await readBody(req);
-    if (params.op === 'place_call') return await appPlaceCall(res, user, params);
+    if (params.op === 'place_call') {
+      if (!user) return jsonOut(res, 403, { error: 'admin only' });
+      return await appPlaceCall(res, user, params);
+    }
     // The AI chat sends a bare 10-digit number; Twilio needs E.164. A value
     // already in E.164 (the reply box) passes through unchanged.
     const to = toE164(params.to) || String(params.to || '').trim();
@@ -161,7 +196,16 @@ async function appSend(req, res) {
     } catch (e) {
       console.error('[sms-inbound] logging app reply failed:', e.message || e);
     }
-    return jsonOut(res, 200, { ok: true, sid: sent?.sid || null, message_id: logged?.message_id || null });
+    // Optional: an sms_sent snapshot in that document's History. Same row shape
+    // as db.recordInvoiceVersion; written with the service role since the secret
+    // path has no user session. Failure here never undoes the send.
+    let snapshot = null;
+    const invoiceId = String(params.invoice_id || '').trim();
+    if (invoiceId) {
+      try { snapshot = await recordSmsSnapshot(invoiceId, to, viaSecret ? 'Text sent (Lani)' : 'Text sent'); }
+      catch (e) { console.error('[sms-inbound] sms_sent snapshot failed:', e.message || e); }
+    }
+    return jsonOut(res, 200, { ok: true, sid: sent?.sid || null, message_id: logged?.message_id || null, snapshot });
   } catch (e) {
     console.error('[sms-inbound] app send failed:', e.message || e);
     return jsonOut(res, 500, { error: String(e.message || e) });
