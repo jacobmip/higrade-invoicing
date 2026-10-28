@@ -6,18 +6,50 @@ export default async function handler(req) {
   }
 
   const { searchParams } = new URL(req.url);
-  const address = searchParams.get('address');
-  if (!address) {
-    return new Response(JSON.stringify({ error: 'Missing address' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
   const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'API key not configured' }), {
       status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // mode=autocomplete: Places Autocomplete suggestions, biased to Oahu. Returns
+  // the predictions array (empty on no match). Lives here, not in a new route,
+  // to stay inside the 12-function ceiling (this one is edge, so it is free).
+  if (searchParams.get('mode') === 'autocomplete') {
+    const input = (searchParams.get('input') || '').trim();
+    if (input.length < 3) {
+      return new Response('[]', { headers: { 'Content-Type': 'application/json' } });
+    }
+    const params = new URLSearchParams({
+      input,
+      key: apiKey,
+      components: 'country:us',
+      location: '21.3069,-157.8583',
+      radius: '50000',
+      types: 'address',
+    });
+    const token = searchParams.get('sessiontoken');
+    if (token) params.set('sessiontoken', token);
+    const pr = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`, {
+      headers: { Referer: 'https://higrade-invoicing.vercel.app' },
+    });
+    const pd = await pr.json();
+    if (pd.status !== 'OK' && pd.status !== 'ZERO_RESULTS') {
+      return new Response(JSON.stringify({ error: pd.status || 'Autocomplete failed' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify(pd.predictions || []), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const address = searchParams.get('address');
+  if (!address) {
+    return new Response(JSON.stringify({ error: 'Missing address' }), {
+      status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }

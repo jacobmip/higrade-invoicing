@@ -27,6 +27,7 @@ import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js
 import { PAYMENT_METHODS, canonicalMethod, methodStyle } from './paymentMethods.js';
 import MessagesTab, { ClientThread, useUnreadMessages } from './Messages.jsx';
 import ClientCommunications from './Communications.jsx';
+import AddressAutocomplete from './AddressAutocomplete.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -3353,7 +3354,8 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
           ))}
           <div style={{ marginBottom: 10 }}>
             <label style={{ ...S.label, marginBottom: 3 }}>Street Address</label>
-            <input style={S.input} value={newForm.address1 || ""} onChange={e => setNewForm(f => ({ ...f, address1: e.target.value }))}
+            <AddressAutocomplete style={S.input} value={newForm.address1 || ""} onChange={v => setNewForm(f => ({ ...f, address1: v }))}
+              onSelect={g => setNewForm(f => ({ ...f, address1: g.line1, city: g.city || f.city, state: g.state || f.state, zip: g.zip || f.zip }))}
               onBlur={async () => {
                 if (!newForm.address1 || newForm.city || newForm.zip) return;
                 setLookingUp(true);
@@ -3385,8 +3387,9 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
           <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Leave blank if same as job site above.</div>
           <div style={{ marginBottom: 10 }}>
             <label style={{ ...S.label, marginBottom: 3 }}>Street Address</label>
-            <input style={S.input} value={newForm.billingAddress?.line1 || ""}
-              onChange={e => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line1: e.target.value } }))}
+            <AddressAutocomplete style={S.input} value={newForm.billingAddress?.line1 || ""}
+              onChange={v => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line1: v } }))}
+              onSelect={g => setNewForm(f => ({ ...f, billingAddress: { ...(f.billingAddress || {}), line1: g.line1, city: g.city, state: g.state, zip: g.zip } }))}
               onBlur={async () => {
                 const bl = newForm.billingAddress || {};
                 if (!bl.line1 || bl.city || bl.zip) return;
@@ -4913,11 +4916,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     onChange={e => setPropertyDraft(p => ({ ...p, nickname: e.target.value }))}
                   />
                 )}
-                <input
+                <AddressAutocomplete
                   style={{ ...S.input, marginBottom: 8 }}
                   placeholder="Street address"
                   value={propertyDraft.line1}
-                  onChange={e => setPropertyDraft(p => ({ ...p, line1: e.target.value }))}
+                  onChange={v => setPropertyDraft(p => ({ ...p, line1: v }))}
+                  onSelect={g => setPropertyDraft(p => ({ ...p, line1: g.line1, city: g.city, state: g.state, zip: g.zip }))}
                   onBlur={async e => {
                     if (!propertyDraft.city && !propertyDraft.zip) {
                       const geo = await geocodeStreet(e.target.value);
@@ -6344,7 +6348,8 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
           {isAdmin && (
             <input style={{ ...S.input, marginBottom: 6, borderStyle: "dashed", fontSize: 12 }} value={a.nickname || ""} onChange={e => setAddrField(idx, "nickname", e.target.value)} placeholder="Internal nickname — admin only, not shown on invoice" />
           )}
-          <input style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={e => setAddrField(idx, "line1", e.target.value)} placeholder="Street Address"
+          <AddressAutocomplete style={{ ...S.input, marginBottom: 6 }} value={a.line1 || ""} onChange={v => setAddrField(idx, "line1", v)} placeholder="Street Address"
+            onSelect={g => setAddrFields(idx, { line1: g.line1, city: g.city, state: g.state, zip: g.zip })}
             onBlur={async e => {
               if (!a.city && !a.zip) {
                 const geo = await geocodeStreet(e.target.value);
@@ -6375,7 +6380,8 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       </div>
       <div style={{ background: "#fafbfd", border: "1px solid #dde2ee", borderRadius: 8, padding: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Where invoices and statements are mailed/emailed. Leave blank to use the first job site.</div>
-        <input style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={e => setBillingField("line1", e.target.value)} placeholder="Street Address"
+        <AddressAutocomplete style={{ ...S.input, marginBottom: 6 }} value={billing.line1 || ""} onChange={v => setBillingField("line1", v)} placeholder="Street Address"
+          onSelect={g => setBillingFields({ line1: g.line1, city: g.city, state: g.state, zip: g.zip })}
           onBlur={async e => {
             if (!billing.city && !billing.zip) {
               const geo = await geocodeStreet(e.target.value);

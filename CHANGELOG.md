@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.37.0 — 2026-10-28
+
+- Address autocomplete: the street field now suggests Hawaii-biased addresses from Google Places as you type (300 ms debounce, 3+ characters, up to 5 suggestions; arrow keys, Enter, Escape, tap outside to dismiss). Picking one fills the street line and the city, state and ZIP.
+- Applies to the property street address and billing street address in the client editor (which is also the Bill To editor on an estimate or invoice), the new-client modal (job site and billing) and the Add Property form.
+- `api/geocode.js` gains `?mode=autocomplete&input=...&sessiontoken=...`, returning the predictions array. Same file, still edge, no new function. New component `src/AddressAutocomplete.jsx`.
+- Job-site coordinates are not saved at pick time; they are still geocoded and cached on first clock-in (migration 072).
+
 ## v1.36.1 — 2026-10-28
 
 - Deleting an invoice or estimate now deletes its Google Calendar event(s). Migration 099 adds a database trigger on `invoices.deleted_at`, so it applies to every writer (app, chat agent, API, SQL), not just the Delete button. It collects `gcal_event_id` and every visit's event id, asks `/api/gcal` to delete them, then clears `gcal_event_id`, `gcal_date`, `gcal_duration_minutes` and `visits` on the row.

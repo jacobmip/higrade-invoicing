@@ -99,6 +99,7 @@ src/
   TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
+  AddressAutocomplete.jsx — street input with Google Places suggestions (v1.37.0); calls `/api/geocode?mode=autocomplete`, then `/api/geocode?address=` for city/state/zip
   HoursTracker.jsx   — admin Hours card in Reports: all workers' time_entries by week or range, admin edit of start/end (v1.28.8)
   WelcomePage.jsx    — `/welcome` invite onboarding (public route) and the Pending-setup screen (migrations 082-083)
   billTo.js          — bill-to / job-site address resolution
@@ -126,7 +127,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   availability.js          — edge route: Jake's busy blocks and free 90+ minute windows for one Hawaii day (invoices' `gcal_date` and `visits` plus every Google calendar in `google_credentials`). Called by Lisa's `checkAvailability` Vapi tool before she books; authenticated by the webhook secret; fails closed with 502. Self-contained because `_lib/gcal.js` imports `node:crypto`
   sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text)
   gcal.js                  — Google Calendar: server-side OAuth, callback, read/write, and attendee ops (`attendee`, `tech_email`) that invite the commission apprentice to a job's event (v1.27.5)
-  eta.js / geocode.js      — travel time + address lookup
+  eta.js / geocode.js      — travel time + address lookup; geocode.js also serves Places suggestions via `?mode=autocomplete&input=&sessiontoken=` (edge)
   on-my-way.js             — edge route: On My Way button. Reads the caller's GPS, gets an ETA (Google if a key exists, else OSRM), texts the client via Twilio, logs to client_messages. Gated by settings.sms_outbound_enabled; the invoice read runs under the caller's JWT so RLS decides access
   _lib/notify.js           — APNs JWT + push fan-out
   _lib/sms.js              — Twilio send helper
