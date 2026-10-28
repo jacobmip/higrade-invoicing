@@ -177,7 +177,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 097; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 098; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -349,7 +349,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **096** — **applied and verified 2026-10-27.** `vapi_calls.summary` (text). `direction` was already there from 093.
 - **097** — **applied 2026-10-27.** `time_activity`, see the schema entry. Dry-run and exercised as the test journeyman (own insert and close allowed, insert for another tech refused).
 
-Next migration is `098_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **098** — **applied and verified 2026-10-28.** `default_assigned_tech()` checks the default apprentice against `public.profiles`, not `auth.users`. 094 queried `auth.users` from a SECURITY INVOKER trigger; `authenticated` cannot read it, so every admin-owned invoice INSERT failed with "permission denied for table users". **Never reference `auth.users` in a trigger or policy that runs as the caller.**
+
+Next migration is `099_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

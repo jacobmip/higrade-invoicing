@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.35.4 — 2026-10-28
+
+- Fix: "permission denied for table users" when converting an estimate to an invoice (and on any new admin-owned document). Not caused by v1.35.3: migration 094's `default_assigned_tech()` trigger checked the default apprentice with `select ... from auth.users`, which the signed-in role cannot read, so the invoice INSERT failed and only the local copy survived. Migration 098 checks `public.profiles` instead. Applied and exercised as Jake in a rolled-back insert: the row saves and `apprentice_id` is still stamped.
+
 ## v1.35.3 — 2026-10-28
 
 - Fix: converting an estimate to an invoice no longer leaves two Google Calendar events. `convertInvoice` used to blank `visits`, `gcalDate` and `gcalEventId` on the new invoice (so a fresh event got pushed) while the estimate kept its own. Now the invoice takes over the estimate's visits and event ids with each visit's `kind` set to `job`, the estimate's schedule is cleared so two rows never share an event, and the existing Google event is PATCHed in place: colour flips to the job colour and the title drops the estimate label. The description is rewritten only for events the app built (`builtBy: "app"`); Lisa's bookings keep the caller's words but still get the new title and colour. Invoice to estimate is unchanged. No migration.
