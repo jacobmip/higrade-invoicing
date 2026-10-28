@@ -205,7 +205,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
         {open ? (
           <>
             <div style={{ ...heading, color: '#8899bb', marginBottom: 4 }}>On the clock</div>
-            {activitySeg && <div style={{ marginBottom: 6 }}><ActivityBadge seg={activitySeg} /></div>}
+            {isAdmin && activitySeg && <div style={{ marginBottom: 6 }}><ActivityBadge seg={activitySeg} /></div>}
             <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 44, color: '#fff', lineHeight: 1 }}>
               {TC.fmtMinutes(TC.elapsedMinutes(open, nowMs))}
             </div>
@@ -214,9 +214,11 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
               {open.invoiceId ? ` · ${open.invoiceId}` : ''}
               {open.kind !== 'job' ? ` · ${TC.KINDS.find(k => k.id === open.kind)?.label || open.kind}` : ''}
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <SiteChip onSite={open.clockInOnSite} meters={open.clockInM} />
-            </div>
+            {isAdmin ? (
+              <div style={{ marginBottom: 12 }}>
+                <SiteChip onSite={open.clockInOnSite} meters={open.clockInM} />
+              </div>
+            ) : <div style={{ marginBottom: 12 }} />}
             <button
               onClick={doClockOut}
               disabled={busy}
@@ -226,7 +228,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
                 fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19,
                 letterSpacing: 1, textTransform: 'uppercase',
               }}
-            >{busy ? (stage || 'Working…') : 'Clock out'}</button>
+            >{busy ? (isAdmin ? (stage || 'Working…') : 'Working…') : 'Clock out'}</button>
           </>
         ) : (
           <>
@@ -265,7 +267,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
                 </select>
                 {jobId && (
                   <div style={{ fontSize: 11, color: '#99a3b8', marginTop: 5, lineHeight: 1.4 }}>
-                    {TC.jobAddressLine(invById.get(jobId)) || 'No job address on this one — the on-site check will read as unknown.'}
+                    {TC.jobAddressLine(invById.get(jobId)) || 'No job address on this one.'}
                   </div>
                 )}
               </div>
@@ -287,12 +289,14 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
                 fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 19,
                 letterSpacing: 1, textTransform: 'uppercase',
               }}
-            >{busy ? (stage || 'Working…') : 'Clock in'}</button>
-            <div style={{ fontSize: 10.5, color: '#aab4c8', marginTop: 8, lineHeight: 1.45 }}>
-              Your phone's location is recorded at both ends. If it can't get a
-              fix you can still clock in — the entry just says the location is
-              unknown.
-            </div>
+            >{busy ? (isAdmin ? (stage || 'Working…') : 'Working…') : 'Clock in'}</button>
+            {isAdmin && (
+              <div style={{ fontSize: 10.5, color: '#aab4c8', marginTop: 8, lineHeight: 1.45 }}>
+                Your phone's location is recorded at both ends. If it can't get a
+                fix you can still clock in — the entry just says the location is
+                unknown.
+              </div>
+            )}
           </>
         )}
         {err && (
@@ -311,7 +315,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
         <div style={{ fontSize: 11, color: '#99a3b8', lineHeight: 1.45 }}>
           Closed shifts since Monday
           {weekTotals.openCount ? ` · ${weekTotals.openCount} still open` : ''}
-          {weekTotals.flaggedCount ? ` · ${weekTotals.flaggedCount} off site` : ''}
+          {isAdmin && weekTotals.flaggedCount ? ` · ${weekTotals.flaggedCount} off site` : ''}
         </div>
       </div>
 
@@ -400,10 +404,12 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
                       {e.clockOutAt ? TC.fmtMinutes(e.minutes) : 'open'}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
-                    <SiteChip onSite={e.clockInOnSite} meters={e.clockInM} />
-                    {e.clockOutAt && <SiteChip onSite={e.clockOutOnSite} meters={e.clockOutM} />}
-                  </div>
+                  {isAdmin && (
+                    <div style={{ display: 'flex', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
+                      <SiteChip onSite={e.clockInOnSite} meters={e.clockInM} />
+                      {e.clockOutAt && <SiteChip onSite={e.clockOutOnSite} meters={e.clockOutM} />}
+                    </div>
+                  )}
                   {e.note && <div style={{ fontSize: 11.5, color: '#778', marginTop: 5, lineHeight: 1.4 }}>{e.note}</div>}
                 </div>
               ))}

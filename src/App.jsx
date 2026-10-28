@@ -13358,7 +13358,7 @@ export default function App() {
           >
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase" }}>
               Day started · {TC.fmtMinutes(TC.elapsedMinutes(openDay, dayNow))}
-              <ActivityBadge seg={activitySeg} style={{ marginLeft: 8, background: "rgba(255,255,255,0.22)", padding: "1px 8px", fontSize: 12 }} />
+              {isAdmin && <ActivityBadge seg={activitySeg} style={{ marginLeft: 8, background: "rgba(255,255,255,0.22)", padding: "1px 8px", fontSize: 12 }} />}
             </span>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
               Clock →
@@ -13376,7 +13376,7 @@ export default function App() {
           >
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 12.5, letterSpacing: 1, textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               On the clock{openShift.invoiceId ? ` · ${openShift.invoiceId}` : ""}
-              {!openDay && <ActivityBadge seg={activitySeg} style={{ marginLeft: 8, background: "rgba(255,255,255,0.22)", padding: "1px 8px", fontSize: 12 }} />}
+              {!openDay && isAdmin && <ActivityBadge seg={activitySeg} style={{ marginLeft: 8, background: "rgba(255,255,255,0.22)", padding: "1px 8px", fontSize: 12 }} />}
             </span>
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: 0.9 }}>
               Clock out →

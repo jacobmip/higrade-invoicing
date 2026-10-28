@@ -2,6 +2,11 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.37.1 — 2026-10-28
+
+- Non-admin users (apprentice, service tech) no longer see any GPS or activity wording: the activity category badge is gone from the clock banner and the Time Clock card, as are the on-site/off-site chips, the "N off site" weekly count, the location disclaimer under Clock in, and the "Getting your location" progress text. The "On the clock" timer, Clock in/out and Start/End Day are unchanged.
+- Live Activity and Team Map in Reports confirmed admin-only. GPS polling (`activity.js`) still runs for everyone, so no data is lost.
+
 ## v1.37.0 — 2026-10-28
 
 - Address autocomplete: the street field now suggests Hawaii-biased addresses from Google Places as you type (300 ms debounce, 3+ characters, up to 5 suggestions; arrow keys, Enter, Escape, tap outside to dismiss). Picking one fills the street line and the city, state and ZIP.
