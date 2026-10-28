@@ -200,13 +200,13 @@ function estimateDeclined(inv) {
 }
 // Closed means off the open list: sold, converted, or turned down.
 function estimateClosed(inv) {
-  return inv.status === "approved" || !!inv.convertedToId || estimateDeclined(inv);
+  return inv.status === "approved" || inv.status === "converted" || !!inv.convertedToId || estimateDeclined(inv);
 }
 // Won is the money side of closed. A declined estimate is closed but lost, so
 // the KPI strip has to use this and not estimateClosed, otherwise turning a job
 // down would raise the close rate.
 function estimateWon(inv) {
-  return !estimateDeclined(inv) && (inv.status === "approved" || !!inv.convertedToId);
+  return !estimateDeclined(inv) && (inv.status === "approved" || inv.status === "converted" || !!inv.convertedToId);
 }
 function estimateDaysOld(inv) {
   if (!inv.date) return 0;
@@ -215,12 +215,18 @@ function estimateDaysOld(inv) {
 function estimateExpired(inv) {
   return !estimateClosed(inv) && estimateDaysOld(inv) > estimateValidDays();
 }
+// Estimates have their own vocabulary: draft, sent, approved, declined, expired,
+// converted. "outstanding" is an invoice word and never appears on an estimate;
+// rows saved before this split carry it (or "pending"), and those read as Draft
+// because nothing on the row says they were sent. Expired is computed from age
+// and is not stored, so a stored 'expired' status and an old open one agree.
 function estimateDisplay(inv) {
-  if (inv.convertedToId) return { label: "\u2192 Invoice", color: "#27ae60", closed: true };
+  if (inv.convertedToId || inv.status === "converted") return { label: "Converted", color: "#27ae60", closed: true };
   if (inv.status === "approved") return { label: "\u2713 Approved", color: "#27ae60", closed: true };
   if (estimateDeclined(inv)) return { label: "Declined", color: "#e74c3c", closed: true };
-  if (estimateExpired(inv)) return { label: "Expired", color: "#f39c12", closed: false };
-  return { label: "Open", color: "#8899bb", closed: false };
+  if (inv.status === "expired" || estimateExpired(inv)) return { label: "Expired", color: "#95a5a6", closed: false };
+  if (inv.status === "sent") return { label: "Sent", color: "#2980b9", closed: false };
+  return { label: "Draft", color: "#8899bb", closed: false };
 }
 function statusDisplay(inv) {
   if (inv.status === "paid") return { label: "Paid", color: "#4ecb71" };
@@ -3061,7 +3067,7 @@ function PDFPreview({ form, clients, photos = [] }) {
               <div style={{ color: "#dde2ee", fontSize: 13, fontWeight: 600 }}>{fmtDate(val)}</div>
             </div>
           ))}
-          <div style={{ marginLeft: "auto" }}><span style={S.pill(statusDisplay(form).color)}>{statusDisplay(form).label}</span></div>
+          <div style={{ marginLeft: "auto" }}><span style={S.pill((form.type === "estimate" ? estimateDisplay(form) : statusDisplay(form)).color)}>{(form.type === "estimate" ? estimateDisplay(form) : statusDisplay(form)).label}</span></div>
         </div>
         {/* Estimates carry a standard 30-day validity — surface that here so */}
         {/* customers know the pricing isn't open-ended. */}
@@ -3669,7 +3675,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: (defaultType || "invoice") === "estimate" ? "draft" : "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
   // Migration 086: a commission tech who is not the owner or assigned tech can
@@ -3915,7 +3921,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // await, so it still sees the outgoing document.
     flushAutoSaveRef.current();
     formEpochRef.current += 1;
-    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
+    setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: (defaultType || "invoice") === "estimate" ? "draft" : "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
     setAutoSavedId(null);
     updatedAtRef.current = null;
     skipFirstRef.current = true;
@@ -4353,6 +4359,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           catch (e) { console.warn('recordInvoiceEvent failed:', e); }
           try { await db.recordInvoiceVersion(form, primaryEmail, "Estimate sent", "email_sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
+        }
+        // draft -> sent. Legacy "outstanding" counts as unsent; approved, declined,
+        // converted and expired are never walked back by a re-send.
+        if (!form.status || form.status === "draft" || form.status === "outstanding" || form.status === "pending") {
+          const sentForm = { ...formRef.current, status: "sent" };
+          setForm(sentForm);
+          onPartialSave?.(sentForm);
         }
         alert("Estimate sent. The link in the email will be tracked when opened.");
       } else {
@@ -5282,7 +5295,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           <div style={{ padding: "12px 16px 0" }}>
             <label style={S.label}>Status</label>
             <div style={{ display: "flex", gap: 8 }}>
-              {[["outstanding", "Outstanding"], ["net30", "Net 30"], ["paid", "Paid"]].map(([s, label]) => (
+              {(form.type === "estimate" ? [["draft", "Draft"], ["sent", "Sent"], ["approved", "Approved"]] : [["outstanding", "Outstanding"], ["net30", "Net 30"], ["paid", "Paid"]]).map(([s, label]) => (
                 <button key={s} onClick={() => {
                   // Selecting Net 30 also bumps the due date to invoice date + 30 days.
                   // We only auto-set when transitioning INTO net30 so users who tweaked
@@ -5395,7 +5408,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                       <span style={S.pill("#27ae60")}>✓ Approved</span>
                       {form.signedAt && <span style={{ fontSize: 11, color: "#aaa" }}>{new Date(form.signedAt).toLocaleDateString()}</span>}
                     </div>
-                    <button onClick={() => { if (confirm("Void this signature? This cannot be undone.")) { setField("signatureData", null); setField("signedAt", null); setField("status", "outstanding"); }}} style={{ background: "none", border: "1px solid #e74c3c", color: "#e74c3c", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5 }}>Void</button>
+                    <button onClick={() => { if (confirm("Void this signature? This cannot be undone.")) { setField("signatureData", null); setField("signedAt", null); setField("status", form.type === "estimate" ? "sent" : "outstanding"); }}} style={{ background: "none", border: "1px solid #e74c3c", color: "#e74c3c", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5 }}>Void</button>
                   </div>
                   <img src={form.signatureData} style={{ maxWidth: "100%", border: "1px solid #eee", borderRadius: 6, background: "#fafafa" }} alt="Signature" />
                 </div>
@@ -8539,8 +8552,8 @@ function PublicViewerPage({ token }) {
     // table, totals stack, notes, and a navy Mahalo footer. Typography is
     // tuned for big screens (15-16px base, larger headings) so it stays
     // easy to read.
-    const payStatus = isEstimate ? (invForm.status || 'pending').toUpperCase() : (balance > 0 ? 'OUTSTANDING' : 'PAID IN FULL');
-    const statusColor = isEstimate ? ORANGE : (balance > 0 ? ORANGE : '#2ea66a');
+    const payStatus = isEstimate ? estimateDisplay(invForm).label.replace(/^\u2713 /, '').toUpperCase() : (balance > 0 ? 'OUTSTANDING' : 'PAID IN FULL');
+    const statusColor = isEstimate ? estimateDisplay(invForm).color : (balance > 0 ? ORANGE : '#2ea66a');
     const ci = invForm.clientInfo || {};
     // Single address on the invoice — job site wins if it has lines, else
     // fall back to the billing snapshot, then to clientInfo's flat lines.
@@ -12117,7 +12130,7 @@ export default function App() {
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: docType === "estimate" ? "draft" : "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
         // The RPC assigns a new document to whoever saves it; mirror that here
         // so the form shows it before the next reload (migration 053/058).
         ...(session?.user?.id ? { assignedTechId: session.user.id } : {}),
@@ -12595,7 +12608,7 @@ export default function App() {
       gcalDurationMinutes: null,
       followUpDate: null,
       followUpEventId: null,
-      status: isEst ? 'outstanding' : 'outstanding',
+      status: isEst ? 'draft' : 'outstanding',
     };
     setData(d => ({
       ...d,
@@ -12905,7 +12918,7 @@ export default function App() {
     //   invoice  → estimate: always "outstanding".
     const initialStatus = targetType === "invoice"
       ? (carriedPaid >= totals.total - 0.01 ? "paid" : carriedPaid > 0 ? "partial" : "outstanding")
-      : "outstanding";
+      : "draft";
     const movedVisits = targetType === "invoice"
       ? (Array.isArray(form.visits) ? form.visits : []).map(v => ({ ...v, kind: "job" }))
       : [];
@@ -12964,7 +12977,7 @@ export default function App() {
       // on an estimate anyway, because paypal-capture-order.js converts first.
       // The estimate hands its visits to the invoice, so it must stop claiming
       // the same Google events (two rows on one event is the duplicate we avoid).
-      const sourceUpdated = { ...form, convertedToId: newId, payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
+      const sourceUpdated = { ...form, convertedToId: newId, status: "converted", payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
