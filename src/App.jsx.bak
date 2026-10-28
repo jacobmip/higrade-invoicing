@@ -7305,7 +7305,7 @@ function ItemsTab({ savedItems, onDelete, myId }) {
 // to a Supabase realtime channel so the badge updates the moment a
 // payment lands while the app is open. Tapping a notification marks it
 // read and (if it has an invoice_id) navigates the app to that invoice.
-function NotificationsBell({ onOpenInvoice }) {
+function NotificationsBell({ onOpenInvoice, onOpenClient, onOpenMessages }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   // If the notifications table doesn't exist yet (migration 011 not applied),
@@ -7349,8 +7349,12 @@ function NotificationsBell({ onOpenInvoice }) {
       try { await db.markNotificationRead(n.id); } catch {}
       setItems(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x));
     }
-    if (n.invoice_id) onOpenInvoice?.(n.invoice_id);
     setOpen(false);
+    // Texts go to the thread, then anything with an invoice, then a client
+    // profile. No target: the panel just closes, as before.
+    if (n.type === 'sms' && (n.data?.client_id || n.data?.phone)) onOpenMessages?.(n.data);
+    else if (n.invoice_id) onOpenInvoice?.(n.invoice_id);
+    else if (n.data?.client_id) onOpenClient?.(n.data.client_id);
   };
 
   const handleMarkAllRead = async () => {
@@ -11685,6 +11689,7 @@ export default function App() {
   const [unreadMessages, refreshUnreadMessages] = useUnreadMessages(isAdmin);
   const [showPriceBook, setShowPriceBook] = useState(false);
   const [openClientId, setOpenClientId] = useState(null);
+  const [messagesFocus, setMessagesFocus] = useState(null);
   // Counter bumped by the header "+" button when on the Expenses tab. The
   // ExpensesTab watches this with useEffect and opens its modal in response.
   // (Invoices/Estimates have direct onNew handlers, so they don't need this.)
@@ -13366,6 +13371,8 @@ export default function App() {
                 const inv = data.invoices.find(i => i.id === invoiceId);
                 if (inv) { setSelected(inv); setView("form"); }
               }}
+              onOpenClient={(clientId) => { setView("list"); setTab("clients"); setOpenClientId(clientId); }}
+              onOpenMessages={(d) => { setView("list"); setTab("messages"); setMessagesFocus({ clientId: d.client_id, phone: d.phone, n: Date.now() }); }}
             />
             <button
               onClick={() => setShowGlobalAI(v => !v)}
@@ -13440,7 +13447,7 @@ export default function App() {
         )}
         {tab === "invoices"  && <InvoiceList isAdmin={isAdmin} invoices={(filteredData.invoices || []).filter(i => i.type !== "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("invoice"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onTogglePaid={toggleInvoicePaid} onRecordPayment={recordPayment} onDuplicate={duplicateInvoice} />}
         {tab === "estimates" && <EstimatesTab isAdmin={isAdmin} invoices={(filteredData.invoices || []).filter(i => i.type === "estimate")} allDocs={filteredData.invoices || []} setSubHeader={setSubHeader} onNew={() => { setSelected(null); setNewDocType("estimate"); setNewDocSeq(n => n + 1); setView("form"); }} onSelect={inv => { setSelected(inv); setView("form"); }} onDelete={deleteInvoice} onShare={shareInvoice} onSend={sendInvoice} onPrint={printInvoice} onGetLink={copyInvoiceLink} onConvert={(inv) => convertInvoice(inv, "invoice")} onDuplicate={duplicateInvoice} onToggleDeclined={toggleEstimateDeclined} />}
-        {tab === "messages"  && <MessagesTab clients={data.clients} isAdmin={isAdmin} onUnreadChange={refreshUnreadMessages} />}
+        {tab === "messages"  && <MessagesTab clients={data.clients} isAdmin={isAdmin} onUnreadChange={refreshUnreadMessages} focus={messagesFocus} />}
         {tab === "clients"   && <ClientsTab clients={filteredData.clients} invoices={filteredData.invoices} setSubHeader={setSubHeader} onSave={saveClient} onDelete={removeClient} onImportClient={importClient} onSelectInvoice={inv => { setSelected(inv); setView("form"); }} openClientId={openClientId} onOpenedClient={() => setOpenClientId(null)} isAdmin={isAdmin} />}
         {tab === "items"     && <ItemsTab savedItems={filteredData.savedItems} onDelete={removeSavedItem} myId={session?.user?.id} />}
         {tab === "payments"  && <PaymentsTab invoices={filteredData.invoices} />}
