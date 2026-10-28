@@ -1589,3 +1589,81 @@ export async function updateTimeEntryTimes(entryId, { clockInAt, clockOutAt }) {
   }
   return toTimeEntry(data)
 }
+
+
+// ─── GPS activity segments (migration 097) ───────────────────────────────────
+// One open segment per tech (partial unique index). Same category + job as the
+// open segment just refreshes it; anything else closes it and starts the next.
+
+const ACTIVITY_COLS = 'id, tech_id, clock_session_id, start_time, end_time, last_seen_at, category, invoice_id, location_lat, location_lng'
+
+function toActivity(r) {
+  return {
+    id: r.id, techId: r.tech_id, sessionId: r.clock_session_id || null,
+    startTime: r.start_time, endTime: r.end_time || null, lastSeenAt: r.last_seen_at,
+    category: r.category, invoiceId: r.invoice_id || null,
+    lat: r.location_lat, lng: r.location_lng,
+  }
+}
+
+export async function loadOpenActivity() {
+  const { data: u } = await supabase.auth.getSession()
+  const uid = u?.session?.user?.id
+  if (!uid) return null
+  const { data, error } = await supabase.from('time_activity').select(ACTIVITY_COLS)
+    .eq('tech_id', uid).is('end_time', null).limit(1)
+  if (error) { console.warn('loadOpenActivity failed:', error.message); return null }
+  return data && data[0] ? toActivity(data[0]) : null
+}
+
+export async function recordActivity({ seg, sessionId, category, invoiceId, lat, lng }) {
+  const { data: u } = await supabase.auth.getSession()
+  const uid = u?.session?.user?.id
+  if (!uid) return seg
+  const now = new Date().toISOString()
+  if (seg && seg.sessionId === sessionId && seg.category === category && (seg.invoiceId || null) === (invoiceId || null)) {
+    // An RLS-filtered update affects zero rows without erroring, so ask for the row back.
+    const { data, error } = await supabase.from('time_activity')
+      .update({ last_seen_at: now, location_lat: lat, location_lng: lng })
+      .eq('id', seg.id).is('end_time', null).select(ACTIVITY_COLS)
+    if (error) throw error
+    if (data && data[0]) return toActivity(data[0])
+  }
+  if (seg) {
+    const { error } = await supabase.from('time_activity')
+      .update({ end_time: now }).eq('id', seg.id).is('end_time', null)
+    if (error) throw error
+  }
+  const { data, error } = await supabase.from('time_activity').insert({
+    tech_id: uid, clock_session_id: sessionId || null, start_time: now, last_seen_at: now,
+    category, invoice_id: invoiceId || null, location_lat: lat, location_lng: lng,
+  }).select(ACTIVITY_COLS).single()
+  if (error) throw error
+  return toActivity(data)
+}
+
+// Clock-out, or an orphan from a killed app: end at the last position seen, not now.
+export async function closeOpenActivity() {
+  const open = await loadOpenActivity()
+  if (!open) return
+  const { error } = await supabase.from('time_activity')
+    .update({ end_time: open.lastSeenAt }).eq('id', open.id).is('end_time', null)
+  if (error) console.warn('closeOpenActivity failed:', error.message)
+}
+
+// Admin: segments that started since `sinceIso`, plus any still open.
+export async function loadActivitySince(sinceIso) {
+  const { data, error } = await supabase.from('time_activity').select(ACTIVITY_COLS)
+    .or(`start_time.gte.${sinceIso},end_time.is.null`).order('start_time', { ascending: true }).limit(2000)
+  if (error) { console.warn('loadActivitySince failed:', error.message); return [] }
+  return (data || []).map(toActivity)
+}
+
+export async function loadHomeBase() {
+  const { data, error } = await supabase.from('settings').select('key, value')
+    .in('key', ['home_base_lat', 'home_base_lng'])
+  if (error || !data) return null
+  const m = Object.fromEntries(data.map(r => [r.key, parseFloat(r.value)]))
+  return Number.isFinite(m.home_base_lat) && Number.isFinite(m.home_base_lng)
+    ? { lat: m.home_base_lat, lng: m.home_base_lng } : null
+}

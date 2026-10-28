@@ -20,6 +20,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>HI Grade uses your location while you are clocked in to record whether you are on a job, driving or at a supply house, so you never have to log your time by hand.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>HI Grade uses your location while you are clocked in to record whether you are on a job, driving or at a supply house, so you never have to log your time by hand. Location is not tracked when you are clocked out.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

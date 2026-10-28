@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as db from './db';
 import * as TC from './timeclock';
+import { ActivityBadge } from './ActivityBits.jsx';
 
 const NAVY = '#0a1628';
 const ORANGE = '#E8622A';
@@ -62,7 +63,7 @@ function SiteChip({ onSite, meters }) {
   );
 }
 
-export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInvoice, onShiftChange }) {
+export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInvoice, onShiftChange, activitySeg }) {
   const [open, setOpen] = useState(null);         // my open shift
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -204,6 +205,7 @@ export default function TimeClockTab({ invoices, isAdmin, myId, users, onOpenInv
         {open ? (
           <>
             <div style={{ ...heading, color: '#8899bb', marginBottom: 4 }}>On the clock</div>
+            {activitySeg && <div style={{ marginBottom: 6 }}><ActivityBadge seg={activitySeg} /></div>}
             <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 44, color: '#fff', lineHeight: 1 }}>
               {TC.fmtMinutes(TC.elapsedMinutes(open, nowMs))}
             </div>

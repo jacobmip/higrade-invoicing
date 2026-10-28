@@ -2,6 +2,15 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.34.0 — 2026-10-27
+
+- New: automatic GPS activity tracking while clocked in. Every 5 minutes the phone's position is read and categorized: On Job (within 200 m of a job site assigned to the tech with a visit today, or the job the shift is clocked to), Parts Run (Ferguson Honolulu, Home Depot Pearl City, Home Depot Kapolei), Driving (over 10 mph since the last reading), Shop (within 200 m of `settings.home_base_lat/lng`, blank until set), otherwise Stationary. Haversine distance. Logic in `src/activity.js`.
+- New: the tech sees a category badge in the clock banner and on the Time Clock card, updating every 5 minutes. Labels are text, not emoji.
+- New: admin Live Activity card in Reports, above Hours: each tech's current category, last-seen time, and today's hours on job / driving / parts run / shop. Refreshes every minute.
+- Migration 097: `time_activity` (segments inside a clock session, RLS self-or-admin, one open segment per tech). Not `time_entries`, which already exists as the payroll clock (072, 092) with a different schema; paid hours are unchanged.
+- iOS: added NSLocationWhenInUseUsageDescription and NSLocationAlwaysAndWhenInUseUsageDescription to Info.plist.
+- Limit: polling runs in the web view, so it pauses when the app is backgrounded or the phone is locked and catches up on return. True background tracking needs a native background-geolocation plugin.
+
 ## v1.33.0 — 2026-10-27
 
 - New: Communications tab on the client profile (admin). One newest-first timeline of every text and call with that client. Texts are iMessage-style bubbles (outbound blue on the right, inbound gray on the left); calls show Incoming / Outgoing, duration, the call summary and a Play button.
