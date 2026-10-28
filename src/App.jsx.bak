@@ -11415,7 +11415,8 @@ export default function App() {
     // empty list. Mirror invoices_select here.
     const matchInvoice = (r) => r?.ownerId === effectiveOwnerId
       || r?.assignedTechId === effectiveOwnerId
-      || (r?.commissionTechId === effectiveOwnerId && !r?.deletedAt);
+      || (r?.commissionTechId === effectiveOwnerId && !r?.deletedAt)
+      || (r?.apprenticeId === effectiveOwnerId && !r?.deletedAt);
     const visibleInvoices = (data.invoices || []).filter(matchInvoice);
     // Clients follow the jobs (is_my_assigned_client, migration 069).
     const jobClientIds = new Set(visibleInvoices.filter(r => r.assignedTechId === effectiveOwnerId && r.client_id).map(r => r.client_id));
