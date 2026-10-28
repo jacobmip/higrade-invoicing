@@ -11308,6 +11308,7 @@ export default function App() {
   // doesn't leak between accounts on the same device. Initial state stays
   // empty until the session loads, then the load effect below populates it.
   const [viewAsUserId, setViewAsUserId] = useState("");
+  const [showViewAsSheet, setShowViewAsSheet] = useState(false);
   const viewAsStorageKey = useMemo(() => {
     const uid = session?.user?.id;
     return uid ? `higrade_view_as:${uid}` : null;
@@ -13377,6 +13378,23 @@ export default function App() {
         </div>
       )}
       <style>{`@keyframes hi-spin { to { transform: rotate(360deg); } }`}</style>
+      {showViewAsSheet && isAdmin && (
+        <div onClick={() => setShowViewAsSheet(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 10000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 480, maxHeight: "75vh", overflowY: "auto", borderRadius: "16px 16px 0 0", padding: "14px 14px 24px" }}>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, letterSpacing: 1, color: NAVY, marginBottom: 10 }}>VIEW AS</div>
+            {[{ id: "", displayName: "View as myself (all users)", tier: "" }, ...(allUsers || [])].map(u => {
+              const selected = viewAsUserId === u.id;
+              return (
+                <button key={u.id || "all"} onClick={() => { setViewAsUserId(u.id); setShowViewAsSheet(false); }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%", textAlign: "left", padding: "12px", marginBottom: 6, borderRadius: 8, border: selected ? `2px solid ${ORANGE}` : "1px solid #dde2ee", background: selected ? "#fff7f1" : "#fff", cursor: "pointer" }}>
+                  <span style={{ fontWeight: 700, fontSize: 14, color: NAVY, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.displayName || "(no name)"}</span>
+                  {u.tier && <span style={{ background: "#eef1f8", color: "#556", fontSize: 10, fontWeight: 700, letterSpacing: 0.5, padding: "2px 7px", borderRadius: 10 }}>{u.tier}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {deepLinkCallId && isAdmin && <CallRecordingModal callId={deepLinkCallId} onClose={() => setDeepLinkCallId(null)} />}
       {showGlobalAI && <GlobalAIModal data={data} getData={() => dataRef.current} userLabel={`${profile?.display_name || session?.user?.email || "unknown"} (${isAdmin ? "admin" : "tech"})`} openDocId={() => (view === "form" ? selected?.id || null : null)} msgs={globalAIMsgs || []} setMsgs={setGlobalAIMsgs} onResetChat={resetGlobalAIChat} onClose={() => setShowGlobalAI(false)} onAction={handleGlobalAIAction} onOpenDoc={(inv) => { setShowGlobalAI(false); setSelected(inv); setView("form"); }} onOpenClient={(cl) => { setShowGlobalAI(false); setView("list"); setTab("clients"); setOpenClientId(cl.id); }} />}
 
@@ -13387,11 +13405,23 @@ export default function App() {
               HI GRADE PLUMBING
               {isAdmin && <span style={{ background: ORANGE, color: "#fff", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 1.2, padding: "2px 6px", borderRadius: 4 }}>ADMIN</span>}
             </div>
-            <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>
-              {effectiveOwnerId
-                ? `Viewing as · ${(allUsers.find(u => u.id === effectiveOwnerId)?.displayName) || "user"}`
-                : (profile?.display_name ? `${profile.display_name.toUpperCase()}` : "LLC · HONOLULU")}
-            </span>
+            {isAdmin ? (
+              <button
+                onClick={() => setShowViewAsSheet(true)}
+                aria-label="Switch who you are viewing as"
+                style={effectiveOwnerId
+                  ? { background: ORANGE, color: "#fff", border: "none", borderRadius: 10, padding: "2px 8px", fontSize: 10, letterSpacing: 1, fontWeight: 700, textTransform: "uppercase", cursor: "pointer", maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+                  : { background: "transparent", color: ORANGE, border: "none", padding: 0, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase", cursor: "pointer" }}
+              >
+                {effectiveOwnerId
+                  ? `Viewing as ${(allUsers.find(u => u.id === effectiveOwnerId)?.displayName) || "user"} \u25BE`
+                  : `${profile?.display_name ? profile.display_name.toUpperCase() : "LLC"} \u00B7 View as\u2026`}
+              </button>
+            ) : (
+              <span style={{ color: ORANGE, fontSize: 10, letterSpacing: 3, fontWeight: 600, textTransform: "uppercase" }}>
+                {profile?.display_name ? `${profile.display_name.toUpperCase()}` : "LLC · HONOLULU"}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button

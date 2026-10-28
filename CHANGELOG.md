@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.2 — 2026-10-28
+
+- Quick View As switcher: admins tap the header subtitle (a "Viewing as [name]" chip when active, "View as..." otherwise) to open a bottom sheet listing every user with their tier, plus a "View as myself" reset. Reuses `allUsers` and `setViewAsUserId`, so it stays in step with the Settings picker.
+
 ## v1.38.1 — 2026-10-28
 
 - On My Way message simplified: now reads "Aloha [name], Jake is on the way and will arrive in approximately X minutes. Mahalo!" — removed the "HI Grade Plumbing technician" prefix.
