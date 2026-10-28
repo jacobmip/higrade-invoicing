@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.8 — 2026-10-28
+
+- Inbound MMS: `rehostTwilioMedia` no longer returns an empty list when Twilio or service-role credentials are missing; every attachment now gets an entry (saved, or `failed` with its Twilio media sid), so a miss is visible instead of leaving `media` null.
+- Re-host has a shared 7s budget and per-request timeouts, so a few large photos cannot run past Hobby's 10s limit and kill the function before the message is logged. `sms-inbound.js` also catches a throw from the re-host and still logs the message.
+- Messages thread: tapping a photo opens it full screen (tap to close).
+
 ## v1.38.7 — 2026-10-28
 
 - Opening a document from the Calendar tab now fetches its line items and payments (`db.loadInvoiceWithItems`) when the invoice in state lacks them, with a Loading overlay while it runs, instead of relying on the v1.38.6 null guards alone.

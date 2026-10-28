@@ -296,7 +296,9 @@ export default async function handler(req, res) {
 
     // Re-host any attachments before logging, so the stored row points at a URL
     // that will still work in six months.
-    const media = await rehostTwilioMedia(params);
+    let media = [];
+    try { media = await rehostTwilioMedia(params); }
+    catch (e) { console.error('[sms-inbound] rehost threw:', e.message || e); }
 
     const result = await rpc('log_client_message', {
       p_secret: secret,

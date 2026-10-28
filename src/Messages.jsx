@@ -119,6 +119,7 @@ function previewOf(m) {
 }
 
 export function Media({ item }) {
+  const [open, setOpen] = useState(false);
   const type = String(item.type || '');
   if (item.failed || !item.url) {
     return <div style={{ fontSize: 12, fontStyle: 'italic', opacity: 0.8, padding: '4px 0' }}>Attachment could not be saved</div>;
@@ -128,9 +129,19 @@ export function Media({ item }) {
   }
   if (type.startsWith('image')) {
     return (
-      <a href={item.url} target="_blank" rel="noreferrer">
-        <img src={item.url} alt="" loading="lazy" style={{ display: 'block', maxWidth: '100%', borderRadius: 12, marginTop: 4 }} />
-      </a>
+      <>
+        <img src={item.url} alt="" loading="lazy" onClick={() => setOpen(true)}
+          style={{ display: 'block', maxWidth: '100%', borderRadius: 12, marginTop: 4, cursor: 'zoom-in' }} />
+        {open && (
+          <div onClick={() => setOpen(false)} style={{
+            position: 'fixed', inset: 0, zIndex: 100000, background: 'rgba(0,0,0,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8,
+          }}>
+            <img src={item.url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+            <div style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 12px)', right: 16, color: '#fff', fontSize: 15, fontWeight: 600 }}>Close</div>
+          </div>
+        )}
+      </>
     );
   }
   return <a href={item.url} target="_blank" rel="noreferrer" style={{ color: 'inherit', fontSize: 13 }}>Attachment</a>;

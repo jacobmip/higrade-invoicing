@@ -216,14 +216,15 @@ function mediaSidOf(url) {
   return m ? m[1] : null;
 }
 
-async function rehostOne({ url, type, path, auth, key }) {
-  const res = await fetch(url, { headers: { Authorization: auth }, redirect: 'follow' });
+async function rehostOne({ url, type, path, auth, key }, budgetMs) {
+  const res = await fetch(url, { headers: { Authorization: auth }, redirect: 'follow', signal: AbortSignal.timeout(budgetMs) });
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   const bytes = Buffer.from(await res.arrayBuffer());
   const up = await fetch(`${supabaseUrl()}/storage/v1/object/job-photos/${path}`, {
     method: 'POST',
     headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': type, 'x-upsert': 'true' },
     body: bytes,
+    signal: AbortSignal.timeout(budgetMs),
   });
   if (!up.ok) throw new Error(`upload ${up.status} ${await up.text()}`);
   return bytes.length;
@@ -235,18 +236,34 @@ async function rehostOne({ url, type, path, auth, key }) {
 // Items run in parallel: sequential fetches of several videos were the slowest
 // part of a webhook that has 10 seconds on Hobby.
 export async function rehostTwilioMedia(params) {
-  const sid = await twilioAccountSid();
-  const token = await twilioAuthToken();
-  if (!sid || !token) return [];
-
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!key) {
-    console.warn('[sms] no service-role key; cannot re-host media');
-    return [];
-  }
-
   const count = parseInt(params.NumMedia || '0', 10);
   if (!Number.isFinite(count) || count < 1) return [];
+
+  // Every attachment gets an entry, saved or not. Returning [] when credentials
+  // were missing made a failed re-host indistinguishable from "no media" and
+  // the photo vanished without a trace. A failed entry keeps the Twilio media
+  // sid so a repair job can fetch it later.
+  const failedEntries = () => {
+    const out = [];
+    for (let i = 0; i < count && i < 10; i++) {
+      const url = params[`MediaUrl${i}`];
+      if (!url) continue;
+      out.push({
+        failed: true, twilio_url: url,
+        type: params[`MediaContentType${i}`] || 'application/octet-stream',
+        twilio_media_sid: mediaSidOf(url),
+      });
+    }
+    return out;
+  };
+
+  const sid = await twilioAccountSid();
+  const token = await twilioAuthToken();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!sid || !token || !key) {
+    console.error('[sms] cannot re-host media: missing', !sid ? 'twilio sid' : !token ? 'twilio token' : 'service-role key');
+    return failedEntries();
+  }
 
   const auth = 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64');
   const jobs = [];
@@ -261,11 +278,17 @@ export async function rehostTwilioMedia(params) {
     });
   }
 
+  // Hobby kills the function at 10s, and a dead function logs nothing at all.
+  // Stop at 7s so the row is always written, with failed entries for whatever
+  // did not finish.
+  const deadline = Date.now() + 7000;
   return Promise.all(jobs.map(async (job) => {
     let lastErr;
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const left = deadline - Date.now();
+      if (left < 500) { lastErr = new Error('out of time'); break; }
       try {
-        const bytes = await rehostOne(job);
+        const bytes = await rehostOne(job, left);
         return {
           url: `${supabaseUrl()}/storage/v1/object/public/job-photos/${job.path}`,
           type: job.type,
