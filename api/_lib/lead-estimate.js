@@ -15,6 +15,7 @@
 // Every failure path returns quietly and logs: a lead must never be blocked by
 // the estimator.
 
+import crypto from 'node:crypto';
 import { getSetting, secretMatches, webhookSecret, supabaseUrl } from './sms.js';
 import { fetchSavedItems, callEstimator, textOf, parseEstimate } from './estimator.js';
 
@@ -82,14 +83,47 @@ function visitPhrase(inv) {
 // The exact text the customer gets on APPROVE. Built here, stored on the
 // proposal as `sms_body`, shown in the Telegram message, and sent verbatim by
 // the bot, so what Jake reads is what goes out.
-function draftSms({ inv, clientName, lines, total }) {
+function draftSms({ inv, clientName, lines, total, summary, link }) {
   const named = !/no name given|missed call|unknown/i.test(clientName || '');
   const first = named ? String(clientName).trim().split(/\s+/)[0] : '';
   const when = visitPhrase(inv);
-  const parts = lines.map(it => `${it.name} ~${money(it.price * it.qty)}`).join(', ');
-  return `Aloha${first ? ' ' + first : ''}, based on what you've described, here's a rough ballpark for the work: ${parts}. ` +
-    `Total estimate: around ${money(total)} before tax. This is just a ballpark - the team will confirm the exact price when they come out. ` +
+  const brief = String(summary || '').trim().replace(/[.\s]+$/, '');
+  const what = brief && brief.length <= 80 ? brief : 'the work';
+  return `Aloha${first ? ' ' + first : ''}, here's a rough ballpark for ${what}:\n` +
+    lines.map(it => `${it.name} ~${money(it.price * it.qty)}`).join('\n') +
+    `\nTotal: ~${money(total)} before tax\n\n` +
+    (link ? `View the full estimate here: ${link}\n\n` : '') +
+    `The team will confirm the exact price when they come out. ` +
     (when ? `Does ${when} still work for you?` : 'What day works best for you?');
+}
+
+// Same shape as generateViewToken() in _lib/convert-estimate.js and the app:
+// 9 random bytes, base64url.
+function newViewToken() {
+  return crypto.randomBytes(9).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// The estimate's public link. Reuses the row's token, else mints one and saves
+// it, only if still null so a concurrent writer's token is never replaced.
+// Null on failure: the text then goes without the link rather than not at all.
+async function ensureViewLink(base, id, existing) {
+  const origin = (await getSetting('app_base_url')) || 'https://higrade-invoicing.vercel.app';
+  const link = (t) => `${String(origin).replace(/\/+$/, '')}/v/${t}`;
+  if (existing) return link(existing);
+  const token = newViewToken();
+  try {
+    const r = await fetch(`${base}/invoices?id=eq.${id}&view_token=is.null`,
+      { method: 'PATCH', headers: headers({ Prefer: 'return=representation' }), body: JSON.stringify({ view_token: token }) });
+    const won = r.ok ? await r.json().catch(() => []) : [];
+    if (won.length) return link(token);
+    const again = await fetch(`${base}/invoices?id=eq.${id}&select=view_token&limit=1`, { headers: headers() })
+      .then(x => x.ok ? x.json() : []).catch(() => []);
+    return again?.[0]?.view_token ? link(again[0].view_token) : null;
+  } catch (e) {
+    console.error('[lead-estimate] view token save failed:', e.message || e);
+    return null;
+  }
 }
 
 /**
@@ -104,7 +138,7 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
   const base = `${supabaseUrl()}/rest/v1`;
   const id = encodeURIComponent(invoiceId);
   const rows = await fetch(
-    `${base}/invoices?id=eq.${id}&select=id,type,lead_channel,client_name,client_info,job_address,internal_notes,deleted_at,estimator_items,estimator_approval,visits,gcal_date,invoice_items(name,price,qty)&limit=1`,
+    `${base}/invoices?id=eq.${id}&select=id,type,lead_channel,client_name,client_info,job_address,internal_notes,deleted_at,estimator_items,estimator_approval,view_token,visits,gcal_date,invoice_items(name,price,qty)&limit=1`,
     { headers: headers() }).then(r => r.ok ? r.json() : []).catch(() => []);
   const inv = rows?.[0];
   if (!inv) return skip('invoice not found');
@@ -165,10 +199,11 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
   const total = lines.reduce((s, it) => s + it.qty * it.price, 0);
   // The estimator gives point prices. The range is a rule of ours, not the
   // model's: total up to 15% above it, rounded to $5.
+  const link = await ensureViewLink(base, id, inv.view_token);
   const proposal = {
     items: lines, total,
     min: round5(total), max: round5(total * 1.15),
-    sms_body: draftSms({ inv, clientName, lines, total }),
+    sms_body: draftSms({ inv, clientName, lines, total, summary: est.summary, link }),
     assumptions: Array.isArray(est.assumptions) ? est.assumptions.slice(0, 8) : [],
     summary: String(est.summary || ''),
     generated_at: new Date().toISOString(),
@@ -185,6 +220,7 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
     `Ballpark estimate ready \u2014 ${clientName}\n` +
     `${invoiceId} \u00b7 ${String(inv.lead_channel || '').toLowerCase()}\n\n` +
     `Draft SMS to customer:\n"${proposal.sms_body}"\n\n` +
+    `Estimate link in text: ${link ? 'yes' : 'NO (token unavailable)'}\n` +
     `Items: ${lines.map(it => `${it.name} - ${money(it.price * it.qty)}`).join(', ')}\n` +
     `Total: ~${money(proposal.min)}\u2013${money(proposal.max)} before tax\n\n` +
     `Reply APPROVE ${invoiceId} to send this text, or DECLINE ${invoiceId} to skip.`;

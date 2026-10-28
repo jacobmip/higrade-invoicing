@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.2 — 2026-10-28
+
+- The ballpark text now carries a link to the full estimate (`/v/<view_token>`). `lead-estimate.js` reuses the row's `view_token`, or mints one (9 random bytes, base64url) and saves it only if still null. New layout: one line per item, total, the link, then the confirm-the-price sentence and the visit question. The Telegram approval shows the same text plus an "Estimate link in text" line. If the token cannot be saved the text goes without the link and Telegram says so.
+- Known gap: the bot inserts the proposal's line items after the text is sent, so a customer who taps the link in the first seconds can still see the generic Service Call line.
+- Not done: the Yelp responder (`AI-OS/scripts/yelp_autoresponder.py`) files no estimate and parses no phone, so there is no `invoice_id` to send to `propose_estimate`. Left unwired.
+
 ## v1.39.1 — 2026-10-28
 
 - The AI ballpark now also runs for web-form leads. `api/schedule-request.js` calls `proposeInBackground()` after it has answered 200, only when the lead has a phone, agreed to texts, and `sms_outbound_enabled` is true. The form never waits on the model.
