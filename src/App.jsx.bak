@@ -3848,6 +3848,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const [refreshingEvents, setRefreshingEvents] = useState(false);
   const [versions, setVersions] = useState([]);
   const [savingSnapshot, setSavingSnapshot] = useState(false);
+  const [undoConfirm, setUndoConfirm] = useState(false);
+  const [undoToast, setUndoToast] = useState(false);
+  // Admin one-step undo: same restore the History tab does, applied to the
+  // version just before the latest snapshot (versions is newest first).
+  const canUndo = isAdmin && !lockedView && !invoice?.deleted_at && versions.length >= 2;
+  const doUndo = () => {
+    const prev = versions[1];
+    setUndoConfirm(false);
+    if (!prev) return;
+    setForm({ discountType: "$", ...(prev.snapshot || {}) });
+    setUndoToast(true);
+    setTimeout(() => setUndoToast(false), 2000);
+    setTimeout(() => refreshHistory(), 1500);
+  };
   const refreshHistory = async () => {
     if (!form.id) return;
     setRefreshingEvents(true);
@@ -4730,6 +4744,26 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           neighboring tab slide in horizontally. */}
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 0 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 0 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div>
+          {canUndo && (
+            <div style={{ padding: "12px 16px 0", display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => setUndoConfirm(true)} style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 14px", border: "1px solid #dde2ee" }}>Undo</button>
+            </div>
+          )}
+          {undoConfirm && (
+            <div onClick={() => setUndoConfirm(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 5000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+              <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 20, width: "100%", maxWidth: 320 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Undo last change?</div>
+                <div style={{ fontSize: 13, color: "#777", marginBottom: 16 }}>Restores v{versions[1]?.version_number}. Your current edits will be replaced.</div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button onClick={() => setUndoConfirm(false)} style={{ ...S.btn("ghost"), border: "1px solid #dde2ee" }}>Cancel</button>
+                  <button onClick={doUndo} style={S.btn("primary")}>Undo</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {undoToast && (
+            <div style={{ position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 18px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 5001 }}>Undone</div>
+          )}
           {/* Bill To */}
           <div style={{ padding: "16px 16px 0" }}>
             <label style={S.label}>Bill To</label>
