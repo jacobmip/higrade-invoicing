@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.1 — 2026-10-28
+
+- On My Way message simplified: now reads "Aloha [name], Jake is on the way and will arrive in approximately X minutes. Mahalo!" — removed the "HI Grade Plumbing technician" prefix.
+
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
 ## v1.38.0 — 2026-10-28

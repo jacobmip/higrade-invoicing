@@ -129,7 +129,7 @@ export default async function handler(req) {
   }
 
   const arrive = eta != null ? `will arrive in approximately ${eta} minutes` : 'will arrive shortly';
-  const message = `Aloha ${firstName}, your HI Grade Plumbing technician ${techName} is on the way and ${arrive}. Mahalo! — HI Grade Plumbing`;
+  const message = `Aloha ${firstName}, ${techName} is on the way and ${arrive}. Mahalo!`;
 
   const sid = process.env.TWILIO_ACCOUNT_SID || (await setting('twilio_sid'));
   const token = process.env.TWILIO_AUTH_TOKEN || (await setting('twilio_token'));
