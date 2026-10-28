@@ -176,7 +176,7 @@ function calcItemTotal(it) {
   return it.discountType === "%" ? gross * (1 - it.discount / 100) : Math.max(0, gross - it.discount);
 }
 function calcTotals(inv) {
-  const sub = inv.items.reduce((s, it) => s + calcItemTotal(it), 0);
+  const sub = (inv.items || []).reduce((s, it) => s + calcItemTotal(it), 0);
   const discVal = inv.discount || 0;
   const disc = inv.discountType === "%" ? sub * (discVal / 100) : discVal;
   const afterDisc = sub - disc;
@@ -184,6 +184,12 @@ function calcTotals(inv) {
   const total = afterDisc + taxAmt;
   const paid = (inv.payments || []).reduce((s, p) => s + p.amount, 0);
   return { sub, disc, afterDisc, taxAmt, total, paid, balance: total - paid };
+}
+// An invoice held in state can reach the form without its line-item or payment
+// arrays (a partial object from a writer outside db.js's loader). The form and
+// every totals calculation assume arrays, so normalize where a document is opened.
+function withLists(inv) {
+  return Array.isArray(inv.items) && Array.isArray(inv.payments) ? inv : { ...inv, items: inv.items || [], payments: inv.payments || [] };
 }
 function fmt(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -3717,7 +3723,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
   // The PDF preview will surface a separate "Valid for 30 days" note instead.
-  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: (defaultType || "invoice") === "estimate" ? "draft" : "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
+  const [form, setForm] = useState(invoice ? { lateFeeWaived: false, discountType: "$", ...invoice, items: Array.isArray(invoice.items) ? invoice.items : [], payments: Array.isArray(invoice.payments) ? invoice.payments : [] } : { type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: (defaultType || "invoice") === "estimate" ? "draft" : "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
   // When previewing a deleted doc (read-only) we open straight to Preview;
   // the Edit tab is disabled below.
   // Migration 086: a commission tech who is not the owner or assigned tech can
@@ -12886,7 +12892,7 @@ export default function App() {
   const openInvoiceById = (id) => {
     const inv = (data.invoices || []).find(i => i.id === id);
     if (!inv) { alert(`${id} could not be found. It may have been deleted.`); return; }
-    setSelected(inv);
+    setSelected(withLists(inv));
     setView("form");
   };
 
@@ -13454,7 +13460,7 @@ export default function App() {
                         <NotificationsBell
               onOpenInvoice={(invoiceId) => {
                 const inv = data.invoices.find(i => i.id === invoiceId);
-                if (inv) { setSelected(inv); setView("form"); }
+                if (inv) { setSelected(withLists(inv)); setView("form"); }
               }}
               onOpenClient={(clientId) => { setView("list"); setTab("clients"); setOpenClientId(clientId); }}
               onOpenMessages={(d) => { setView("list"); setTab("messages"); setMessagesFocus({ clientId: d.client_id, phone: d.phone, n: Date.now() }); }}
