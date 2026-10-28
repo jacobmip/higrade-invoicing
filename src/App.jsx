@@ -11509,10 +11509,16 @@ export default function App() {
       vv.removeEventListener('scroll', onResize);
     };
   }, []);
-  const globalHeaderRef = useRef(null);
+  // The header only mounts after the splash/login/loading screens return
+  // early, so a mount-time effect with [] deps saw a null ref and never
+  // observed anything: the height stayed at the 64px default and the clock
+  // banners (which grow the header) covered the top of every tab. A callback
+  // ref puts the element in state, so the observer attaches when it exists.
+  const [globalHeaderEl, setGlobalHeaderEl] = useState(null);
+  const globalHeaderRef = setGlobalHeaderEl;
   const [globalHeaderH, setGlobalHeaderH] = useState(64);
   useLayoutEffect(() => {
-    const el = globalHeaderRef.current;
+    const el = globalHeaderEl;
     if (!el) return;
     const measure = () => {
       const h = el.getBoundingClientRect().height || el.offsetHeight;
@@ -11522,7 +11528,7 @@ export default function App() {
     ro.observe(el);
     measure();
     return () => ro.disconnect();
-  }, []);
+  }, [globalHeaderEl]);
   const [newDocType, setNewDocType] = useState("invoice");
   // Bumped every time the + button asks for a brand-new document, so the
   // still-mounted InvoiceForm resets even on two new documents in a row

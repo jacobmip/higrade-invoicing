@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.32.3 — 2026-10-27
+
+- Fixed (for real): the clock-in banners still covered the top of some tabs. The header height was measured by an effect that ran once at mount, before the header existed (the splash and loading screens return first), so it never measured anything and the page offset stayed at the 64px default. The header is now tracked with a callback ref, so its real height, banner included, is observed and applied to the single root wrapper that every tab and the invoice form sit under.
+
 ## v1.32.2 — 2026-10-27
 
 - Fixed: On My Way turned the screen gray and sent nothing. The confirmation modal (a fixed overlay inside the slide-animated form) could come up as an empty backdrop. The modal is gone: one tap now locks the button immediately (synchronous ref, so no double send), reads GPS if available, and sends. No GPS means the "arrive shortly" text; with GPS the server works out the ETA. Any failure shows as red text under the button instead of breaking the screen.
