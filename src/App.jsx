@@ -1616,6 +1616,35 @@ function hydrateTemplatesFromSettings(settings) {
   messageTemplates.review_google_url = (settings.review_google_url == null || settings.review_google_url === "") ? null : String(settings.review_google_url);
 }
 
+function TextPreviewModal({ kind, phone, body, error, sending, onChange, onSend, onClose }) {
+  const isEstimate = kind === "estimate";
+  return createPortal(
+    <div onClick={() => !sending && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderRadius: 14, padding: 20 }}>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: NAVY, letterSpacing: 1, textTransform: "uppercase" }}>
+          Send {isEstimate ? "Estimate" : "Invoice"} by Text
+        </div>
+        <div style={{ fontSize: 12, color: "#888", margin: "4px 0 12px" }}>To: {phone}</div>
+        <textarea
+          value={body}
+          onChange={e => onChange(e.target.value)}
+          rows={8}
+          disabled={sending}
+          style={{ ...S.input, width: "100%", boxSizing: "border-box", resize: "vertical", fontSize: 14, lineHeight: 1.4 }}
+        />
+        {error && <div style={{ color: "#c0392b", fontSize: 12, marginTop: 8 }}>{error}</div>}
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <button onClick={onSend} disabled={sending || !body.trim()} style={{ ...S.btn("green"), flex: 1, opacity: sending || !body.trim() ? 0.6 : 1 }}>
+            {sending ? "Sending..." : "Send via Lisa"}
+          </button>
+          <button onClick={onClose} disabled={sending} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function ConfirmSendModal({ kind, invoice, client, onClose, onConfirm, sending }) {
   // kind: "invoice" | "estimate"
   const availEmails = [client?.email, client?.email2].filter(Boolean);
@@ -3784,6 +3813,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const [showClientPicker, setShowClientPicker] = useState(false);
   const [confirmSend, setConfirmSend] = useState(null); // null | "invoice" | "estimate"
   const [sendMethodFor, setSendMethodFor] = useState(null); // null | "invoice" | "estimate"
+  const [textPreview, setTextPreview] = useState(null); // null | { kind, phone, body, error, sending }
   // When the user picks Send from the long-press quick-actions menu on the
   // list, the parent opens the form with autoSendKind set. Pop the same
   // send-method sheet the in-form Send Email button uses, exactly once.
@@ -4326,10 +4356,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     setSendMethodFor("estimate");
   };
 
-  // Text-message path. Builds an sms: URL with the trackable public link
-  // and a short prefilled message, then hands off to the OS Messages app.
-  // We mint/reuse the view token first so the link in the SMS works, and
-  // record a "sent" event with channel=sms.
+  // Text-message path. Builds the message (with the trackable public link) and
+  // opens TextPreviewModal so it can be edited; confirmTextSend then sends it
+  // from Lisa's Twilio number through /api/sms-inbound, which logs it to
+  // client_messages. We mint/reuse the view token first so the link works.
   const sendViaText = async (kind) => {
     autoUpdateDueDate(form, setForm, onPartialSave);
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
@@ -4364,20 +4394,29 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         link: viewLink,
         type: isEst ? "estimate" : "invoice",
       });
-      // iOS uses & as the separator after the number; this also works on Android.
-      const smsHref = `sms:${phone}${/iPad|iPhone|iPod/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(body)}`;
-      window.location.href = smsHref;
+      setTextPreview({ kind, phone, body, error: "", sending: false });
+    } catch (e) {
+      alert("Failed to prepare the text: " + (e.message || e));
+    }
+  };
+
+  const confirmTextSend = async () => {
+    const tp = textPreview;
+    if (!tp || tp.sending) return;
+    setTextPreview({ ...tp, sending: true, error: "" });
+    try {
+      // sendLisaText posts with the admin session and writes the sms_sent snapshot.
+      await sendLisaText({ phone: tp.phone, message: tp.body, invoice: form.id ? form : null });
       if (form.id) {
-        try { await db.recordInvoiceEvent(form.id, 'sent', phone, { kind: isEst ? 'estimate' : 'invoice', channel: 'sms' }); }
+        try { await db.recordInvoiceEvent(form.id, 'sent', tp.phone, { kind: tp.kind, channel: 'sms' }); }
         catch (e) { console.warn('recordInvoiceEvent failed:', e); }
-        try { await db.recordInvoiceVersion(form, phone, isEst ? "Estimate texted" : "Invoice texted", "sms_sent"); }
-        catch (e) { console.warn('Version snapshot failed:', e); }
         refreshEvents?.();
       }
-      setEmailStatus("✓ Opened Messages");
+      setTextPreview(null);
+      setEmailStatus("✓ Sent via Lisa");
       setTimeout(() => setEmailStatus(""), 4000);
     } catch (e) {
-      alert("Failed to open Messages: " + (e.message || e));
+      setTextPreview({ ...tp, sending: false, error: e.message || "Failed to send. Try again." });
     }
   };
 
@@ -4727,6 +4766,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         onClose={() => setSendMethodFor(null)}
         onPickEmail={() => { const k = sendMethodFor; setSendMethodFor(null); setConfirmSend(k); }}
         onPickText={() => sendViaText(sendMethodFor)}
+      />}
+      {textPreview && <TextPreviewModal
+        kind={textPreview.kind}
+        phone={textPreview.phone}
+        body={textPreview.body}
+        error={textPreview.error}
+        sending={textPreview.sending}
+        onChange={v => setTextPreview(p => ({ ...p, body: v }))}
+        onSend={confirmTextSend}
+        onClose={() => setTextPreview(null)}
       />}
       {confirmSend && <ConfirmSendModal kind={confirmSend} invoice={form} client={{ ...(selectedClient || {}), ...(effectiveClientInfo || {}) }} sending={sending} onClose={() => !sending && setConfirmSend(null)} onConfirm={handleConfirmedSend} />}
       {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} defaultMinutes={parseInt(data?.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
