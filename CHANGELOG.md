@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.37.2 — 2026-10-28
+
+- Admin-only Undo button at the top of the Edit tab. Shown when the document has at least two saved versions and is not deleted. Tap, confirm "Undo last change?", and the form is restored to the version just before the latest one, using the same restore as the History tab's Restore button (one step only). A brief "Undone" toast confirms; the normal auto-save then persists it.
+
 ## v1.37.1 — 2026-10-28
 
 - Non-admin users (apprentice, service tech) no longer see any GPS or activity wording: the activity category badge is gone from the clock banner and the Time Clock card, as are the on-site/off-site chips, the "N off site" weekly count, the location disclaimer under Clock in, and the "Getting your location" progress text. The "On the clock" timer, Clock in/out and Start/End Day are unchanged.
