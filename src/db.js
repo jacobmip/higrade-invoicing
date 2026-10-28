@@ -1071,6 +1071,20 @@ export async function loadDeletedInvoices(ownerId) {
   )
 }
 
+// One invoice/estimate with its line items and payments attached, for opening
+// a document from a place that holds only the bare invoices row (the calendar).
+export async function loadInvoiceWithItems(id) {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*, invoice_items(*), payments(*)')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  const items = (data.invoice_items || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+  return toInvoice(data, items, data.payments || [])
+}
+
 // ─── Clients ──────────────────────────────────────────────────────────────────
 
 // Build the clients-table payload. After migration 008, the structured
