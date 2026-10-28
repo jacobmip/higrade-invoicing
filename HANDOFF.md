@@ -340,6 +340,8 @@ Anything that changes how documents are **numbered, identified, typed, or schedu
 | `set_invoice_gcal_event()` | `gcal_event_id` | the Google Apps Script webhook, calling back |
 | `push_invoice_to_calendar()` | reads `gcal_date`, posts to the calendar webhook | trigger on `ai_lead` insert |
 | `notify_owner_of_lead()` | inserts `notifications`, sends the lead email | trigger on `ai_lead` insert |
+| `lead-estimate.js` (REST, service role) | `estimator_items` on a web/sms/yelp lead; never touches the customer | `/api/ai-estimator` `task: 'lead_estimate'`, dispatched by `sms-agent.js` after a text lead is filed |
+| `telegram-bot/bot.js` `handleEstimatorReply` (REST, service role) | `estimator_approval`; on APPROVE, inserts `invoice_items` and deletes the generic Service Call line | Jake's Telegram `APPROVE EST####` / `DECLINE EST####` |
 
 #### A declined estimate is written by its own RPC
 

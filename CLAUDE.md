@@ -117,7 +117,7 @@ src/
   main.jsx           — entry
 api/                 — Vercel functions. **Hard limit: 12 nodejs routes — see below.**
   ai.js                    — per-invoice AI chat; `mode: 'agent'` relays one turn of the global chat agent
-  ai-estimator.js          — structured estimate generation, AND the client extractor via `{ task: 'extract_client' }`
+  ai-estimator.js          — structured estimate generation, AND the client extractor via `{ task: 'extract_client' }`, AND the lead ballpark via `{ task: 'lead_estimate', invoice_id }` (webhook-secret Bearer; answers 202 and works under `waitUntil`, v1.39.0)
   extract-receipt.js       — receipt OCR to expense
   paypal-create-order.js / paypal-capture-order.js / paypal-webhook.js
   send-email.js / send-estimate.js / submit-signature.js / track-open.js
@@ -134,6 +134,8 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   _lib/sms.js              — Twilio send helper; `alreadySentMessage()` (once-only guard for lead texts) and `recordSmsSnapshot()` (v1.38.4)
   _lib/gcal.js             — Google token refresh + calendar helpers
   _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
+  _lib/estimator.js        — the AI estimator's prompt, saved-price fetch, `callEstimator()` and parser; shared by `ai-estimator.js` and `lead-estimate.js`. Prompt edits go here (v1.39.0)
+  _lib/lead-estimate.js    — `proposeLeadEstimate()`: ballpark for web/sms/yelp leads, stored in `invoices.estimator_items`, Jake asked on Telegram. Sends nothing to the customer (v1.39.0)
   _lib/extract-client.js   — screenshot to client records (vision). A helper, not a route, to stay under the function cap
   _lib/convert-estimate.js — estimate -> invoice conversion shared by `submit-signature.js` (Approve & Sign on `/v/<token>`) and `paypal-capture-order.js` (deposit): same number, items, visits and recorded deposits move to the invoice, estimate ends `converted` with `converted_to_id`. Also `telegramNotify()` (needs `TELEGRAM_TOKEN` in Vercel). A helper, not a route
   _lib/call-recording.js   — links each Vapi call to its estimate (`vapi_calls`) and fetches a short-lived recording link from Vapi. A helper, dispatched from `vapi-call-ended.js`
@@ -180,7 +182,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 099; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 100; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -217,6 +219,7 @@ none (RLS filters it silently) and inserts copies — a duplicate payment row pe
   - **`owner_id` is not `assigned_tech_id`.** `owner_id` is whoever created the row; `assigned_tech_id` (migration 053) is who *ran* the job. Anything that pays or scores a tech must use `assigned_tech_id`. **Migration 069 stopped the restamping:** the `on conflict` branch used to set `owner_id = excluded.owner_id`, handing the document to whoever saved it last, which was survivable only while the owner was the sole writer. It is now `coalesce(public.invoices.owner_id, excluded.owner_id)`. Deliberate transfer goes through `claimInvoiceOwner()`.
 - `invoices.apprentice_id` (migration 094) — the default apprentice, shown as a secondary label by Assigned Tech. Since 095 it grants SELECT on the invoice row only.
 - **Status vocabularies differ by type (v1.36.0).** Invoices: `outstanding`, `net30`, `partial`, `paid` (Overdue is computed). Estimates: `draft`, `sent`, `approved`, `declined`, `converted`; `Expired` is computed from age, not stored. `estimateDisplay()` in `App.jsx` is the one mapping; a legacy estimate row holding `outstanding` reads as Draft. Lisa's `create_estimate_from_lead` and `set_estimate_declined()` (restores to `outstanding`) still write the old word, so those rows rely on that mapping. Approval on the customer link auto-converts (see `_lib/convert-estimate.js`); the in-app in-person signature modal still only sets `approved`.
+- `invoices.estimator_items` / `invoices.estimator_approval` (migration 100) — the AI ballpark for a web/sms/yelp lead and Jake's answer. Items is `{items:[{name,desc,qty,price}], total, min, max, assumptions, summary, generated_at}`; non-null means Telegram approval was requested (the "already asked" guard). Approval is null (waiting) | `approved` | `declined`, check-constrained, written only by the manager bot (`telegram-bot/bot.js`). **Gate on `lead_channel`, not `source`**: `source` is `ai_lead` for phone calls too. Phone/`lisa` leads never get one. Not in `save_invoice_with_items`, same reason as `declined_at`. On APPROVE the bot texts the customer through `/api/sms-inbound` (webhook-secret Bearer), then inserts the proposal's lines and deletes the generic Service Call line with the service role, so it is subject to the open-form overwrite below.
 - `invoice_items` — invoice_id, name, description, qty, price, unit, discount, taxable, sort_order
 - `invoice_versions` — snapshots for the History tab (`sent_at`, **not** `created_at`)
 - `invoice_events` — audit trail (`sent`, `opened`, …) with `created_at`
@@ -357,7 +360,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **099** — **applied and verified 2026-10-28.** `delete_gcal_events_on_soft_delete()` + BEFORE UPDATE OF deleted_at trigger `aa_invoices_delete_gcal_events`. When `deleted_at` goes null -> set, every event id on the row (`gcal_event_id` and `visits[].eventId`) is deleted via `net.http_post` to `/api/gcal` (`op: delete`, `Authorization: Bearer <settings.sms_webhook_secret>`, the only op that accepts the secret), and `gcal_event_id`, `gcal_date`, `gcal_duration_minutes`, `visits` are nulled. pg_net sends on commit and does not retry. An event id still referenced by another non-deleted document is left alone: the app's invoice -> estimate conversion saves the new estimate with the same visits, then soft-deletes the source. Restoring a deleted document does not recreate its event. Base URL from `settings.app_base_url`, default the Vercel domain.
 
-Next migration is `100_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **100** — **applied and verified 2026-10-28.** `invoices.estimator_items` jsonb and `estimator_approval` text (null | approved | declined, check constraint). See the schema entry. Dry-run first, then constraint exercised in a rolled-back transaction.
+
+Next migration is `101_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

@@ -25,6 +25,8 @@ const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
 // A reply that loses a job costs vastly more than the model does. At roughly
 // 1.5K tokens in and 150 out this is under a cent a message.
 const MODEL = 'claude-opus-5';
+// Same origin the webhook is served from; see api/sms-inbound.js.
+const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 
 // Twilio handles STOP itself for a registered A2P campaign, but it only blocks
 // the SEND. Generating a reply to someone who just opted out is both pointless
@@ -294,6 +296,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   await logOutbound({ secret, phone, body: out.reply });
 
   let filed = null;
+  let estimatorDispatch = null;
   if (out.ready_to_file && !hasOpenEstimate) {
     try {
       filed = await rpc('create_estimate_from_lead', {
@@ -316,8 +319,28 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
     }
   }
 
+  // Web / SMS / Yelp leads get an AI ballpark, but only after Jake approves it
+  // on Telegram (see ./lead-estimate.js). Dispatched to /api/ai-estimator so it
+  // runs in its own invocation; the route answers 202 straight away. Never
+  // allowed to fail the reply that already went out.
+  if (filed?.estimate_id) {
+    try {
+      const r = await fetch(`${APP_URL}/api/ai-estimator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+        body: JSON.stringify({ task: 'lead_estimate', invoice_id: filed.estimate_id, problem: out.problem || '' }),
+        signal: AbortSignal.timeout(3000),
+      });
+      estimatorDispatch = r.status;
+    } catch (e) {
+      estimatorDispatch = `failed: ${e.name || e.message}`;
+      console.error('[sms-agent] estimator dispatch failed:', e.message || e);
+    }
+  }
+
   return `replied (${out.reply.length} chars)` +
     (filed ? `, filed ${filed.estimate_id || filed.id || 'lead'}` : '') +
+    (estimatorDispatch ? `, estimator ${estimatorDispatch}` : '') +
     (out.needs_human ? ', FLAGGED FOR JAKE' : '');
 }
 

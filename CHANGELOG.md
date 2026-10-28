@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.0 — 2026-10-28
+
+- AI ballpark for web / SMS / Yelp leads, behind Jake's approval. When a text lead is filed (`sms-agent.js`), the estimator runs (price book first, no web search, 8s budget) and Jake gets a Telegram message: client, job, items, total range, `APPROVE EST####` / `DECLINE EST####`. Nothing goes to the customer until APPROVE. Phone leads never get one; the gate is `lead_channel`, since `source` is `ai_lead` for phone too. Skipped quietly (logged) when the estimator fails, the address or job description is missing, or the estimate already has real prices.
+- On APPROVE the manager bot texts the customer the ballpark through `/api/sms-inbound` and replaces the generic Service Call line with the estimator's lines.
+- Migration 100: `invoices.estimator_items` (jsonb) and `estimator_approval` (null | approved | declined).
+- The estimator's prompt and model call moved to `api/_lib/estimator.js`; `/api/ai-estimator` behaves as before and gains `task: 'lead_estimate'`. No new route (still 12). Added `@vercel/functions` for `waitUntil`.
+
 ## v1.38.9 — 2026-10-28
 
 - AI chat (per-invoice and global agent): asked to polish, rewrite or clean up a customer message, it now rewrites in Lisa's voice, shows it under "Polished message:", and uses send_sms (asking for the phone first if missing). Prompt change in `App.jsx` and `api/_lib/agent-tools.js`.
