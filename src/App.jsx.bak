@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
+import { Component, useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import * as COMP from "./competencies";
 import TimeClockTab from "./TimeClockTab";
 import * as TC from "./timeclock";
@@ -3694,6 +3694,25 @@ function autoUpdateDueDate(form, setForm, onPartialSave) {
   onPartialSave?.(updated);
 }
 
+// A render crash inside the document form shows a message and a way out
+// instead of a white screen. Keyed on the document id so opening another one
+// starts clean.
+class FormBoundary extends Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error('[form]', err, info?.componentStack); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div style={{ padding: 24, color: "#333", fontSize: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8, color: "#cc3333" }}>This document could not be shown</div>
+        <div style={{ marginBottom: 12, wordBreak: "break-word" }}>{String(this.state.err?.message || this.state.err)}</div>
+        <button onClick={this.props.onClose} style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: "#1a2540", color: "#fff", fontWeight: 700 }}>Close</button>
+      </div>
+    );
+  }
+}
+
 function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gcalAuthed, onOpenCalendar, onSave, onPartialSave, onAutoSave, onCancel, onDelete, onSaveItem, onUpdateClient, onCreateClient, onOpenClient, onConvert, onOpenLinked, data, onAIAction, autoSendKind, onAutoSendConsumed, isAdmin, isReadOnly, viewerId, viewerIsAdmin, viewerName, viewerTier, openShift, onShiftChange, onRestore, users, myId }) {
   const blankItem = { name: "", desc: "", qty: 1, price: 0, unit: "ea", discount: 0, discountType: "%", taxable: true };
   // Estimates default to no due date — they're proposals, not bills.
@@ -4108,8 +4127,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // fields for a row that predates migration 044.
   const scheduledVisits = (Array.isArray(form.visits) && form.visits.length
     ? form.visits
-    : (form.gcalDate ? [{ id: "legacy", start: form.gcalDate.slice(0, 16), label: "" }] : [])
-  ).filter(v => v?.start).sort((a, b) => a.start.localeCompare(b.start));
+    : (form.gcalDate ? [{ id: "legacy", start: String(form.gcalDate).slice(0, 16), label: "" }] : [])
+  ).filter(v => v && typeof v.start === "string" && v.start.length >= 10).sort((a, b) => a.start.localeCompare(b.start));
 
   const t = calcTotals(form);
   const isEstimate = form.type === "estimate";
@@ -5327,8 +5346,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                               : "Waiting on Google Calendar — connect it and this will sync"}
                           </div>
                         )}
-                        {(v.label || "").trim() && (
-                          <div style={{ fontSize: 11, color: "#777", whiteSpace: "pre-wrap", marginTop: 1 }}>{v.label.trim()}</div>
+                        {String(v.label || "").trim() && (
+                          <div style={{ fontSize: 11, color: "#777", whiteSpace: "pre-wrap", marginTop: 1 }}>{String(v.label).trim()}</div>
                         )}
                       </div>
                     ))}
@@ -13534,6 +13553,7 @@ export default function App() {
 
       {formMounted && (
         <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+          <FormBoundary key={selected?.id || `new${newDocSeq}`} onClose={() => { setView("list"); setSelected(null); }}>
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
@@ -13583,6 +13603,7 @@ export default function App() {
             users={allUsers}
             myId={session?.user?.id}
           />
+          </FormBoundary>
         </div>
       )}
 
