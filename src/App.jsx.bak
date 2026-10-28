@@ -9,6 +9,7 @@ import { useActivityTracking } from "./activity.js";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
+import { sendLisaText, queueLisaCall } from './lisaActions.js';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
@@ -509,6 +510,17 @@ CRITICAL — You can ALWAYS update an existing client with update_client. Never 
 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
+
+Send a text message from Lisa's number (sends immediately):
+{"action":"send_sms","phone":"8085551234","message":"Aloha John, just following up on your estimate...","summary":"one sentence"}
+- You can send a text message from Lisa's number using send_sms. Use this when Jake says "text", "message", "send a text to", or "follow up by text".
+- Always write the message in Lisa's professional voice: warm, brief, Hawaiian (Aloha/Mahalo). Never include pricing unless Jake explicitly provides it.
+- Take the phone from CLIENTS above or from what Jake said. If there is no phone number, ask for it in plain text instead of emitting the action.
+
+Queue an outbound call for Lisa (does NOT dial; Jake approves it on Telegram first):
+{"action":"place_call","phone":"8085551234","name":"John","about":"following up on the water heater estimate from last week","context":"customer asked about financing options","summary":"one sentence"}
+- You can queue an outbound call using place_call. Use this when Jake says "call", "give a call", "follow up by phone", or "reach out to". The call needs Jake's approval before it dials, so never say the call was made; say it is queued.
+- The "about" field tells Lisa WHY she is calling: write it as a clear one-sentence brief. "context" is optional facts she may confirm, never money amounts.
 
 Schedule a job on Google Calendar (use when Jake mentions scheduling, booking, or setting up a job for a client on a specific date/time):
 {"action":"schedule_job","clientName":"exact or partial name","date":"YYYY-MM-DD","time":"HH:MM","durationHours":2,"jobDescription":"short description","address":"job site address if Jake gives one, else omit","summary":"one sentence"}
@@ -1035,6 +1047,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         'add_items', 'update_invoice', 'add_payment',
         'remove_item', 'update_item',
       ]);
+      const lisaLines = [];
       if (otherActions.length && onGlobalAction) {
         for (const a of otherActions) {
           const isInvoiceOp = INVOICE_OPS.has(a.action);
@@ -1054,12 +1067,19 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           if (looksLikeCurrent && onLocalAction) {
             handledLocally = !!(await onLocalAction(a));
           }
-          if (!handledLocally) await onGlobalAction(a);
+          if (!handledLocally) {
+            // Lisa's text/call report what actually happened, so the chat shows
+            // that line instead of the model's own claim.
+            if ((a.action === "send_sms" || a.action === "place_call") && currentInvoice?.id && !a.invoiceId) a.invoiceId = currentInvoice.id;
+            const r = await onGlobalAction(a);
+            if ((a.action === "send_sms" || a.action === "place_call") && r?.text) lisaLines.push(r.text);
+          }
         }
       }
 
-      const summaryFromActions = otherActions.map(a => a.summary).filter(Boolean).join("\n");
-      const replyText = previewEstimate
+      const summaryFromActions = otherActions.map(a => a.action === "send_sms" || a.action === "place_call" ? null : a.summary).filter(Boolean).join("\n");
+      const replyText = lisaLines.length ? [summaryFromActions, ...lisaLines].filter(Boolean).join("\n")
+        : previewEstimate
         ? (previewEstimate.summary || "Here's your estimate:")
         : (cleanText || summaryFromActions || (otherActions.length ? "✓ Done" : reply));
 
@@ -12425,6 +12445,22 @@ export default function App() {
       const updated = { ...inv, visits, gcalDate: first.start, gcalEventId: first.eventId || null, gcalDurationMinutes: Number(first.minutes) || null };
       setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
       return { invoice: updated, visit: v, calendarError, calendarConnected: gcalAuthed && GCal.isConfigured() };
+    }
+    // Lisa's outbound actions. A text sends at once; a call is only queued and
+    // waits for Jake's Telegram approval. Both return the line the chat shows.
+    if (parsed.action === "send_sms" || parsed.action === "place_call") {
+      const phone = String(parsed.phone || "").trim();
+      const inv = parsed.invoiceId ? data.invoices.find(i => i.id === parsed.invoiceId) : null;
+      let r;
+      try {
+        r = parsed.action === "send_sms"
+          ? await sendLisaText({ phone, message: parsed.message, invoice: inv })
+          : await queueLisaCall({ phone, name: parsed.name, about: parsed.about, context: parsed.context, invoiceId: inv?.id });
+      } catch (e) {
+        if (opts.strict) throw e;
+        return { text: (parsed.action === "send_sms" ? "Text not sent: " : "Call not queued: ") + (e.message || e) };
+      }
+      return r;
     }
     if (parsed.action === "delete_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);
