@@ -24,7 +24,9 @@
 //
 // POST with `Authorization: Bearer <admin session>` and no Twilio signature is
 // the Messages tab's reply box: `{ to, body }` sends one text and logs it. Same
-// reason it lives here: the 12-function cap.
+// reason it lives here: the 12-function cap. The AI chat's send_sms uses the same
+// call; its place_call sends `{ op: 'place_call', phone, name, about, context }`
+// and queues an outbound call (see appPlaceCall).
 //
 // GET ?preview=<phone>&k=<secret> returns what Lisa WOULD reply to that
 // thread, without sending anything. That is how a change to her prompt gets
@@ -33,8 +35,9 @@
 
 import {
   rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature, twilioAuthToken,
-  rehostTwilioMedia, getSetting, sendTwilioSms,
+  rehostTwilioMedia, getSetting, sendTwilioSms, supabaseUrl,
 } from './_lib/sms.js';
+import { telegramNotify } from './_lib/convert-estimate.js';
 import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
 
@@ -63,6 +66,72 @@ function jsonOut(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+function toE164(raw) {
+  const s = String(raw || '').trim();
+  const d = s.replace(/\D/g, '');
+  if (d.length === 10) return `+1${d}`;
+  if (d.length === 11 && d.startsWith('1')) return `+${d}`;
+  return s.startsWith('+') && d.length >= 11 ? `+${d}` : '';
+}
+
+// `op: 'place_call'` from the AI chat: file one row in call_queue, the same row
+// scripts/outbound_call.py queue writes. Nothing dials here. The runner
+// (`outbound_call.py run --live`) only dials a queued row that is due, inside
+// calling hours, with settings.outbound_calls_enabled on, and after Jake's
+// APPROVE on Telegram, which the runner itself requests at dial time. The
+// message sent from here is a heads-up only: it must NOT stamp approval_asked_at
+// or ask for a reply, or the runner would see an approval "already pending" and
+// refuse to dial.
+async function appPlaceCall(res, user, params) {
+  const phone = toE164(params.phone);
+  const about = String(params.about || '').trim();
+  if (!phone) return jsonOut(res, 400, { error: 'phone must be a US number' });
+  if (!about) return jsonOut(res, 400, { error: 'about (the reason for the call) is required' });
+  if (about.length > 600) return jsonOut(res, 400, { error: 'about is too long' });
+  const name = String(params.name || '').trim() || null;
+  const context = String(params.context || '').trim().slice(0, 1000) || null;
+  const invoiceId = String(params.invoice_id || '').trim() || null;
+
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return jsonOut(res, 500, { error: 'Server not configured' });
+  const headers = { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` };
+  const base = `${supabaseUrl()}/rest/v1/call_queue`;
+
+  // A model retry must not queue the same call twice.
+  const dup = await fetch(
+    `${base}?phone=eq.${encodeURIComponent(phone)}&status=in.(queued,calling)&purpose=eq.${encodeURIComponent(about)}&select=id&limit=1`,
+    { headers });
+  const dupRows = dup.ok ? await dup.json().catch(() => []) : [];
+  let id = dupRows?.[0]?.id || null;
+  let duplicate = !!id;
+  if (!id) {
+    const ins = await fetch(base, {
+      method: 'POST',
+      headers: { ...headers, Prefer: 'return=representation' },
+      body: JSON.stringify({
+        phone, client_name: name, purpose: about, context, invoice_id: invoiceId,
+        queued_by: `app chat (${user.email || user.id})`,
+      }),
+    });
+    const rows = await ins.json().catch(() => null);
+    if (!ins.ok || !rows?.[0]?.id) {
+      return jsonOut(res, 502, { error: `Could not queue the call: ${JSON.stringify(rows).slice(0, 200)}` });
+    }
+    id = rows[0].id;
+  }
+
+  const callsOn = String(await getSetting('outbound_calls_enabled') || 'false').toLowerCase() === 'true';
+  let telegram = false;
+  if (!duplicate) {
+    telegram = await telegramNotify(
+      `Call #${id} queued from the app chat\nTo: ${name || 'unknown'} (${phone})\nPurpose: ${about}\n` +
+      (callsOn
+        ? 'Lisa will ask you to APPROVE on Telegram right before she dials.'
+        : 'outbound_calls_enabled is off, so it will not dial until that is switched on.'));
+  }
+  return jsonOut(res, 200, { ok: true, id, phone, duplicate, outbound_calls_enabled: callsOn, telegram_sent: telegram });
+}
+
 // Admin-only. The sms_outbound_enabled gate applies here too, so the reply box
 // cannot send while Jake has outbound switched off.
 async function appSend(req, res) {
@@ -70,7 +139,10 @@ async function appSend(req, res) {
     const user = await requireAdmin(req);
     if (!user) return jsonOut(res, 403, { error: 'admin only' });
     const { params } = await readBody(req);
-    const to = String(params.to || '').trim();
+    if (params.op === 'place_call') return await appPlaceCall(res, user, params);
+    // The AI chat sends a bare 10-digit number; Twilio needs E.164. A value
+    // already in E.164 (the reply box) passes through unchanged.
+    const to = toE164(params.to) || String(params.to || '').trim();
     const body = String(params.body || '').trim();
     if (!to || !body) return jsonOut(res, 400, { error: 'to and body are required' });
     if (body.length > 1500) return jsonOut(res, 400, { error: 'message too long' });

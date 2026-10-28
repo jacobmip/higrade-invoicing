@@ -136,11 +136,14 @@ export function Media({ item }) {
   return <a href={item.url} target="_blank" rel="noreferrer" style={{ color: 'inherit', fontSize: 13 }}>Attachment</a>;
 }
 
+const POLISH_PROMPT = "Rewrite this as a brief, professional SMS from HI Grade Plumbing in Lisa's voice (warm, Hawaiian, no pricing). Keep it under 160 chars if possible. Return ONLY the rewritten message, no explanation.";
+
 // The bubbles plus the reply box. `messages` is this conversation, oldest first.
 function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
   const messages = Array.isArray(rawMessages) ? rawMessages.filter(Boolean) : [];
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [polishing, setPolishing] = useState(false);
   const [err, setErr] = useState('');
   const scrollRef = useRef(null);
 
@@ -151,6 +154,34 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
+
+  // Rewrites the draft in Lisa's voice through /api/ai and puts it back in the
+  // box. Nothing is sent; Jake reads it and taps Send.
+  const polish = async () => {
+    const draft = text.trim();
+    if (!draft || polishing || sending) return;
+    setPolishing(true); setErr('');
+    try {
+      const res = await fetch(api('/api/ai'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemPrompt: POLISH_PROMPT,
+          messages: [{ role: 'user', content: draft }],
+          maxTokens: 1024,
+        }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || out.error) throw new Error(out.error?.message || out.error || `Polish failed (${res.status})`);
+      const polished = String(out.content?.find?.(b => b.type === 'text')?.text || '').trim();
+      if (!polished) throw new Error('Polish came back empty.');
+      setText(polished);
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setPolishing(false);
+    }
+  };
 
   const send = async () => {
     const body = text.trim();
@@ -210,7 +241,10 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
               value={text} onChange={e => setText(e.target.value)} rows={1} placeholder="Text message"
               style={{ flex: 1, resize: 'none', border: '1px solid #cfd4e0', borderRadius: 18, padding: '9px 12px', fontSize: 16, fontFamily: 'inherit', maxHeight: 110, outline: 'none' }}
             />
-            <button onClick={send} disabled={sending || !text.trim()} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 18, padding: '9px 16px', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: sending || !text.trim() ? 0.5 : 1 }}>
+            <button onClick={polish} disabled={polishing || sending || !text.trim()} title="Rewrite in Lisa's voice" style={{ background: '#fff', color: BLUE, border: `1px solid ${BLUE}`, borderRadius: 18, padding: '9px 12px', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: polishing || sending || !text.trim() ? 0.5 : 1 }}>
+              {polishing ? '...' : 'Polish'}
+            </button>
+            <button onClick={send} disabled={sending || polishing || !text.trim()} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 18, padding: '9px 16px', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: sending || !text.trim() ? 0.5 : 1 }}>
               {sending ? '...' : 'Send'}
             </button>
           </div>

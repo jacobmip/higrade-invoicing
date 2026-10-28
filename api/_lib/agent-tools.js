@@ -82,6 +82,8 @@ Work down this list for each line item.
 
 ## Things that need Jake's tap
 - send_document_email does not send. It puts a confirmation card in the chat and Jake taps Send. Tell him it is ready to send, not that it was sent.
+- send_sms texts the customer from Lisa's number at once, with no tap. Use it when Jake says "text", "message", "send a text to" or "follow up by text". Look up the phone with find_client first unless Jake gave one. Write the message in Lisa's professional voice: warm, brief, Hawaiian (Aloha, Mahalo), one to three short sentences. Never include pricing unless Jake explicitly gave you the figure. Only say it was sent if the tool returned ok.
+- place_call queues an outbound call for Lisa. Use it when Jake says "call", "give a call", "follow up by phone" or "reach out to". It never dials by itself: the call needs Jake's approval on Telegram first, so tell him it is queued and he will get the approval request, not that the call was made. The about field tells Lisa WHY she is calling; write it as one clear sentence. Put anything she may confirm (an appointment time, a part that arrived) in context, never money amounts.
 - delete_document pops a confirmation dialog. Delete one document at a time. Bulk deletes are not done from the chat.
 
 ## How you reply
@@ -423,6 +425,38 @@ export const AGENT_TOOLS = [
       type: 'object',
       properties: { document_id: { type: 'string' } },
       required: ['document_id'],
+    },
+  },
+  {
+    name: 'send_sms',
+    description:
+      "Send a text message to a customer from Lisa's Twilio number, immediately. The message is logged in that client's Messages thread. " +
+      'Pass document_id when the text is about a saved estimate or invoice so it is recorded in that document\'s History.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phone: { type: 'string', description: 'US number, e.g. 8085551234. From find_client unless Jake gave one.' },
+        message: { type: 'string', description: "Lisa's voice: warm, brief, Aloha/Mahalo. No pricing unless Jake provided it. Under 320 characters." },
+        document_id: { type: 'string', description: 'Optional, e.g. EST1043.' },
+      },
+      required: ['phone', 'message'],
+    },
+  },
+  {
+    name: 'place_call',
+    description:
+      "Queue an outbound phone call for Lisa to a customer. Does NOT dial: it files the call and Jake approves it on Telegram before Lisa dials. " +
+      'Calls only go out in Hawaii calling hours and only while outbound calls are switched on in settings.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phone: { type: 'string', description: 'US number, e.g. 8085551234.' },
+        name: { type: 'string', description: "Customer's name." },
+        about: { type: 'string', description: 'One clear sentence on why Lisa is calling. She reads it back as her reason.' },
+        context: { type: 'string', description: 'Optional facts she may state or confirm. Never amounts of money.' },
+        document_id: { type: 'string', description: 'Optional estimate or invoice the call is about.' },
+      },
+      required: ['phone', 'about'],
     },
   },
   {

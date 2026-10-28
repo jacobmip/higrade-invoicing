@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.38.0 — 2026-10-28
+
+- Lisa in the AI chat. Tell the chat "text John and say X" and it sends the text from Lisa's Twilio number at once, logged in that client's Messages thread (and as a "Text sent (Lisa)" entry in the document's History when a saved estimate or invoice is in context). Tell it "call Maria about the heater estimate" and it queues an outbound call in `call_queue`. It never dials: the AI-OS runner still needs Jake's APPROVE on Telegram, sent by the runner at dial time. A Telegram heads-up goes out when the call is queued, and the chat says plainly if outbound calls are switched off or the heads-up could not be sent. A repeat of the same queued call is not added twice.
+- Both the global chat agent (new `send_sms` and `place_call` tools) and the per-invoice chat (new `send_sms` and `place_call` JSON actions) do this, through the new `src/lisaActions.js`. The system prompts tell the model to write texts in Lisa's voice (warm, brief, Aloha/Mahalo, no pricing unless Jake gave one) and to word the call's `about` as a one-sentence brief.
+- Messages tab: a Polish button next to Send rewrites the draft in Lisa's voice through `/api/ai` and puts it back in the box. Nothing is sent until Jake taps Send.
+- `api/sms-inbound.js` gains `op: 'place_call'` on its existing admin POST, and the same POST now accepts a bare 10-digit `to`. No new route; still 12 functions.
+
 ## v1.37.3 — 2026-10-28
 
 - Tapping a notification now opens what it is about. A text notification opens that client's thread in Messages; any notification with an invoice or estimate (lead, payment, signed, opened) opens it; one with only a client opens the client profile. A notification with no target just closes the panel. The off-site clock alert is an SMS only and writes no notification row, so it has nothing to open yet.

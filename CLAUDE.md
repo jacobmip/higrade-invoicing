@@ -97,6 +97,7 @@ src/
   Communications.jsx — client profile Communications tab: texts + calls timeline (admin), plays audio via /api/call-recording
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
+  lisaActions.js     — `sendLisaText()` / `queueLisaCall()`: the AI chat's send_sms and place_call, shared by the per-invoice chat (App.jsx `handleGlobalAIAction`) and the global agent (`aiAgent.js`); both call `/api/sms-inbound` with the admin session (v1.38.0)
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
   AddressAutocomplete.jsx — street input with Google Places suggestions (v1.37.0); calls `/api/geocode?mode=autocomplete`, then `/api/geocode?address=` for city/state/zip
@@ -125,7 +126,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   call-recording.js        — edge route: GET ?id=<call id> streams a recording to an admin (logic in _lib/call-recording.js). Edge, so not counted against the 12
   vapi-call-ended.js       — Vapi end-of-call webhook + call record email; also `GET ?recording=<callId>` (admin session) for a call's recording link
   availability.js          — edge route: Jake's busy blocks and free 90+ minute windows for one Hawaii day (invoices' `gcal_date` and `visits` plus every Google calendar in `google_credentials`). Called by Lisa's `checkAvailability` Vapi tool before she books; authenticated by the webhook secret; fails closed with 502. Self-contained because `_lib/gcal.js` imports `node:crypto`
-  sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text)
+  sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text). The same admin POST with `op: 'place_call'` files a `call_queue` row for the AI chat's `place_call` (never dials; the AI-OS runner still needs the Telegram APPROVE) and sends a Telegram heads-up via `telegramNotify()` (v1.38.0)
   gcal.js                  — Google Calendar: server-side OAuth, callback, read/write, and attendee ops (`attendee`, `tech_email`) that invite the commission apprentice to a job's event (v1.27.5)
   eta.js / geocode.js      — travel time + address lookup; geocode.js also serves Places suggestions via `?mode=autocomplete&input=&sessiontoken=` (edge)
   on-my-way.js             — edge route: On My Way button. Reads the caller's GPS, gets an ETA (Google if a key exists, else OSRM), texts the client via Twilio, logs to client_messages. Gated by settings.sms_outbound_enabled; the invoice read runs under the caller's JWT so RLS decides access

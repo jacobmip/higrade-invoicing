@@ -22,6 +22,7 @@
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
+import { sendLisaText, queueLisaCall } from './lisaActions.js';
 
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
@@ -541,6 +542,25 @@ async function deleteDocument(input, ctx) {
   return { ok: true, deleted: inv.id };
 }
 
+// Lisa's number, sent at once. document_id is optional: when the text is about
+// a saved document it also gets an sms_sent snapshot in that document's History.
+async function sendSms(input, ctx) {
+  const id = String(input.document_id || '').trim().toUpperCase();
+  const inv = id ? ctx.getData().invoices.find(i => i.id === id) : null;
+  const r = await sendLisaText({ phone: input.phone, message: input.message, invoice: inv });
+  return { ok: true, sent: true, phone: input.phone, note: r.text };
+}
+
+// Queues only. Nothing dials until the AI-OS runner gets Jake's Telegram approval.
+async function placeCall(input, ctx) {
+  const id = String(input.document_id || '').trim().toUpperCase();
+  const r = await queueLisaCall({
+    phone: input.phone, name: input.name, about: input.about, context: input.context,
+    invoiceId: id && ctx.getData().invoices.some(i => i.id === id) ? id : null,
+  });
+  return { ok: true, queued: true, dialed: false, call_id: r.id, note: r.text };
+}
+
 function sendDocumentEmail(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
   const inv = ctx.getData().invoices.find(i => i.id === id);
@@ -575,12 +595,14 @@ const TOOLS = {
   save_price: savePrice,
   schedule_job: scheduleJob,
   send_document_email: sendDocumentEmail,
+  send_sms: sendSms,
+  place_call: placeCall,
   delete_document: deleteDocument,
 };
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
   'remove_line_item', 'update_document', 'record_payment', 'save_price', 'schedule_job',
-  'send_document_email', 'delete_document',
+  'send_document_email', 'send_sms', 'place_call', 'delete_document',
 ]);
 
 // What the chat shows while a tool runs.
@@ -604,6 +626,8 @@ const PROGRESS = {
   save_price: 'Saving price',
   schedule_job: (i) => `Booking ${i.client_name || 'job'}`,
   send_document_email: 'Preparing email',
+  send_sms: (i) => `Texting ${i.phone || 'customer'}`,
+  place_call: (i) => `Queueing call to ${i.name || i.phone || 'customer'}`,
   delete_document: (i) => `Deleting ${i.document_id || 'document'}`,
 };
 const progressLabel = (name, input) => {
@@ -716,7 +740,7 @@ async function callModel(messages) {
  */
 // Ghost-action guard: phrases that say a change was made. If the reply says so
 // and nothing was actually written, the model is describing work it did not do.
-const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved)|done!|(add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|delete_invoice|delete_document))/i;
+const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved)|done!|(add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|send_sms|place_call|delete_invoice|delete_document))/i;
 export function claimsAction(text) { return CLAIM_RE.test(text || ''); }
 
 export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx, onProgress }) {
