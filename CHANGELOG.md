@@ -2,6 +2,10 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.35.3 — 2026-10-28
+
+- Fix: converting an estimate to an invoice no longer leaves two Google Calendar events. `convertInvoice` used to blank `visits`, `gcalDate` and `gcalEventId` on the new invoice (so a fresh event got pushed) while the estimate kept its own. Now the invoice takes over the estimate's visits and event ids with each visit's `kind` set to `job`, the estimate's schedule is cleared so two rows never share an event, and the existing Google event is PATCHed in place: colour flips to the job colour and the title drops the estimate label. The description is rewritten only for events the app built (`builtBy: "app"`); Lisa's bookings keep the caller's words but still get the new title and colour. Invoice to estimate is unchanged. No migration.
+
 ## v1.35.2 — 2026-10-28
 
 - Fix: the Calendar tab showed a tech or apprentice all of Jake's calendar. The invoice list was already limited by RLS (owner, assigned, commission, apprentice), but `CalendarTab` also drew every unlinked Google event on the shared Work calendar as a grey "Other" block. That loop now runs for the admin only, including when the admin uses View-as, so a viewed tech sees what the tech sees. Job blocks still come from the user's own invoices. No migration.

@@ -12906,6 +12906,9 @@ export default function App() {
     const initialStatus = targetType === "invoice"
       ? (carriedPaid >= totals.total - 0.01 ? "paid" : carriedPaid > 0 ? "partial" : "outstanding")
       : "outstanding";
+    const movedVisits = targetType === "invoice"
+      ? (Array.isArray(form.visits) ? form.visits : []).map(v => ({ ...v, kind: "job" }))
+      : [];
     const copy = {
       ...form,
       id: newId,
@@ -12916,12 +12919,14 @@ export default function App() {
       signatureData: null,
       signedAt: null,
       status: initialStatus,
-      gcalEventId: null,
-      gcalDate: null,
-      // Same reasoning as the singular fields above: the new document must not
-      // inherit Google event ids that belong to the one it came from.
-      visits: [],
-      gcalDurationMinutes: null,
+      // estimate -> invoice MOVES the schedule: the invoice takes the estimate's
+      // visits (relabelled kind "job") and so its Google event ids, and the
+      // estimate is cleared below. Anything else (invoice -> estimate) starts
+      // unscheduled, since the source is deleted and its event is not ours to carry.
+      gcalEventId: movedVisits.length ? form.gcalEventId || null : null,
+      gcalDate: movedVisits.length ? form.gcalDate || null : null,
+      visits: movedVisits,
+      gcalDurationMinutes: movedVisits.length ? form.gcalDurationMinutes ?? null : null,
       followUpEventId: null,
       followUpDate: null,
       // Don't carry the convertedToId or viewToken from the source — the copy
@@ -12957,7 +12962,9 @@ export default function App() {
       // Hand-keyed rows have a null paypal_capture_id and so are not protected
       // by that RPC's PayPal clause; a genuine PayPal down payment never lands
       // on an estimate anyway, because paypal-capture-order.js converts first.
-      const sourceUpdated = { ...form, convertedToId: newId, payments: [] };
+      // The estimate hands its visits to the invoice, so it must stop claiming
+      // the same Google events (two rows on one event is the duplicate we avoid).
+      const sourceUpdated = { ...form, convertedToId: newId, payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
@@ -12986,7 +12993,7 @@ export default function App() {
         // double-booked again. Self-heal on a stale token exactly as
         // autoSaveInvoice does, and let a genuine second failure reach the
         // outer catch.
-        const sourcePayload = { ...form, convertedToId: newId, payments: [] };
+        const sourcePayload = sourceUpdated;
         try {
           await db.upsertInvoice(sourcePayload, false);
         } catch (e) {
@@ -13006,6 +13013,20 @@ export default function App() {
         'now exist on both documents, so check the new invoice and the estimate before ' +
         'treating either total as correct.'
       );
+    }
+    // Relabel the existing Google events in place (PATCH, never create): kind and
+    // colour flip to "job" and the title/description lose the Estimate label.
+    // Text is rewritten for app-built events; Lisa's keep the caller's words but
+    // still get the new title and colour (buildCalendarPatch, titleChanged).
+    if (movedVisits.length && GCal.isConnected()) {
+      for (const v of movedVisits) {
+        if (!v.eventId) continue;
+        try {
+          await GCal.updateEvent(v.eventId, buildCalendarPatch(buildCalendarEvent(copy, v, copy.gcalDurationMinutes), v, { titleChanged: true }));
+        } catch (e) {
+          console.warn("Could not relabel calendar event for", v.eventId, e);
+        }
+      }
     }
     // Open the new doc immediately.
     setSelected(copy);
