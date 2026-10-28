@@ -26,6 +26,7 @@
 import {
   rpc, readBody, getSetting, sendTwilioSms, alreadySentMessage, recordSmsSnapshot,
 } from './_lib/sms.js';
+import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
@@ -69,6 +70,17 @@ async function followUp({ phone, consented, estimateId, secret }) {
     if (estimateId) await recordSmsSnapshot(estimateId, phone, 'Follow-up text after web form');
   } catch (e) {
     console.error('[schedule-request] follow-up failed:', String(e?.message || e).split(secret).join('[lead_secret]'));
+  }
+}
+
+async function estimateAfterResponse({ phone, consented, estimateId, description }) {
+  try {
+    if (!estimateId || digitsOnly(phone).length < 10 || !consented) return;
+    const on = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
+    if (!on) return;
+    await proposeInBackground({ invoiceId: estimateId, problem: description });
+  } catch (e) {
+    console.error('[schedule-request] estimator dispatch failed:', e?.message || e);
   }
 }
 
@@ -174,7 +186,12 @@ export default async function handler(req, res) {
     const out = await rpc('create_estimate_from_lead', args);
     const reference = out?.number || out?.estimate_number || out?.doc_number || out?.estimate_id || null;
     await followUp({ phone, consented: !!params.sms_consent, estimateId: out?.estimate_id || null, secret });
-    return send(res, 200, { ok: true, reference });
+    send(res, 200, { ok: true, reference });
+    // After the response, so the form never waits on the model. Same gates as
+    // the follow-up text: a phone, text consent and sms_outbound_enabled, since
+    // an APPROVE ends in a text to this customer. Never throws.
+    await estimateAfterResponse({ phone, consented: !!params.sms_consent, estimateId: out?.estimate_id || null, description });
+    return;
   } catch (err) {
     // Never leak the RPC error to the browser: it can carry the secret-gate
     // message and internal column names. And scrub the secret before it

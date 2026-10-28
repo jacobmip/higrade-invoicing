@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.1 — 2026-10-28
+
+- The AI ballpark now also runs for web-form leads. `api/schedule-request.js` calls `proposeInBackground()` after it has answered 200, only when the lead has a phone, agreed to texts, and `sms_outbound_enabled` is true. The form never waits on the model.
+- New `op: 'propose_estimate'` on `/api/sms-inbound` (webhook-secret or admin session): `{ invoice_id, description }` queues `proposeLeadEstimate`. Not yet called by anything: the Yelp responder files no estimate and has no phone for the lead, so it has no `invoice_id` to send.
+- The Telegram approval message now shows the exact draft SMS. The text is built once in `lead-estimate.js`, stored as `estimator_items.sms_body`, and sent verbatim by the manager bot on APPROVE (the bot falls back to its own wording for older proposals).
+
 ## v1.39.0 — 2026-10-28
 
 - AI ballpark for web / SMS / Yelp leads, behind Jake's approval. When a text lead is filed (`sms-agent.js`), the estimator runs (price book first, no web search, 8s budget) and Jake gets a Telegram message: client, job, items, total range, `APPROVE EST####` / `DECLINE EST####`. Nothing goes to the customer until APPROVE. Phone leads never get one; the gate is `lead_channel`, since `source` is `ai_lead` for phone too. Skipped quietly (logged) when the estimator fails, the address or job description is missing, or the estimate already has real prices.

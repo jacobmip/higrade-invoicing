@@ -41,6 +41,7 @@ import {
 import { telegramNotify } from './_lib/convert-estimate.js';
 import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
+import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -171,6 +172,15 @@ async function appSend(req, res) {
       if (!viaSecret) return jsonOut(res, 403, { error: 'admin only' });
     }
     const { params } = await readBody(req);
+    // Ballpark for a lead filed outside this route (the Yelp script). Secret or
+    // session. Queues the work and answers; the proposal itself is gated by
+    // proposeLeadEstimate (lead_channel, address, description, not yet asked).
+    if (params.op === 'propose_estimate') {
+      const invoiceId = String(params.invoice_id || '').trim();
+      if (!invoiceId) return jsonOut(res, 400, { error: 'invoice_id is required' });
+      await proposeInBackground({ invoiceId, problem: String(params.description || '') });
+      return jsonOut(res, 200, { ok: true, queued: true });
+    }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
       return await appPlaceCall(res, user, params);

@@ -66,6 +66,32 @@ function addressLine(ja) {
   return [ja.address1, ja.address2, ja.city, ja.state, ja.zip].filter(Boolean).join(', ').trim();
 }
 
+// visits[0].start / gcal_date are Hawaii wall-clock text, "YYYY-MM-DDTHH:MM".
+// Parsed by hand: new Date(string) would shift it by the server's zone. Mirrors
+// visitPhrase() in telegram-bot/bot.js.
+function visitPhrase(inv) {
+  const raw = (Array.isArray(inv.visits) && inv.visits[0]?.start) || inv.gcal_date || '';
+  const m = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  const day = d.toLocaleDateString('en-US', { weekday: 'long' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${day} at ${time}`;
+}
+
+// The exact text the customer gets on APPROVE. Built here, stored on the
+// proposal as `sms_body`, shown in the Telegram message, and sent verbatim by
+// the bot, so what Jake reads is what goes out.
+function draftSms({ inv, clientName, lines, total }) {
+  const named = !/no name given|missed call|unknown/i.test(clientName || '');
+  const first = named ? String(clientName).trim().split(/\s+/)[0] : '';
+  const when = visitPhrase(inv);
+  const parts = lines.map(it => `${it.name} ~${money(it.price * it.qty)}`).join(', ');
+  return `Aloha${first ? ' ' + first : ''}, based on what you've described, here's a rough ballpark for the work: ${parts}. ` +
+    `Total estimate: around ${money(total)} before tax. This is just a ballpark - the team will confirm the exact price when they come out. ` +
+    (when ? `Does ${when} still work for you?` : 'What day works best for you?');
+}
+
 /**
  * @returns {Promise<string>} a short reason or outcome, for the log line
  */
@@ -142,6 +168,7 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
   const proposal = {
     items: lines, total,
     min: round5(total), max: round5(total * 1.15),
+    sms_body: draftSms({ inv, clientName, lines, total }),
     assumptions: Array.isArray(est.assumptions) ? est.assumptions.slice(0, 8) : [],
     summary: String(est.summary || ''),
     generated_at: new Date().toISOString(),
@@ -154,13 +181,13 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
   const claimed = claim.ok ? await claim.json().catch(() => []) : [];
   if (!claimed.length) return skip('lost the claim to another run');
 
-  const jobSummary = job.replace(/\s+/g, ' ').slice(0, 220);
   const msg =
-    `Ballpark estimate ready - ${clientName}${phone ? ` (${phone})` : ''}\n` +
-    `Job: ${jobSummary}\n` +
+    `Ballpark estimate ready \u2014 ${clientName}\n` +
+    `${invoiceId} \u00b7 ${String(inv.lead_channel || '').toLowerCase()}\n\n` +
+    `Draft SMS to customer:\n"${proposal.sms_body}"\n\n` +
     `Items: ${lines.map(it => `${it.name} - ${money(it.price * it.qty)}`).join(', ')}\n` +
-    `Total: ${money(proposal.min)}-${money(proposal.max)} before tax\n\n` +
-    `Send to customer?\nReply: APPROVE ${invoiceId} or DECLINE ${invoiceId}`;
+    `Total: ~${money(proposal.min)}\u2013${money(proposal.max)} before tax\n\n` +
+    `Reply APPROVE ${invoiceId} to send this text, or DECLINE ${invoiceId} to skip.`;
   const sent = await sendTelegram(msg);
   if (!sent) {
     // Jake never saw it, so release the claim; a later run can ask again.
@@ -170,4 +197,17 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
   }
   console.log(`[lead-estimate] ${invoiceId} proposed ${money(proposal.min)}-${money(proposal.max)}, awaiting Jake`);
   return `proposed ${invoiceId}`;
+}
+
+/**
+ * Run proposeLeadEstimate after the response has gone out. Uses waitUntil so
+ * Vercel keeps the invocation alive; without it the work runs un-awaited,
+ * which is best effort. Never throws.
+ */
+export async function proposeInBackground(opts) {
+  const work = proposeLeadEstimate(opts).catch(e => console.error('[lead-estimate] failed:', e.message || e));
+  try {
+    const { waitUntil } = await import('@vercel/functions');
+    if (typeof waitUntil === 'function') waitUntil(work);
+  } catch { /* no waitUntil: the promise still runs */ }
 }
