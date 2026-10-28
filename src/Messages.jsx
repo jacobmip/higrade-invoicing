@@ -247,14 +247,17 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
       {canReply ? (
         <div style={{ borderTop: '1px solid #e5e7ee', background: '#f6f7fa', padding: 8 }}>
           {err && <div style={{ color: '#cc3333', fontSize: 12, padding: '0 4px 6px' }}>{err}</div>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px 6px' }}>
+            <button onClick={polish} disabled={polishing || sending || !text.trim()} title="Rewrites your draft in Lisa's professional voice" style={{ background: '#fff', color: BLUE, border: `1px solid ${BLUE}`, borderRadius: 16, padding: '6px 12px', fontWeight: 700, fontSize: 13, cursor: 'pointer', opacity: polishing || sending || !text.trim() ? 0.5 : 1 }}>
+              {polishing ? 'Polishing...' : 'Polish with AI'}
+            </button>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>Rewrites your draft in Lisa's professional voice</span>
+          </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <textarea
               value={text} onChange={e => setText(e.target.value)} rows={1} placeholder="Text message"
               style={{ flex: 1, resize: 'none', border: '1px solid #cfd4e0', borderRadius: 18, padding: '9px 12px', fontSize: 16, fontFamily: 'inherit', maxHeight: 110, outline: 'none' }}
             />
-            <button onClick={polish} disabled={polishing || sending || !text.trim()} title="Rewrite in Lisa's voice" style={{ background: '#fff', color: BLUE, border: `1px solid ${BLUE}`, borderRadius: 18, padding: '9px 12px', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: polishing || sending || !text.trim() ? 0.5 : 1 }}>
-              {polishing ? '...' : 'Polish'}
-            </button>
             <button onClick={send} disabled={sending || polishing || !text.trim()} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 18, padding: '9px 16px', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: sending || !text.trim() ? 0.5 : 1 }}>
               {sending ? '...' : 'Send'}
             </button>

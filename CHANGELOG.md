@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.9 — 2026-10-28
+
+- AI chat (per-invoice and global agent): asked to polish, rewrite or clean up a customer message, it now rewrites in Lisa's voice, shows it under "Polished message:", and uses send_sms (asking for the phone first if missing). Prompt change in `App.jsx` and `api/_lib/agent-tools.js`.
+- Messages tab: the Polish button is now "Polish with AI", sits above the reply box with a helper line ("Rewrites your draft in Lisa's professional voice"). Send stays next to the textarea.
+
 ## v1.38.8 — 2026-10-28
 
 - Inbound MMS: `rehostTwilioMedia` no longer returns an empty list when Twilio or service-role credentials are missing; every attachment now gets an entry (saved, or `failed` with its Twilio media sid), so a miss is visible instead of leaving `media` null.

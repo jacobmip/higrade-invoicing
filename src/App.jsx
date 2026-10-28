@@ -522,6 +522,7 @@ Send a text message from Lisa's number (sends immediately):
 - You can send a text message from Lisa's number using send_sms. Use this when Jake says "text", "message", "send a text to", or "follow up by text".
 - Always write the message in Lisa's professional voice: warm, brief, Hawaiian (Aloha/Mahalo). Never include pricing unless Jake explicitly provides it.
 - Take the phone from CLIENTS above or from what Jake said. If there is no phone number, ask for it in plain text instead of emitting the action.
+- When asked to 'polish', 'rewrite', or 'clean up' a message for a customer, rewrite it in Lisa's voice (warm, Hawaiian, Aloha/Mahalo, under 160 chars, no pricing), show the polished version clearly with the label 'Polished message:', then immediately use send_sms to send it to the customer's phone. If you don't have the phone number, ask for it first. Never just show the polished text in chat without also offering to send it.
 
 Queue an outbound call for Lisa (does NOT dial; Jake approves it on Telegram first):
 {"action":"place_call","phone":"8085551234","name":"John","about":"following up on the water heater estimate from last week","context":"customer asked about financing options","summary":"one sentence"}
