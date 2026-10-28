@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.6 — 2026-10-28
+
+- Fixed the crash "undefined is not an object (evaluating 'e.items.reduce')" when opening a document from the Calendar tab. `calcTotals` was the only `.reduce` over line items and assumed `items` was always an array. A document opened from the Calendar (or the notification bell) is now normalized to have `items` and `payments` arrays, the form normalizes them on init, and `calcTotals` tolerates a missing list.
+
 ## v1.38.5 — 2026-10-28
 
 - The invoice/estimate form is wrapped in an error boundary: a render crash now shows the error message and a Close button instead of a white screen.
