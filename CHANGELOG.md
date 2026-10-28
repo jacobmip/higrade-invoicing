@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.38.5 — 2026-10-28
+
+- The invoice/estimate form is wrapped in an error boundary: a render crash now shows the error message and a Close button instead of a white screen.
+- Schedule card in the form no longer assumes every visit has a string `start`/`label`; malformed visits are skipped instead of throwing. Aimed at the white screen when opening an estimate from the Calendar tab. If it still happens, the boundary now shows the actual error to report.
+
 ## v1.38.4 — 2026-10-28
 
 - Phone kickoff text reworded (Aloha greeting, free ballpark estimate from a photo). It no longer carries "HELP for help".
