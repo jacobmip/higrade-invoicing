@@ -58,8 +58,20 @@ function json(res, status, body) {
 
 // Vapi nests the payload differently across event shapes; check the documented
 // spots rather than assuming one.
+function extractDirection(p) {
+  const m = p?.message || p || {};
+  const type = m?.call?.type || p?.call?.type || null;
+  return type === 'outboundPhoneCall' ? 'outbound' : 'inbound';
+}
+
 function extractCaller(p) {
   const m = p?.message || p || {};
+  // Outbound: the customer is the party we dialled, always at call.customer.
+  // Fallbacks below could land on our own number.
+  if (extractDirection(p) === 'outbound') {
+    const n = m?.call?.customer?.number || m?.customer?.number || p?.customer?.number;
+    if (n) return n;
+  }
   return (
     m?.customer?.number ||
     m?.call?.customer?.number ||
@@ -174,7 +186,7 @@ export default async function handler(req, res) {
   if (!to) {
     console.warn('[vapi-call-ended] no caller number in payload');
     // Still keep the call id, so the recording is findable later.
-    await recordCall({ callId, seconds: extractSeconds(params) });
+    await recordCall({ callId, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params) });
     return json(res, 200, { ok: true, skipped: 'no caller number in payload' });
   }
 
@@ -216,6 +228,8 @@ export default async function handler(req, res) {
     invoiceId: rescued?.estimate_id || null,
     phone: to,
     seconds: extractSeconds(params),
+    direction: extractDirection(params),
+    summary: extractSummary(params),
   });
 
   // ─── Call archive email ──────────────────────────────────────────────────

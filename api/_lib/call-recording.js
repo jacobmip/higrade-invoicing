@@ -50,13 +50,15 @@ function json(res, status, body) {
 // Upsert, so a Vapi retry of the same report is harmless, and a later report
 // that does know the estimate fills it in. Never throws: a failure here must
 // not affect the rest of the end-of-call handling.
-export async function recordCall({ callId, invoiceId, phone, seconds }) {
+export async function recordCall({ callId, invoiceId, phone, seconds, direction, summary }) {
   if (!callId) return false;
   try {
     const row = { call_id: String(callId) };
     if (invoiceId) row.invoice_id = String(invoiceId);
     if (phone) row.phone = String(phone);
     if (Number.isFinite(seconds)) row.seconds = Math.round(seconds);
+    if (direction === 'inbound' || direction === 'outbound') row.direction = direction;
+    if (summary) row.summary = String(summary);
     const res = await fetch(`${supaUrl()}/rest/v1/vapi_calls?on_conflict=call_id`, {
       method: 'POST',
       headers: serviceHeaders({
@@ -79,7 +81,9 @@ export async function recordCall({ callId, invoiceId, phone, seconds }) {
 // ─── Who is asking ──────────────────────────────────────────────────────────
 
 export async function requireAdmin(req) {
-  const header = req.headers.authorization || req.headers.Authorization || '';
+  // Node routes hand over a plain object, edge routes a Headers instance.
+  const h = req.headers;
+  const header = (typeof h?.get === 'function' ? h.get('authorization') : h?.authorization || h?.Authorization) || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
   if (!token) return null;
   const anon = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
@@ -100,7 +104,7 @@ export async function requireAdmin(req) {
   return rows?.[0]?.role === 'admin' ? user : null;
 }
 
-async function vapiKey() {
+export async function vapiKey() {
   if (process.env.VAPI_PRIVATE_KEY) return process.env.VAPI_PRIVATE_KEY;
   const res = await fetch(
     `${supaUrl()}/rest/v1/settings?key=eq.vapi_private_key&select=value&limit=1`,
@@ -109,6 +113,64 @@ async function vapiKey() {
   if (!res.ok) return null;
   const rows = await res.json().catch(() => []);
   return rows?.[0]?.value || null;
+}
+
+// ─── The recording stream ───────────────────────────────────────────────────
+
+// GET /api/call-recording?id=<callId> (edge route). Admin session required.
+// The call must be one we logged in vapi_calls, so this cannot be pointed at
+// an arbitrary Vapi call. The audio is piped through, Range forwarded so
+// <audio> can seek; the signed storage URL never reaches the browser.
+export async function streamRecording(req, callId) {
+  const err = (status, body) => new Response(JSON.stringify(body), {
+    status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
+  if (!/^[0-9a-f-]{36}$/i.test(String(callId || ''))) return err(400, { error: 'bad_call_id' });
+
+  let user;
+  try { user = await requireAdmin(req); }
+  catch (e) { return err(500, { error: 'auth_check_failed', detail: String(e.message || e) }); }
+  if (!user) return err(401, { error: 'unauthorized' });
+
+  const known = await fetch(
+    `${supaUrl()}/rest/v1/vapi_calls?call_id=eq.${encodeURIComponent(callId)}&select=call_id&limit=1`,
+    { headers: serviceHeaders() }
+  );
+  const rows = known.ok ? await known.json().catch(() => []) : [];
+  if (!rows.length) return err(404, { error: 'unknown_call' });
+
+  const key = await vapiKey().catch(() => null);
+  if (!key) return err(500, { error: 'vapi_key_missing' });
+
+  let vres;
+  try {
+    vres = await fetch(`${VAPI_API}/call/${encodeURIComponent(callId)}/mono-recording`, {
+      headers: { Authorization: `Bearer ${key}` },
+      redirect: 'manual',
+    });
+  } catch (e) {
+    return err(502, { error: 'vapi_unreachable', detail: String(e.message || e) });
+  }
+  const location = vres.headers.get('location');
+  if (vres.status === 404) return err(404, { error: 'no_recording' });
+  if (!(vres.status >= 300 && vres.status < 400 && location)) {
+    return err(502, { error: 'vapi_error', status: vres.status });
+  }
+
+  // The signed URL carries its own credential: no Authorization header here.
+  const range = req.headers.get('range');
+  let audio;
+  try { audio = await fetch(location, range ? { headers: { Range: range } } : undefined); }
+  catch (e) { return err(502, { error: 'storage_unreachable', detail: String(e.message || e) }); }
+  if (!audio.ok && audio.status !== 206) return err(502, { error: 'storage_error', status: audio.status });
+
+  const headers = new Headers({ 'Cache-Control': 'private, no-store', 'Accept-Ranges': 'bytes' });
+  headers.set('Content-Type', audio.headers.get('content-type') || 'audio/wav');
+  for (const h of ['content-length', 'content-range']) {
+    const v = audio.headers.get(h);
+    if (v) headers.set(h, v);
+  }
+  return new Response(audio.body, { status: audio.status, headers });
 }
 
 // ─── The recording link ─────────────────────────────────────────────────────

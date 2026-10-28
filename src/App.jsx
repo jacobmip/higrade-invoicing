@@ -23,6 +23,7 @@ import { weekStartOf, weekEndOf, tierFor } from './commissionTiers.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
 import { PAYMENT_METHODS, canonicalMethod, methodStyle } from './paymentMethods.js';
 import MessagesTab, { ClientThread, useUnreadMessages } from './Messages.jsx';
+import ClientCommunications from './Communications.jsx';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -6760,6 +6761,8 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   // "edit" (form). detailId / editId hold the client id (or "new" for edit).
   const [mode, setMode] = useState("list");
   const [detailId, setDetailId] = useState(null);
+  const [detailTab, setDetailTab] = useState("overview");
+  useEffect(() => { setDetailTab("overview"); }, [detailId]);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(emptyClient());
   const [search, setSearch] = useState("");
@@ -6897,6 +6900,17 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <div style={{ textAlign: "right" }}><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Total Billed</div><div style={{ color: "#4ecb71", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>{fmt(totalBilled)}</div></div>
         </div>
 
+        {isAdmin && (
+          <div style={{ display: "flex", background: NAVY2, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+            {[["overview", "Overview"], ["comms", "Communications"]].map(([id, label]) => (
+              <button key={id} onClick={() => setDetailTab(id)} style={{ flex: 1, background: "none", border: "none", borderBottom: detailTab === id ? `3px solid ${ORANGE}` : "3px solid transparent", color: detailTab === id ? "#fff" : "#8899bb", padding: "10px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1, textTransform: "uppercase" }}>{label}</button>
+            ))}
+          </div>
+        )}
+
+        {isAdmin && detailTab === "comms" ? (
+          <div style={{ padding: 12 }}><ClientCommunications client={c} /></div>
+        ) : (
         <div style={{ padding: 12 }}>
           {/* Contact card */}
           {(c.email || c.email2 || c.phone) && (
@@ -6977,6 +6991,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
             })}
           </div>
         </div>
+        )}
       </div>
     );
   }

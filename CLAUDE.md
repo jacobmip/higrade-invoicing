@@ -94,6 +94,7 @@ src/
   JobPhotos.jsx      — per-job photo gallery
   OnMyWay.jsx        — "on my way" customer notification
   JobActions.jsx    — Call / On My Way / Navigate row (Preview tab) and the clock in/out button, both for non-admin users in the standard form
+  Communications.jsx — client profile Communications tab: texts + calls timeline (admin), plays audio via /api/call-recording
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
@@ -119,6 +120,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   send-email.js / send-estimate.js / submit-signature.js / track-open.js
   public-invoice.js        — service-role read for /v/<token>
   register-device.js       — APNs token upsert
+  call-recording.js        — edge route: GET ?id=<call id> streams a recording to an admin (logic in _lib/call-recording.js). Edge, so not counted against the 12
   vapi-call-ended.js       — Vapi end-of-call webhook + call record email; also `GET ?recording=<callId>` (admin session) for a call's recording link
   availability.js          — edge route: Jake's busy blocks and free 90+ minute windows for one Hawaii day (invoices' `gcal_date` and `visits` plus every Google calendar in `google_credentials`). Called by Lisa's `checkAvailability` Vapi tool before she books; authenticated by the webhook secret; fails closed with 502. Self-contained because `_lib/gcal.js` imports `node:crypto`
   sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text)
@@ -342,7 +344,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **095** — **applied and verified 2026-10-27.** `invoices_select` also admits `apprentice_id = auth.uid()` (non-deleted). SELECT only: no write policy, and `is_my_assigned_job()` / `is_my_assigned_client()` are untouched, so the apprentice sees the job header on his list and calendar but not its line items, payments or client record. Supersedes the "not an access key" note on 094. `filteredData` View-as mirrors it.
 
-Next migration is `096_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **096** — **applied and verified 2026-10-27.** `vapi_calls.summary` (text). `direction` was already there from 093.
+
+Next migration is `097_<short_description>.sql` (076 and 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

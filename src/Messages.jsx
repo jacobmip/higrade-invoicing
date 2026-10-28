@@ -101,14 +101,14 @@ function relTime(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: TZ });
 }
 
-function stamp(iso) {
+export function stamp(iso) {
   const d = new Date(iso);
   const day = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: TZ });
   const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TZ });
   return `${day}, ${time}`;
 }
 
-const mediaList = (m) => (Array.isArray(m?.media) ? m.media.filter(x => x && typeof x === 'object') : []);
+export const mediaList = (m) => (Array.isArray(m?.media) ? m.media.filter(x => x && typeof x === 'object') : []);
 
 function previewOf(m) {
   if (m.body && m.body.trim()) return (m.direction === 'outbound' ? 'You: ' : '') + m.body;
@@ -118,7 +118,7 @@ function previewOf(m) {
   return vid ? 'Video' : 'Photo';
 }
 
-function Media({ item }) {
+export function Media({ item }) {
   const type = String(item.type || '');
   if (item.failed || !item.url) {
     return <div style={{ fontSize: 12, fontStyle: 'italic', opacity: 0.8, padding: '4px 0' }}>Attachment could not be saved</div>;

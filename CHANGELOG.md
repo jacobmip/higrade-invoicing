@@ -2,6 +2,13 @@
 
 All changes to the app are logged here. Most recent version at the top.
 Each entry is tagged with its version number and date so incidents can be traced to an exact release.
+## v1.33.0 — 2026-10-27
+
+- New: Communications tab on the client profile (admin). One newest-first timeline of every text and call with that client. Texts are iMessage-style bubbles (outbound blue on the right, inbound gray on the left); calls show Incoming / Outgoing, duration, the call summary and a Play button.
+- New: `GET /api/call-recording?id=<call id>` streams a call's audio through the server (admin session, call must be in `vapi_calls`, Range forwarded for seeking). Edge runtime, so the Hobby 12-function count stays at 12.
+- Fixed: outbound calls. `vapi-call-ended` now reads the customer number from `call.customer.number` for outbound calls, so the recording links to the right client, and stores the call direction (from `call.type`) and the Vapi summary in `vapi_calls`.
+- Migration 096: `vapi_calls.summary` (direction already existed from 093).
+
 ## v1.32.3 — 2026-10-27
 
 - Fixed (for real): the clock-in banners still covered the top of some tabs. The header height was measured by an effect that ran once at mount, before the header existed (the splash and loading screens return first), so it never measured anything and the page offset stayed at the 64px default. The header is now tracked with a callback ref, so its real height, banner included, is observed and applied to the single root wrapper that every tab and the invoice form sit under.
