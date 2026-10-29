@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.8 — 2026-10-28
+
+- Inbound calls now get the drip too. After the kickoff text logic in `api/vapi-call-ended.js`, `shouldQueueDrip()` decides; if it approves, the kickoff counts as Message 1 and only Messages 2 and 3 are queued (24h, 48h). If the kickoff was not sent (`sms_outbound_enabled` false, or the send failed), all three are queued, Message 1 due immediately. If it declines, nothing is queued. Same templates as outbound (`dripMessages()`); queueing is now a shared `queueDrip()`. The result is returned as `drip` in the response.
+
 ## v1.39.7 — 2026-10-28
 
 - Outbound drip trigger is now transcript-based (`shouldQueueDrip()` in `api/vapi-call-ended.js`) instead of "no estimate filed". No drip when an estimate was filed, the customer opted out ("not interested", "wrong number", "stop calling", ...), or said under 5 words (hang-up). Drip on voicemail / no answer, and on a real conversation that ended without a booking. The reason is logged and returned as `drip_reason`; `sms_drip_queue` is unchanged.

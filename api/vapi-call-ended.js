@@ -206,37 +206,44 @@ const dripMessages = name => [
   `Aloha ${name}, one last check-in from HI Grade Plumbing. If you still need a hand, reply or call ${DRIP_PHONE}. If you are all set, wishing you a great day! Reply STOP to opt out.`,
 ];
 
-// Message 1 now, messages 2 and 3 queued for 24h and 48h. With
-// sms_outbound_enabled off, message 1 is skipped but 2 and 3 are still queued
-// (the sender script re-checks the setting before each send).
-async function startDrip({ to, callId, name, secret }) {
+// Queues the given message indexes (1-3) at 0h / 24h / 48h. Returns null when
+// a Vapi retry of the same report already started a drip for this call.
+async function queueDrip({ to, callId, name, indexes }) {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) throw new Error('Server not configured');
   const headers = { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` };
   const table = `${supabaseUrl()}/rest/v1/sms_drip_queue`;
 
-  // A Vapi retry of the same report must not start a second drip.
   if (callId) {
     const dup = await fetch(`${table}?call_id=eq.${encodeURIComponent(callId)}&select=id&limit=1`, { headers });
     const rows = dup.ok ? await dup.json().catch(() => []) : [];
-    if (rows?.length) return { skipped: 'drip already started for this call' };
+    if (rows?.length) return null;
   }
 
-  const [m1, m2, m3] = dripMessages(name);
+  const msgs = dripMessages(name);
   const now = Date.now();
-  const hours = h => new Date(now + h * 3600e3).toISOString();
+  const at = i => new Date(now + (i - 1) * 24 * 3600e3).toISOString();
   const ins = await fetch(table, {
     method: 'POST', headers,
-    body: JSON.stringify([
-      { phone: to, call_id: callId, message_index: 2, message: m2, scheduled_at: hours(24) },
-      { phone: to, call_id: callId, message_index: 3, message: m3, scheduled_at: hours(48) },
-    ]),
+    body: JSON.stringify(indexes.map(i => ({
+      phone: to, call_id: callId, message_index: i, message: msgs[i - 1], scheduled_at: at(i),
+    }))),
   });
   if (!ins.ok) throw new Error(`queue insert ${ins.status}: ${(await ins.text()).slice(0, 200)}`);
+  return { queued: indexes.length };
+}
+
+// Outbound: message 1 now, messages 2 and 3 queued for 24h and 48h. With
+// sms_outbound_enabled off, message 1 is skipped but 2 and 3 are still queued
+// (the sender script re-checks the setting before each send).
+async function startDrip({ to, callId, name, secret }) {
+  const q = await queueDrip({ to, callId, name, indexes: [2, 3] });
+  if (!q) return { skipped: 'drip already started for this call' };
 
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
   if (!enabled) return { queued: 2, message1: 'skipped, sms_outbound_enabled is false' };
 
+  const [m1] = dripMessages(name);
   const sent = await sendTwilioSms({ to, body: m1 });
   // Logged only after a successful handoff to Twilio.
   try {
@@ -404,6 +411,25 @@ export default async function handler(req, res) {
     }
   }
 
+  // Inbound: the kickoff text is drip message 1. When it went out, only
+  // messages 2 and 3 are queued; when it did not, all three are. Never throws.
+  let kickoffSent = false;
+  const inboundDrip = async () => {
+    const decision = shouldQueueDrip(params?.message || params || {});
+    console.log('[vapi-call-ended] inbound drip decision', { to, callId, drip: decision.drip, reason: decision.reason });
+    if (!decision.drip) return { queued: 0, reason: decision.reason };
+    try {
+      const q = await queueDrip({
+        to, callId, name: extractCustomerName(params),
+        indexes: kickoffSent ? [2, 3] : [1, 2, 3],
+      });
+      return q ? { ...q, reason: decision.reason } : { skipped: 'drip already started for this call' };
+    } catch (e) {
+      console.error('[vapi-call-ended] inbound drip failed:', e.message || e);
+      return { error: String(e.message || e) };
+    }
+  };
+
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
   if (!enabled) {
     console.log('[vapi-call-ended] send skipped, sms_outbound_enabled is false', { to, callId });
@@ -412,15 +438,18 @@ export default async function handler(req, res) {
       skipped: 'sms_outbound_enabled is false (A2P 10DLC not registered)',
       wouldHaveSentTo: to,
       leadCapture: rescued,
+      drip: await inboundDrip(),
     });
   }
 
   try {
     if (await alreadySentMessage(to, KICKOFF)) {
       console.log('[vapi-call-ended] kickoff already sent, skipping', { to, callId });
-      return json(res, 200, { ok: true, skipped: 'kickoff already sent to this number' });
+      kickoffSent = true;
+      return json(res, 200, { ok: true, skipped: 'kickoff already sent to this number', drip: await inboundDrip() });
     }
     const sent = await sendTwilioSms({ to, body: KICKOFF });
+    kickoffSent = true;
     // Log only after a successful handoff to Twilio. Logging on intent would
     // put rows in the thread for messages that never went anywhere.
     const logged = await rpc('log_client_message', {
@@ -439,11 +468,12 @@ export default async function handler(req, res) {
       twilioSid: sent?.sid || null,
       twilioStatus: sent?.status || null,
       matchedClient: logged?.client_name || null,
+      drip: await inboundDrip(),
     });
   } catch (e) {
     console.error('[vapi-call-ended] send/log failed:', e.message || e);
     // 200 on purpose: a non-2xx makes Vapi retry the report, and a retry would
     // re-send the SMS to the customer.
-    return json(res, 200, { ok: false, error: String(e.message || e) });
+    return json(res, 200, { ok: false, error: String(e.message || e), drip: await inboundDrip() });
   }
 }
