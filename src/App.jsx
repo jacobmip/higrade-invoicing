@@ -2826,8 +2826,8 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
   };
 
   const createFromEstimate = (estimate) => {
-    const newInv = onAction({ action: "create_invoice", invoice: { client: "", date: today(), dueDate: today(), items: estimate.items, notes: estimate.notes || "", tax: TAX_RATE, discount: 0 }, summary: "Invoice created from estimate" });
-    setMsgs(p => [...p, { role: "assistant", text: `Created ${newInv.id} — open it from the invoice list to assign a client.`, card: { type: "created", invoice: newInv } }]);
+    const newInv = onAction({ action: "create_invoice", invoice: { client: estimate.client || "", client_id: estimate.client_id, clientInfo: estimate.clientInfo, jobAddress: estimate.jobAddress, date: today(), dueDate: today(), items: estimate.items, notes: estimate.notes || "", tax: estimate.tax || TAX_RATE, discount: estimate.discount || 0, discountType: estimate.discountType }, summary: "Invoice created from estimate" });
+    setMsgs(p => [...p, { role: "assistant", text: `Created ${newInv.id} from ${estimate.id} — open it to review before sending.`, card: { type: "created", invoice: newInv } }]);
   };
 
   const bubble = (isUser) => ({ maxWidth: "88%", background: isUser ? NAVY : "#fff", color: isUser ? "#fff" : "#1a1a1a", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "11px 14px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" });
@@ -12273,7 +12273,13 @@ export default function App() {
       // Date is always the actual creation date — the AI's date suggestion is
       // discarded (it was often guessing wrong dates). Both date and dueDate
       // start as today; dueDate later auto-bumps to the send date on first send.
-      const newInvoice = { id, year, type: docType, client: inv.client || "", date: today(), dueDate: today(), status: docType === "estimate" ? "draft" : "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+      // VALIDATION: Reject empty client name (prevents blank invoice spam bug)
+      const clientName = (inv.client || "").trim();
+      if (!clientName) {
+        throw new Error(`Cannot create ${docType} without a client name. Please specify a valid client.`);
+      }
+      
+      const newInvoice = { id, year, type: docType, client: clientName, date: today(), dueDate: today(), status: docType === "estimate" ? "draft" : "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
         // The RPC assigns a new document to whoever saves it; mirror that here
         // so the form shows it before the next reload (migration 053/058).
         ...(session?.user?.id ? { assignedTechId: session.user.id } : {}),
