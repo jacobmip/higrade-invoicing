@@ -184,7 +184,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 101; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 103; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -215,6 +215,7 @@ none (RLS filters it silently) and inserts copies — a duplicate payment row pe
 - `tech_pay` — tech_id (PK), hourly_rate, commission_pct (migration 075). Self-or-admin read, admin-only write — not on `profiles`, because `profiles_read` is deliberately `using (true)` and a pay rate stored there would be readable by any logged-in account.
 - `invoices.commission_tech_id` / `invoices.material_cost` (migration 075) — who earns commission on this job (`NULL` = hourly only) and the parts cost, set by the owner alone. **Not a rule the database infers**: Jake's own three-part test (solo / he sold it / he collected it) is a judgment call he makes per job, not three tracked signals. "Collected it" is enforced by gating commission on `status = 'paid'`, not a column. A trigger (`guard_invoice_commission`) pins both fields against any non-admin, including during an otherwise-ordinary save of a job assigned to him.
 - `clients` — name, email, email2, phone, address1/2/3, `addresses` jsonb (multi-property, each with its own admin notes), billing_address, notes, ge_half_tax (migration 059)
+  - **`blacklisted` / `blacklist_reason` (migration 103).** Admin toggle in `ClientEditFields`; the client detail and the invoice form's Bill To show a red banner but never block a document. `api/vapi-call-ended.js` (`findBlacklistedClient()`, service role, last-10-digit match, fails open) skips lead capture, kickoff/confirmation text and drip for a matching number, keeping only the `vapi_calls` row. Lisa's live in-call `lookup_client_by_phone()` is unchanged, so she still answers the call.
   - **GE half tax has no invoice column.** A client with `ge_half_tax` is a GC we sub for: picking them sets a new document's tax to 0.5%. An invoice is GE half tax exactly when `tax = 0.5` (`isGeHalfTax()` in `src/geTax.js`), and that alone decides whether the preview, customer link and PDF print the GE license number. The per-invoice toggle just flips the rate.
 - `client_versions` — full client snapshots, mirrors invoice_versions
 - `invoices` — id (`EST####`/`INV####`), type, client snapshot, job_address / billing_address jsonb, show_billing_address, status, tax, discount, converted_to_id, down_payment_pct, down_payment_invoice_id, view_token, internal_notes, source, late_fee_waived, gcal_date, gcal_event_id, gcal_duration_minutes, visits jsonb, assigned_tech_id, deleted_at, updated_at
@@ -366,7 +367,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **101** — **applied and verified 2026-10-28.** `sms_drip_queue` (phone, call_id, message_index, message, scheduled_at, sent_at, stopped_at, stop_reason). Written by `api/vapi-call-ended.js` when `shouldQueueDrip()` approves an outbound call (v1.39.7: no estimate filed, no opt-out phrase, 5+ customer words or voicemail/no-answer; reason logged, not stored) (rows for messages 2 and 3; message 1 is sent immediately). **Inbound calls (v1.39.8) use the same gate: the kickoff text is message 1, so only 2 and 3 are queued; if the kickoff was not sent, all three are queued with message 1 due now.**, stopped by `api/sms-inbound.js` on any reply, sent by `AI-OS/scripts/sms_drip.py`. RLS on, no policies: service role only. `sms_drip.py` logs messages 2 and 3 to `client_messages` since v1.39.7.
 
-Next migration is `102_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **103** — **applied and verified 2026-10-29.** `clients.blacklisted` boolean default false, `clients.blacklist_reason` text. See the schema entry.
+
+Next migration is `104_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

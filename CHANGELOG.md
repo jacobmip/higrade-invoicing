@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.7 — 2026-10-29
+
+- Client blacklist (migration 103): admin-only toggle and reason on the client edit screen; red "Blacklisted" banner on the client profile and at the top of an estimate/invoice for that client. Documents can still be created.
+- `api/vapi-call-ended.js`: a call from a blacklisted client's number skips lead capture, the kickoff/confirmation text and the drip; the call id is still recorded. A failed lookup is treated as not blacklisted.
+
 ## v1.40.6 — 2026-10-29
 
 - Global AI chat: new `query_business_data` tool (outstanding, overdue, revenue_month, revenue_week, top_clients, recent_jobs, client_lookup). Runs in the browser on the app's loaded data and `calcTotals`, so answers match the screen; read-only, no new route. Schema in `api/_lib/agent-tools.js`, executor in `src/aiAgent.js`.

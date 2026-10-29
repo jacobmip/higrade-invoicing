@@ -187,6 +187,8 @@ function toClient(row) {
     addresses,
     billingAddress: normalizeAddr(row.billing_address),
     geHalfTax: row.ge_half_tax === true,
+    blacklisted: row.blacklisted === true,
+    blacklistReason: row.blacklist_reason || '',
     ownerId: row.owner_id || null,
   }
 }
@@ -1125,6 +1127,8 @@ function clientPayload(client) {
     // Only when the caller knows it, so a partial client object (an AI
     // update, a quick-add) never clears the flag by omission.
     ...(typeof client.geHalfTax === 'boolean' ? { ge_half_tax: client.geHalfTax } : {}),
+    // Same rule for the blacklist (migration 103): a partial object never clears it.
+    ...(typeof client.blacklisted === 'boolean' ? { blacklisted: client.blacklisted, blacklist_reason: client.blacklisted ? (client.blacklistReason || null) : null } : {}),
   }
 }
 

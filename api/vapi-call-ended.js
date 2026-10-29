@@ -316,6 +316,29 @@ async function queueDrip({ to, callId, name, indexes }) {
   return { queued: indexes.length };
 }
 
+// The blacklisted client whose number matches `phone`, or null. Reads the
+// (tiny) blacklisted set and compares the last 10 digits in JS, because stored
+// numbers are free text ("808-555-1234") and PostgREST cannot normalise them.
+// Fails open: on any error the call is handled as normal, since losing a real
+// lead is worse than texting a blacklisted number.
+async function findBlacklistedClient(phone) {
+  try {
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const want = String(phone || '').replace(/\D/g, '').slice(-10);
+    if (!key || want.length !== 10) return null;
+    const r = await fetch(`${supabaseUrl()}/rest/v1/clients?blacklisted=eq.true&select=name,phone,mobile,blacklist_reason`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    });
+    if (!r.ok) return null;
+    const rows = await r.json().catch(() => []);
+    return (rows || []).find(c =>
+      [c.phone, c.mobile].some(n => String(n || '').replace(/\D/g, '').slice(-10) === want)) || null;
+  } catch (e) {
+    console.error('[vapi-call-ended] blacklist lookup failed, continuing:', e.message || e);
+    return null;
+  }
+}
+
 // Outbound: message 1 now, messages 2 and 3 queued for 24h and 48h. With
 // sms_outbound_enabled off, message 1 is skipped but 2 and 3 are still queued
 // (the sender script re-checks the setting before each send).
@@ -384,6 +407,16 @@ export default async function handler(req, res) {
     // Still keep the call id, so the recording is findable later.
     await recordCall({ callId, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params) });
     return json(res, 200, { ok: true, skipped: 'no caller number in payload' });
+  }
+
+  // ─── Blacklisted client: do nothing but keep the call id ─────────────────
+  // No lead capture, no kickoff or confirmation text, no drip. The app shows
+  // Jake a warning on the client instead (migration 103).
+  const blocked = await findBlacklistedClient(to);
+  if (blocked) {
+    console.log('[vapi-call-ended] Skipped: blacklisted client', { to, callId, client: blocked.name, reason: blocked.blacklist_reason || null });
+    await recordCall({ callId, phone: to, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params) });
+    return json(res, 200, { ok: true, skipped: 'blacklisted client' });
   }
 
   // ─── Safety net: never lose a caller who hung up ─────────────────────────
