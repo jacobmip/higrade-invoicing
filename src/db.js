@@ -1136,6 +1136,32 @@ function clientPayload(client) {
 // write without it rather than failing the whole client save.
 const missingGeColumn = (error) => /ge_half_tax/.test(error?.message || '')
 
+// Id of an existing client sharing this form's phone (last 10 digits) or email,
+// or null. Asks the database, not the loaded list, so a client the app has not
+// loaded yet still counts. Fails open: a lookup error never blocks a save.
+export async function findDuplicateClient(form) {
+  try {
+    const last10 = (v) => String(v || '').replace(/\D/g, '').slice(-10)
+    const phones = [...new Set([form.mobile, form.phone].map(last10).filter(d => d.length === 10))]
+    const emails = [...new Set([form.email, form.email2].map(e => String(e || '').trim().toLowerCase()).filter(Boolean))]
+    for (const d of phones) {
+      const tail = d.slice(-4)
+      const { data } = await supabase.from('clients').select('id, mobile, phone')
+        .or(`mobile.ilike.%${tail}%,phone.ilike.%${tail}%`).limit(200)
+      const hit = (data || []).find(c => last10(c.mobile) === d || last10(c.phone) === d)
+      if (hit) return hit.id
+    }
+    for (const e of emails) {
+      const pat = e.replace(/[\\%_]/g, m => '\\' + m)
+      for (const col of ['email', 'secondary_email']) {
+        const { data } = await supabase.from('clients').select('id').ilike(col, pat).limit(1)
+        if (data?.length) return data[0].id
+      }
+    }
+  } catch { /* fail open */ }
+  return null
+}
+
 export async function insertClient(client) {
   let payload = clientPayload(client)
   let { data, error } = await supabase.from('clients').insert(payload).select().single()

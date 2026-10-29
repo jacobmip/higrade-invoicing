@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.8 — 2026-10-29
+
+- Duplicate client detection: before a new client is inserted, `db.findDuplicateClient()` checks the database for a matching phone (last 10 digits) or email (either email field). Clients tab save warns and opens the existing record; the invoice form's quick-add uses the existing client; the AI chat's `create_client` returns the existing client flagged `duplicate` instead of creating a second. CSV import is unchanged. A failed lookup never blocks a save.
+
 ## v1.40.7 — 2026-10-29
 
 - Client blacklist (migration 103): admin-only toggle and reason on the client edit screen; red "Blacklisted" banner on the client profile and at the top of an estimate/invoice for that client. Documents can still be created.

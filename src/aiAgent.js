@@ -397,6 +397,7 @@ async function createClient(input, ctx) {
   if (existing) return { error: `A client named "${existing.name}" already exists (client_id ${existing.id}). Use update_client for them.` };
   const client = await ctx.onAction({ action: 'create_client', client: { ...input, name } });
   if (!client) return { error: 'The client was not created.' };
+  if (client.duplicate) return { ok: true, duplicate: true, client_id: client.id, name: client.name, note: `A client with that phone or email already exists (${client.name}); no new client was created. Use this one.`, card: { type: 'created_client', client } };
   return { ok: true, client_id: client.id, name: client.name, card: { type: 'created_client', client } };
 }
 
