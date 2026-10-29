@@ -4863,6 +4863,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             <div style={{ position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 18px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 5001 }}>Undone</div>
           )}
           {/* Bill To */}
+          {(() => { const bc = clients.find(c => (form.client_id && c.id === form.client_id) || (!form.client_id && c.name === form.client)); return bc?.blacklisted ? (
+            <div style={{ background: "#c0392b", color: "#fff", padding: "10px 16px", fontSize: 13, fontWeight: 700, marginTop: 16 }}>Blacklisted{bc.blacklistReason ? `: ${bc.blacklistReason}` : ""}</div>
+          ) : null; })()}
           <div style={{ padding: "16px 16px 0" }}>
             <label style={S.label}>Bill To</label>
             <button
@@ -6547,6 +6550,23 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
       </div>
 
       {isAdmin && (
+        <div style={{ marginTop: compact ? 14 : 18, background: form.blacklisted ? "#fff5f5" : "#fafbfd", border: `1px solid ${form.blacklisted ? "#e0a0a0" : "#dde2ee"}`, borderRadius: 8, padding: "10px 12px" }}>
+          <div onClick={() => setField("blacklisted", !form.blacklisted)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer", userSelect: "none" }}>
+            <div>
+              <div style={{ fontSize: 14, color: "#444", fontWeight: 600 }}>Blacklist</div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Lisa will not book or text this client. Documents still work, with a warning.</div>
+            </div>
+            <div style={{ width: 44, height: 24, borderRadius: 12, background: form.blacklisted ? "#c0392b" : "#dde2ee", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+              <div style={{ position: "absolute", top: 3, left: form.blacklisted ? 23 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", transition: "left 0.2s" }} />
+            </div>
+          </div>
+          {form.blacklisted && (
+            <input style={{ ...S.input, marginTop: 10 }} value={form.blacklistReason || ""} onChange={e => setField("blacklistReason", e.target.value)} placeholder="Reason" />
+          )}
+        </div>
+      )}
+
+      {isAdmin && (
         <div style={{ marginTop: compact ? 14 : 18 }}>
           <div style={{ ...sectionLabelStyle, marginBottom: 6 }}>Admin Notes</div>
           <textarea
@@ -7053,6 +7073,9 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
           <button onClick={() => startEdit(c)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 12 }}>Edit</button>
         </div>
 
+        {c?.blacklisted && (
+          <div style={{ background: "#c0392b", color: "#fff", padding: "10px 16px", fontSize: 13, fontWeight: 700 }}>Blacklisted{c.blacklistReason ? `: ${c.blacklistReason}` : ""}</div>
+        )}
         {/* KPI strip */}
         <div style={{ background: NAVY2, padding: "0 16px 12px", display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
           <div><div style={{ color: "#8899bb", fontSize: 11, letterSpacing: 1, fontFamily: "'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Outstanding</div><div style={{ color: ORANGE, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18 }}>{fmt(outstanding)}</div></div>
