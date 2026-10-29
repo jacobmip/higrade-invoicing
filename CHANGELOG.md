@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.1 — 2026-10-28
+
+- Post-call text now depends on whether a time was booked. In `api/vapi-call-ended.js`, when the call produced an estimate with a `gcal_date`, the customer gets one confirmation text instead of the generic kickoff: "Aloha [first name]! You're scheduled with HI Grade Plumbing on [day, date] at [time]. We'll see you at [address]. Mahalo!", plus "Could you reply with your service address?" if the job site is blank and "Also, what's your email address?" if there is no email on the estimate or client, then the STOP line. A "Missed call" or blank name drops the name. The estimate is the one `capture_abandoned_call` returned, else the newest invoice from the last 10 minutes matching the caller's phone in `client_info` (`invoices` has no phone or email column). No estimate, no time, or any lookup failure sends the kickoff unchanged. New `recentOutboundSms()` in `api/_lib/sms.js`: any outbound text to the number in the last 5 minutes skips the confirmation, so a Vapi retry cannot double-send. The 3-message drip is not queued after a confirmation.
+
 ## v1.39.9 — 2026-10-28
 
 - No more junk "Missed call - no name given" leads. In `api/vapi-call-ended.js`, `capture_abandoned_call` is skipped for an inbound call when the customer said under 5 words (same count as `shouldQueueDrip()`, which is untouched) and `endedReason` is `customer-ended-call`; logs "Skipped lead: no engagement". Voicemail / no-answer and 5+ words still file the lead. A call where Lisa filed an estimate is never skipped, so its recording still links.

@@ -21,7 +21,7 @@
 
 import {
   rpc, getSetting, readBody, fullUrl, webhookSecret, secretMatches, sendTwilioSms,
-  alreadySentMessage, recordSmsSnapshot, supabaseUrl,
+  alreadySentMessage, recentOutboundSms, recordSmsSnapshot, supabaseUrl,
 } from './_lib/sms.js';
 import { recordCall, handleRecordingRequest } from './_lib/call-recording.js';
 
@@ -49,6 +49,67 @@ const KICKOFF =
   'estimate, please send your service address and any photos or videos of the ' +
   'issue. Send us a photo and we can give you a free ballpark estimate right ' +
   'away. Reply STOP to opt out.';
+
+// ─── Booking confirmation (replaces the kickoff when a time was booked) ─────
+// Finds the estimate this call produced: the id capture_abandoned_call handed
+// back, else the newest invoice from the last 10 minutes whose client_info
+// phone matches (invoices has no phone column; it lives in client_info).
+// Returns the confirmation text, or null for "send the kickoff instead" --
+// no estimate, no gcal_date, or any lookup failure.
+async function buildConfirmationSms(to, estimateId) {
+  try {
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!key) return null;
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const base = `${supabaseUrl()}/rest/v1`;
+    const cols = 'id,client_name,client_id,client_info,job_address,gcal_date,created_at';
+    let inv = null;
+    if (estimateId) {
+      const r = await fetch(`${base}/invoices?id=eq.${encodeURIComponent(estimateId)}&deleted_at=is.null&select=${cols}&limit=1`, { headers });
+      if (r.ok) inv = (await r.json())?.[0] || null;
+    }
+    if (!inv) {
+      const last10 = String(to || '').replace(/\D/g, '').slice(-10);
+      if (last10.length < 10) return null;
+      const since = new Date(Date.now() - 10 * 60e3).toISOString();
+      const pat = encodeURIComponent('*' + last10.split('').join('*') + '*');
+      const r = await fetch(
+        `${base}/invoices?client_info->>phone=ilike.${pat}&created_at=gte.${encodeURIComponent(since)}`
+        + `&deleted_at=is.null&select=${cols}&order=created_at.desc&limit=1`, { headers });
+      if (r.ok) inv = (await r.json())?.[0] || null;
+    }
+    // gcal_date is local Hawaii wall-clock text, YYYY-MM-DDTHH:MM. Format it
+    // from the text; never through a timezone-aware Date.
+    const m = String(inv?.gcal_date || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const [, y, mo, d, hh, mm] = m.map(Number);
+    const day = new Date(Date.UTC(y, mo - 1, d)).toLocaleDateString('en-US',
+      { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const time = `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'AM' : 'PM'}`;
+
+    const rawName = String(inv.client_name || inv.client_info?.name || '').trim();
+    const first = /^missed call/i.test(rawName) ? '' : rawName.split(/\s+/)[0];
+    const ja = inv.job_address;
+    const addr = [ja?.line1, ja?.line3].map(x => String(x || '').trim()).filter(Boolean).join(', ')
+      || String(inv.client_info?.address1 || '').trim();
+
+    let email = String(inv.client_info?.email || '').trim();
+    if (!email && inv.client_id) {
+      const r = await fetch(`${base}/clients?id=eq.${encodeURIComponent(inv.client_id)}&select=email&limit=1`, { headers });
+      if (r.ok) email = String((await r.json())?.[0]?.email || '').trim();
+    }
+
+    let body = `${first ? `Aloha ${first}!` : 'Aloha!'} You're scheduled with HI Grade Plumbing on ${day} at ${time}.`
+      + (addr ? ` We'll see you at ${addr}.` : '') + ' Mahalo!';
+    // One text: the confirmation plus whatever we still need from them.
+    if (!addr) body += ' Could you reply with your service address?';
+    if (!email) body += " Also, what's your email address?";
+    return body + ' Reply STOP to opt out.';
+  } catch (e) {
+    console.error('[vapi-call-ended] confirmation lookup failed, using kickoff:', e.message || e);
+    return null;
+  }
+}
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -467,6 +528,32 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Path A: a time was booked, so confirm it instead of the generic kickoff.
+    // Paths B and C (no estimate, or an estimate with no time) fall through to
+    // the kickoff unchanged.
+    const confirmation = await buildConfirmationSms(to, rescued?.estimate_id);
+    if (confirmation) {
+      // Bodies vary, so alreadySentMessage() cannot catch a Vapi retry; any
+      // outbound text in the last 5 minutes means this report already ran.
+      if (await recentOutboundSms(to, 5)) {
+        console.log('[vapi-call-ended] outbound text sent in last 5 min, skipping confirmation', { to, callId });
+        return json(res, 200, { ok: true, skipped: 'outbound text already sent in last 5 minutes' });
+      }
+      const sentC = await sendTwilioSms({ to, body: confirmation });
+      const loggedC = await rpc('log_client_message', {
+        p_secret: expected, p_phone: to, p_direction: 'outbound', p_body: confirmation, p_call_id: callId,
+      });
+      if (rescued?.estimate_id) {
+        try { await recordSmsSnapshot(rescued.estimate_id, to, 'Appointment confirmation text after call'); }
+        catch (e) { console.error('[vapi-call-ended] sms_sent snapshot failed:', e.message || e); }
+      }
+      // No drip: its "sorry we got cut off" copy is wrong for a booked job.
+      return json(res, 200, {
+        ok: true, path: 'confirmation',
+        twilioSid: sentC?.sid || null, twilioStatus: sentC?.status || null,
+        matchedClient: loggedC?.client_name || null,
+      });
+    }
     if (await alreadySentMessage(to, KICKOFF)) {
       console.log('[vapi-call-ended] kickoff already sent, skipping', { to, callId });
       kickoffSent = true;

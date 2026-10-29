@@ -149,6 +149,23 @@ export async function alreadySentMessage(phone, body) {
   return (await res.json()).length > 0;
 }
 
+// True when ANY outbound text went to this phone in the last `minutes`. A
+// second guard on top of alreadySentMessage(), for texts whose body varies
+// (the booking confirmation) so a Vapi retry cannot send it twice. Fails
+// closed like alreadySentMessage().
+export async function recentOutboundSms(phone, minutes = 5) {
+  const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+  if (last10.length < 10) return false;
+  const k = supabaseKey();
+  const since = new Date(Date.now() - minutes * 60e3).toISOString();
+  const q = `phone_number=ilike.${encodeURIComponent('%' + last10.split('').join('%'))}`
+    + `&direction=eq.outbound&created_at=gte.${encodeURIComponent(since)}&select=id&limit=1`;
+  const res = await fetch(`${supabaseUrl()}/rest/v1/client_messages?${q}`,
+    { headers: { apikey: k, Authorization: `Bearer ${k}` } });
+  if (!res.ok) throw new Error(`recent-sms check failed ${res.status}`);
+  return (await res.json()).length > 0;
+}
+
 // History-tab snapshot for a text sent from a route (same row shape as
 // recordSmsSnapshot in sms-inbound.js).
 export async function recordSmsSnapshot(invoiceId, to, note) {
