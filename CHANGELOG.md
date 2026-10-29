@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.9 — 2026-10-29
+
+- Google review request: when an invoice is seen changing to paid (any save path, admin session), the client gets one text with the review link from `settings.google_review_link`. Skipped for estimates, blacklisted clients, clients with no mobile, a blank or placeholder link, and any client who already has an outbound text mentioning "Google review". New `src/reviewRequest.js`.
+- Settings: Google Review Link field (admin), above What's New.
+- Migration 104 inserts the placeholder setting (applied).
+
 ## v1.40.8 — 2026-10-29
 
 - Duplicate client detection: before a new client is inserted, `db.findDuplicateClient()` checks the database for a matching phone (last 10 digits) or email (either email field). Clients tab save warns and opens the existing record; the invoice form's quick-add uses the existing client; the AI chat's `create_client` returns the existing client flagged `duplicate` instead of creating a second. CSV import is unchanged. A failed lookup never blocks a save.

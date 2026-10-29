@@ -10,6 +10,7 @@ import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
 import { sendLisaText, queueLisaCall } from './lisaActions.js';
+import { maybeSendReviewRequest } from './reviewRequest.js';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
@@ -10983,6 +10984,17 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
     try { await db.setSetting("default_apprentice_id", id || null); }
     catch (e) { console.warn("set default apprentice failed:", e); setDefaultApprentice(prev); }
   };
+  // Google review link (migration 104): texted once to a client when an invoice
+  // is paid, see src/reviewRequest.js. Saved on blur.
+  const [reviewLink, setReviewLink] = useState("");
+  useEffect(() => {
+    if (!isAdmin) return;
+    db.getSetting("google_review_link").then(v => setReviewLink(v || "")).catch(e => console.warn("getSetting failed:", e));
+  }, [isAdmin]);
+  const saveReviewLink = async () => {
+    try { await db.setSetting("google_review_link", reviewLink.trim() || null); }
+    catch (e) { alert("Could not save the review link: " + (e.message || e)); }
+  };
   const handleSetPay = async (userId, patch) => {
     const prev = techPay[userId];
     setTechPay(p => ({ ...p, [userId]: { ...(p[userId] || {}), ...patch } }));
@@ -11321,6 +11333,15 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div style={card}>
+          <div style={heading}>Google Review Link</div>
+          <div style={body}>When an invoice is marked paid, the client gets one text asking for a Google review with this link. Leave blank to turn it off.</div>
+          <input style={S.input} value={reviewLink} placeholder="https://g.page/r/.../review" autoCapitalize="none" autoCorrect="off"
+            onChange={e => setReviewLink(e.target.value)} onBlur={saveReviewLink} />
         </div>
       )}
 
@@ -12965,6 +12986,20 @@ export default function App() {
   // earlier one saved would otherwise still see eventId: null and create again.
   const dataRef = useRef(data);
   dataRef.current = data;
+  // Google review request: the first time an invoice is seen flipping to paid.
+  // An invoice not in the map yet (first load, new row) is only recorded, so
+  // opening the app never texts anyone about an old payment.
+  const paidSeenRef = useRef(null);
+  useEffect(() => {
+    const prev = paidSeenRef.current;
+    paidSeenRef.current = new Map((data.invoices || []).map(i => [i.id, i.status]));
+    if (!prev || !isAdmin) return;
+    for (const inv of data.invoices || []) {
+      if (inv.type !== "estimate" && inv.status === "paid" && prev.has(inv.id) && prev.get(inv.id) !== "paid") {
+        maybeSendReviewRequest(inv, data.clients);
+      }
+    }
+  }, [data.invoices]);
   // One reconciliation at a time, and a record of every visit already pushed
   // this session. Two callers exist — the startup sweep and the calendar's own
   // fetch — and both fire on the same auth change.

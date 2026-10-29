@@ -98,6 +98,7 @@ src/
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
   lisaActions.js     — `sendLisaText()` / `queueLisaCall()`: the AI chat's send_sms and place_call, shared by the per-invoice chat (App.jsx `handleGlobalAIAction`) and the global agent (`aiAgent.js`); both call `/api/sms-inbound` with the admin session (v1.38.0)
+  reviewRequest.js   — `maybeSendReviewRequest()`: one Google review text per client when an invoice is first seen flipping to paid (v1.40.9); sent through `sendLisaText()`, guarded by an outbound `client_messages` row mentioning "Google review"
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
   AddressAutocomplete.jsx — street input with Google Places suggestions (v1.37.0); calls `/api/geocode?mode=autocomplete`, then `/api/geocode?address=` for city/state/zip
@@ -184,7 +185,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 103; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 104; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -369,7 +370,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **103** — **applied and verified 2026-10-29.** `clients.blacklisted` boolean default false, `clients.blacklist_reason` text. See the schema entry.
 
-Next migration is `104_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **104** — **applied and verified 2026-10-29.** Inserts `settings.google_review_link` (placeholder `https://g.page/r/PLACEHOLDER/review`, `on conflict do nothing`). Read by `src/reviewRequest.js`, which texts the client once when `App()` sees an invoice flip to `paid`; a value containing `PLACEHOLDER`, or blank, means off. Edited in Settings > Google Review Link.
+
+Next migration is `105_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 
