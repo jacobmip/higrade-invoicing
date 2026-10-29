@@ -28,6 +28,13 @@ Read this file first. It captures everything an AI agent needs to safely continu
    - **An RLS-filtered UPDATE or DELETE affects zero rows instead of erroring.** A write the
      policy's USING clause excludes looks like a success to the caller. A WITH CHECK violation
      does raise. Plan for the silent case — it is how duplicate rows and phantom saves happen.
+   - **Exception: Claude Code cloud sessions started from Jake's phone (claude.ai/code) have no
+     Supabase credentials.** The rule above still holds everywhere else: Claude Code on the Mac
+     mini and the Hermes Agent CLI both reach Supabase. In a phone cloud session, write and test
+     the migration file, push it, then give Jake a **ready-to-paste prompt for his Hermes Agent**
+     that names the file, says to dry-run, apply and verify it per this rule, and says what result
+     to report back. Do not ask him to paste SQL into the editor. The in-app AI reaches the
+     database only through the app's own RLS-scoped tools, never DDL.
    - If Jake ever does need to run one by hand: **one query per code block**, because he copies a
      whole box at a time, always include https://supabase.com/dashboard/project/cwhgcxxszyvevjpbnnkc/sql/new,
      and remember the editor only returns the result of the **last** statement in a batch.
@@ -316,7 +323,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **066** — **applied and verified 2026-10-27** (live definition calls `allocate_doc_number()` and no longer references `next_estimate_num`). Puts `create_estimate_from_lead` on `allocate_doc_number()`, finding the old numbering block by its first and last lines rather than exact text. Checked live before writing: the function still read `next_estimate_num`. Tested locally against a definition 065 had skipped.
 
-- **067** — **written 2026-10-27, not yet applied.** `vapi_calls`, admin-read RLS, and a backfill of the call ids abandoned-call notes already carried. Tested locally, safe to re-run.
+- **067** — **applied 2026-10-27; recordings confirmed playing by Jake 2026-10-29.** `vapi_calls`, admin-read RLS, and a backfill of the call ids abandoned-call notes already carried. Tested locally, safe to re-run.
 
 - **068** — `call_queue`: Lisa's outbound queue.
 - **069** — assigned tech can work the job: line items, pricing, client record, photos and history keyed off `assigned_tech_id` (`is_my_assigned_job`, `is_my_assigned_client`). Also stopped `owner_id` restamping on conflict.
