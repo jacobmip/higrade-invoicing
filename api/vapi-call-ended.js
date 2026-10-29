@@ -153,6 +153,45 @@ function extractFiledEstimate(p) {
   return msgs.some(x => (x?.toolCalls || []).some(t => t?.function?.name === 'createEstimate'));
 }
 
+// Decides from the transcript whether an outbound call earns the drip. The
+// reason is logged and returned in the response; sms_drip_queue has no column
+// for it and the schema is deliberately unchanged.
+const OPT_OUT_TERMS = [
+  "don't call", 'do not call', 'stop calling', 'leave me alone',
+  'not interested', 'remove me', 'take me off', 'do not contact',
+  'already have a plumber', 'already hired', 'found someone', 'got someone',
+  'wrong number', 'stop texting', 'unsubscribe',
+];
+
+function shouldQueueDrip(message) {
+  const endedReason = message?.endedReason || message?.call?.endedReason || '';
+  const msgs = message?.artifact?.messages || [];
+
+  // Never drip if an estimate was filed.
+  if (extractFiledEstimate({ message })) return { drip: false, reason: 'estimate_filed' };
+
+  const customerText = (Array.isArray(msgs) ? msgs : [])
+    .filter(m => m?.role === 'user')
+    .map(m => m.message || m.content || '')
+    .join(' ')
+    .toLowerCase();
+
+  if (OPT_OUT_TERMS.some(t => customerText.includes(t))) {
+    return { drip: false, reason: 'customer_opted_out' };
+  }
+
+  // Voicemail or no answer: they never heard anything, so always drip.
+  if (['voicemail', 'no-answer', 'customer-did-not-answer'].includes(endedReason)) {
+    return { drip: true, reason: 'voicemail_or_no_answer' };
+  }
+
+  // Under 5 meaningful words is an immediate hang-up or a wrong number.
+  const wordCount = customerText.split(/\s+/).filter(w => w.length > 1).length;
+  if (wordCount < 5) return { drip: false, reason: 'no_engagement' };
+
+  return { drip: true, reason: 'engaged_no_booking' };
+}
+
 // Outbound: the party we dialled, with the "there" fallback the drip texts use.
 function extractCustomerName(p) {
   const m = p?.message || p || {};
@@ -350,12 +389,14 @@ export default async function handler(req, res) {
   // The kickoff text is for new inbound leads only. An outbound call that
   // filed no estimate gets the 3-message drip instead.
   if (outbound) {
-    if (extractFiledEstimate(params)) {
-      return json(res, 200, { ok: true, skipped: 'outbound call: estimate filed, no drip' });
+    const decision = shouldQueueDrip(params?.message || params || {});
+    console.log('[vapi-call-ended] drip decision', { to, callId, drip: decision.drip, reason: decision.reason });
+    if (!decision.drip) {
+      return json(res, 200, { ok: true, skipped: `outbound call: no drip (${decision.reason})` });
     }
     try {
       const drip = await startDrip({ to, callId, name: extractCustomerName(params), secret: expected });
-      return json(res, 200, { ok: true, drip });
+      return json(res, 200, { ok: true, drip, drip_reason: decision.reason });
     } catch (e) {
       console.error('[vapi-call-ended] drip failed:', e.message || e);
       // 200 on purpose, same reason as below: a Vapi retry would re-send.

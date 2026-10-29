@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.7 — 2026-10-28
+
+- Outbound drip trigger is now transcript-based (`shouldQueueDrip()` in `api/vapi-call-ended.js`) instead of "no estimate filed". No drip when an estimate was filed, the customer opted out ("not interested", "wrong number", "stop calling", ...), or said under 5 words (hang-up). Drip on voicemail / no answer, and on a real conversation that ended without a booking. The reason is logged and returned as `drip_reason`; `sms_drip_queue` is unchanged.
+- `AI-OS/scripts/sms_drip.py` logs messages 2 and 3 to `client_messages` through `log_client_message` after Twilio accepts the send, so the whole drip shows in the Messages tab. The webhook secret is read once per run.
+
 ## v1.39.6 — 2026-10-28
 
 - Outbound call drip: when an outbound Lisa call ends with no `createEstimate` tool call, `api/vapi-call-ended.js` texts message 1 at once (logged to the thread) and queues messages 2 and 3 in the new `sms_drip_queue` at +24h and +48h. With `sms_outbound_enabled` off, message 1 is skipped and 2 and 3 are still queued. A Vapi retry does not start a second drip (keyed on call id).
