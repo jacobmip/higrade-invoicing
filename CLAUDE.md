@@ -183,7 +183,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 100; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 101; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -363,7 +363,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **100** — **applied and verified 2026-10-28.** `invoices.estimator_items` jsonb and `estimator_approval` text (null | approved | declined, check constraint). See the schema entry. Dry-run first, then constraint exercised in a rolled-back transaction.
 
-Next migration is `101_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **101** — **applied and verified 2026-10-28.** `sms_drip_queue` (phone, call_id, message_index, message, scheduled_at, sent_at, stopped_at, stop_reason). Written by `api/vapi-call-ended.js` when an outbound call ends with no `createEstimate` (rows for messages 2 and 3; message 1 is sent immediately), stopped by `api/sms-inbound.js` on any reply, sent by `AI-OS/scripts/sms_drip.py`. RLS on, no policies: service role only. Messages 2 and 3 are not logged to `client_messages`.
+
+Next migration is `102_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

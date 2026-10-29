@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.6 — 2026-10-28
+
+- Outbound call drip: when an outbound Lisa call ends with no `createEstimate` tool call, `api/vapi-call-ended.js` texts message 1 at once (logged to the thread) and queues messages 2 and 3 in the new `sms_drip_queue` at +24h and +48h. With `sms_outbound_enabled` off, message 1 is skipped and 2 and 3 are still queued. A Vapi retry does not start a second drip (keyed on call id).
+- `api/sms-inbound.js`: any inbound text stops that number's pending drip rows (`stop_reason = 'customer_replied'`) before normal handling.
+- Migration 101: `sms_drip_queue`, RLS on with no policies (service role only). Sender is `AI-OS/scripts/sms_drip.py` (needs a cron entry).
+
 ## v1.39.5 — 2026-10-28
 
 - Lisa now checks the calendar before booking by text or web form. New helper `api/_lib/availability-check.js` calls `/api/availability` (the same endpoint Vapi uses, both work and personal Google calendars) with the webhook secret.

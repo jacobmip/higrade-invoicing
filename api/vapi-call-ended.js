@@ -21,7 +21,7 @@
 
 import {
   rpc, getSetting, readBody, fullUrl, webhookSecret, secretMatches, sendTwilioSms,
-  alreadySentMessage, recordSmsSnapshot,
+  alreadySentMessage, recordSmsSnapshot, supabaseUrl,
 } from './_lib/sms.js';
 import { recordCall, handleRecordingRequest } from './_lib/call-recording.js';
 
@@ -143,6 +143,71 @@ function extractSeconds(p) {
   }
   const d = m?.durationSeconds ?? m?.call?.durationSeconds;
   return Number.isFinite(d) ? Math.round(d) : null;
+}
+
+// True when Lisa called createEstimate during the call.
+function extractFiledEstimate(p) {
+  const m = p?.message || p || {};
+  const msgs = m?.artifact?.messages || m?.messages || m?.call?.messages || [];
+  if (!Array.isArray(msgs)) return false;
+  return msgs.some(x => (x?.toolCalls || []).some(t => t?.function?.name === 'createEstimate'));
+}
+
+// Outbound: the party we dialled, with the "there" fallback the drip texts use.
+function extractCustomerName(p) {
+  const m = p?.message || p || {};
+  const n = m?.call?.customer?.name;
+  return typeof n === 'string' && n.trim() && n.trim().length <= 80 ? n.trim() : 'there';
+}
+
+const DRIP_PHONE = '808-444-5450';
+const dripMessages = name => [
+  `Aloha ${name}! This is Lisa from HI Grade Plumbing. Sorry we got cut off. If you still need help with your plumbing issue, just reply here or call ${DRIP_PHONE}. Mahalo! Reply STOP to opt out.`,
+  `Hi ${name}, just checking in from HI Grade Plumbing. Plumbing problems can be stressful — we are here whenever you are ready. Reply here or call ${DRIP_PHONE}. Reply STOP to opt out.`,
+  `Aloha ${name}, one last check-in from HI Grade Plumbing. If you still need a hand, reply or call ${DRIP_PHONE}. If you are all set, wishing you a great day! Reply STOP to opt out.`,
+];
+
+// Message 1 now, messages 2 and 3 queued for 24h and 48h. With
+// sms_outbound_enabled off, message 1 is skipped but 2 and 3 are still queued
+// (the sender script re-checks the setting before each send).
+async function startDrip({ to, callId, name, secret }) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) throw new Error('Server not configured');
+  const headers = { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` };
+  const table = `${supabaseUrl()}/rest/v1/sms_drip_queue`;
+
+  // A Vapi retry of the same report must not start a second drip.
+  if (callId) {
+    const dup = await fetch(`${table}?call_id=eq.${encodeURIComponent(callId)}&select=id&limit=1`, { headers });
+    const rows = dup.ok ? await dup.json().catch(() => []) : [];
+    if (rows?.length) return { skipped: 'drip already started for this call' };
+  }
+
+  const [m1, m2, m3] = dripMessages(name);
+  const now = Date.now();
+  const hours = h => new Date(now + h * 3600e3).toISOString();
+  const ins = await fetch(table, {
+    method: 'POST', headers,
+    body: JSON.stringify([
+      { phone: to, call_id: callId, message_index: 2, message: m2, scheduled_at: hours(24) },
+      { phone: to, call_id: callId, message_index: 3, message: m3, scheduled_at: hours(48) },
+    ]),
+  });
+  if (!ins.ok) throw new Error(`queue insert ${ins.status}: ${(await ins.text()).slice(0, 200)}`);
+
+  const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
+  if (!enabled) return { queued: 2, message1: 'skipped, sms_outbound_enabled is false' };
+
+  const sent = await sendTwilioSms({ to, body: m1 });
+  // Logged only after a successful handoff to Twilio.
+  try {
+    await rpc('log_client_message', {
+      p_secret: secret, p_phone: to, p_direction: 'outbound', p_body: m1, p_call_id: callId,
+    });
+  } catch (e) {
+    console.error('[vapi-call-ended] drip message 1 log failed:', e.message || e);
+  }
+  return { queued: 2, message1: 'sent', twilioSid: sent?.sid || null };
 }
 
 export default async function handler(req, res) {
@@ -282,9 +347,20 @@ export default async function handler(req, res) {
     console.error('[vapi-call-ended] call archive email failed:', e.message || e);
   }
 
-  // The kickoff text is for new inbound leads only.
+  // The kickoff text is for new inbound leads only. An outbound call that
+  // filed no estimate gets the 3-message drip instead.
   if (outbound) {
-    return json(res, 200, { ok: true, skipped: 'outbound call: no lead capture, no kickoff SMS' });
+    if (extractFiledEstimate(params)) {
+      return json(res, 200, { ok: true, skipped: 'outbound call: estimate filed, no drip' });
+    }
+    try {
+      const drip = await startDrip({ to, callId, name: extractCustomerName(params), secret: expected });
+      return json(res, 200, { ok: true, drip });
+    } catch (e) {
+      console.error('[vapi-call-ended] drip failed:', e.message || e);
+      // 200 on purpose, same reason as below: a Vapi retry would re-send.
+      return json(res, 200, { ok: false, error: String(e.message || e) });
+    }
   }
 
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';

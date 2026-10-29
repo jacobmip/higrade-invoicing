@@ -222,6 +222,22 @@ async function appSend(req, res) {
   }
 }
 
+// Stamp every unsent, unstopped drip row for this number as stopped. Matches on
+// the last ten digits since the queue stores whatever format Vapi dialled.
+async function stopDrip(phone) {
+  const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (last10.length < 10 || !key) return;
+  const r = await fetch(
+    `${supabaseUrl()}/rest/v1/sms_drip_queue?phone=like.*${last10}&sent_at=is.null&stopped_at=is.null`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ stopped_at: new Date().toISOString(), stop_reason: 'customer_replied' }),
+    });
+  if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
+}
+
 export default async function handler(req, res) {
   // Dry run: what would Lisa say to this thread? Sends nothing, writes nothing.
   if (req.method === 'GET') {
@@ -300,6 +316,11 @@ export default async function handler(req, res) {
     console.warn('[sms-inbound] no From, and no body or media; ignoring');
     return twiml(res);
   }
+
+  // A reply ends any pending drip follow-up (sms_drip_queue, migration 101).
+  // Before everything else, and never fatal to the message itself.
+  try { await stopDrip(from); }
+  catch (e) { console.error('[sms-inbound] stop drip failed:', e.message || e); }
 
   try {
     const secret = await webhookSecret();
