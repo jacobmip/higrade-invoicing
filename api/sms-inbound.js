@@ -41,6 +41,7 @@ import {
 import { telegramNotify } from './_lib/convert-estimate.js';
 import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
+import { handleInfoReply } from './_lib/sms-reply-capture.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -389,8 +390,16 @@ export default async function handler(req, res) {
     // for Anthropic cannot cost us the message itself. Gated by
     // settings.sms_autoreply_enabled.
     let replied = 'not attempted';
+    // A reply to our own "what's your service address / email?" text is handled
+    // first; anything that does not match falls through to the agent.
+    let captured = null;
     try {
-      replied = await autoReply({
+      captured = await handleInfoReply({ phone: from, body: String(body), secret });
+    } catch (e) {
+      console.error('[sms-inbound] info-reply capture failed:', e.message || e);
+    }
+    try {
+      replied = captured || await autoReply({
         phone: from,
         body: String(body),
         clientName: result?.client_name || null,

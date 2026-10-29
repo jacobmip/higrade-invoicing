@@ -132,6 +132,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   on-my-way.js             — edge route: On My Way button. Reads the caller's GPS, gets an ETA (Google if a key exists, else OSRM), texts the client via Twilio, logs to client_messages. Gated by settings.sms_outbound_enabled; the invoice read runs under the caller's JWT so RLS decides access
   _lib/notify.js           — APNs JWT + push fan-out
   _lib/sms.js              — Twilio send helper; `alreadySentMessage()` (once-only guard for lead texts) and `recordSmsSnapshot()` (v1.38.4) and `recentOutboundSms()` (any outbound text in N minutes; guards the v1.40.1 booking confirmation)
+  _lib/sms-reply-capture.js — `handleInfoReply()`: a reply to our "service address" / "email address" request text is written to the newest estimate (last 7 days, by `client_info` phone) and the client, then confirmed; no match returns null and `sms-inbound.js` falls through to `autoReply()` (v1.40.2). A helper, not a route
   _lib/availability-check.js — `checkAppointment()`: asks `/api/availability` whether one proposed time has 90+ free minutes; returns free / busy (with next opening) / error, never throws. Used by `_lib/sms-agent.js` and `schedule-request.js`; both drop the appointment unless it is free (v1.39.5)
   _lib/gcal.js             — Google token refresh + calendar helpers
   _lib/agent-tools.js      — global chat agent: model id, system prompt, tool schemas
