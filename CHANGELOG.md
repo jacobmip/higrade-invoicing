@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.4 — 2026-10-29
+
+- Settings: new "What's New" card at the bottom of the Settings tab. `CHANGELOG.md` is imported as a raw string at build time (`?raw`), parsed into version blocks, and the five newest are shown in a scrollable list (max height 400px). Purely client-side; no new route.
+
 ## v1.40.3 — 2026-10-29
 
 - Fix date bug: `today()` in `src/App.jsx` used `toISOString()` (UTC), so from 2pm to midnight Hawaii time it returned tomorrow's date. It now formats in `Pacific/Honolulu`. The Follow Up modal's default (+3 days) and its day presets had the same UTC bug; they use a new `hstDatePlus()` helper. `api/schedule-request.js` and `api/vapi-call-ended.js` were checked: neither derives a calendar date from `toISOString().slice(0,10)` (the only `toISOString()` uses are full timestamps), so no change there.

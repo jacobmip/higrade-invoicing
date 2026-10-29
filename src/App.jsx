@@ -29,6 +29,7 @@ import { PAYMENT_METHODS, canonicalMethod, methodStyle } from './paymentMethods.
 import MessagesTab, { ClientThread, useUnreadMessages } from './Messages.jsx';
 import ClientCommunications from './Communications.jsx';
 import AddressAutocomplete from './AddressAutocomplete.jsx';
+import changelogRaw from '../CHANGELOG.md?raw';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -10895,6 +10896,45 @@ function MessageTemplatesCard() {
   );
 }
 
+// Newest few releases from CHANGELOG.md, bundled at build time (no API route).
+function parseChangelog(raw, limit) {
+  const blocks = [];
+  let cur = null;
+  for (const line of raw.split("\n")) {
+    const h = line.match(/^## \[?v?([^\]\s]+)\]?\s*(?:[—–-]\s*(.+))?$/);
+    if (h) {
+      if (blocks.length >= limit) break;
+      cur = { version: h[1], date: (h[2] || "").trim(), items: [] };
+      blocks.push(cur);
+    } else if (cur && /^\s*[-*] /.test(line)) {
+      cur.items.push(line.replace(/^\s*[-*] /, "").replace(/`/g, ""));
+    }
+  }
+  return blocks;
+}
+
+function WhatsNewCard({ card, heading }) {
+  const versions = useMemo(() => parseChangelog(changelogRaw, 5), []);
+  if (!versions.length) return null;
+  return (
+    <div style={card}>
+      <div style={heading}>What's New</div>
+      <div style={{ maxHeight: 400, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        {versions.map(v => (
+          <div key={v.version} style={{ marginBottom: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: "#0a1628" }}>
+              v{v.version}{v.date && <span style={{ fontWeight: 400, fontSize: 12, color: "#8899bb" }}> · {v.date}</span>}
+            </div>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, color: "#445", lineHeight: 1.5 }}>
+              {v.items.map((t, i) => <li key={i} style={{ marginBottom: 4 }}>{t}</li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId, setViewAsUserId, refreshUsers, onSetTier }) {
   // Pay rates (migration 075). Loaded here rather than threaded down from the
   // app shell: only this panel needs them, and they are private per person,
@@ -11260,6 +11300,8 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
           </div>
         </div>
       )}
+
+      <WhatsNewCard card={card} heading={heading} />
 
       <div style={{ textAlign: "center", color: "#aab1bf", fontSize: 11, padding: "24px 0 8px", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: 1 }}>
         HI GRADE INVOICING v{APP_VERSION} &nbsp;·&nbsp; {APP_BUILD_DATE}
