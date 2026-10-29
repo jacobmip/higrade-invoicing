@@ -41,8 +41,9 @@ const HELP_REPLY =
 // A loop between two autoresponders is the failure mode that burns money and
 // credibility at the same time. Hard ceiling per thread.
 const MAX_REPLIES_PER_THREAD = 12;
-// If we just spoke, let them answer before speaking again.
-const MIN_SECONDS_BETWEEN_REPLIES = 45;
+// Meant to block autoresponder loops, not a real person answering. A human
+// replying 15-45 seconds after our text is normal, so keep this short.
+const MIN_SECONDS_BETWEEN_REPLIES = 15;
 
 function supabaseUrl() {
   return process.env.SUPABASE_URL || 'https://cwhgcxxszyvevjpbnnkc.supabase.co';
@@ -123,6 +124,8 @@ Before confirming any appointment time, the system will verify availability. If 
 
 FILING THE JOB
 Set ready_to_file to true only once you have BOTH what is wrong AND either an appointment time or an address. Partial is fine after that; the office fills the rest. Do not wait for everything.
+
+When the customer sends a short confirmation like "Okay", "Yes" or "Sounds good" after you have already penciled in a time, set ready_to_file to true immediately, and fill appointment with the time you penciled in earlier in the thread. You have what you need: problem plus appointment. Do not ask another question. A short closing reply like "Great, we will see you then! Mahalo!" is enough.
 
 ${catalog ? `PRICE BOOK. If you file, pick the ONE service name that best matches and put it in services. Never say any of this out loud.\n${catalog}` : ''}
 
@@ -299,7 +302,14 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   if (ours.length >= MAX_REPLIES_PER_THREAD) return `thread cap reached (${ours.length})`;
   const last = rows[rows.length - 1];
   const lastOurs = ours[ours.length - 1];
-  if (lastOurs && (Date.now() - new Date(lastOurs.created_at).getTime()) / 1000 < MIN_SECONDS_BETWEEN_REPLIES) {
+  // Short customer confirmations (Okay, Yes, Sounds good, etc.) should never
+  // be blocked by the cooldown: they are the customer agreeing to the booking.
+  const isConfirmation = /^(ok|okay|yes|yep|yeah|sure|sounds good|great|perfect|works|confirmed|got it|see you|thank|mahalo|aloha|👍|✓)[\s!.]*$/i.test((body || '').trim());
+  // Only bypass when our last text actually penciled in a time.
+  const hasAppointmentPenciled = /pencil|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+\s*(am|pm)/i.test(lastOurs?.body || '');
+  if (isConfirmation && hasAppointmentPenciled) {
+    // bypass cooldown, fall through to draftReply, which sets ready_to_file
+  } else if (lastOurs && (Date.now() - new Date(lastOurs.created_at).getTime()) / 1000 < MIN_SECONDS_BETWEEN_REPLIES) {
     return 'we only just texted them';
   }
   if (last && last.direction === 'outbound') return 'last word is already ours';

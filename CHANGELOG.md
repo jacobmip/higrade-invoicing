@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.2 — 2026-10-29
+
+- SMS agent (`api/_lib/sms-agent.js`): a customer's "Okay" 34 seconds after Lisa penciled in a time hit the 45 second reply cooldown and was dropped, so no estimate was filed. Cooldown cut to 15 seconds, and a short confirmation (Okay, Yes, Sounds good...) skips the cooldown when Lisa's last text mentioned a day or time. The prompt now tells her to set `ready_to_file` on that confirmation and carry the penciled appointment. `create_estimate_from_lead` verified: it exists (migrations 062/077) and the call's parameter names match.
+
 ## v1.41.1 — 2026-10-29
 
 - Remove the Google review request feature from `src/App.jsx` (import, paid-status watcher that called `maybeSendReviewRequest`, Settings > Google Review Link field) because it caused constant page refresh. Deleted migration file 104; `src/reviewRequest.js` is left in place, unreferenced.
