@@ -192,7 +192,13 @@ function withLists(inv) {
   return Array.isArray(inv.items) && Array.isArray(inv.payments) ? inv : { ...inv, items: inv.items || [], payments: inv.payments || [] };
 }
 function fmt(n) { return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function today() { return new Date().toISOString().slice(0, 10); }
+function today() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Pacific/Honolulu' });
+}
+// Hawaii date N days from now (Hawaii has no DST, so whole days are exact).
+function hstDatePlus(days) {
+  return new Date(Date.now() + days * 86400000).toLocaleDateString('en-CA', { timeZone: 'Pacific/Honolulu' });
+}
 // An estimate is good for a limited window — settings.estimate_valid_days,
 // 30 by default (migration 056). Past it the estimate is not something to
 // nudge, it is something to redo or reprice, so the list says "Expired"
@@ -2445,10 +2451,10 @@ function ScheduleJobModal({ invoice, gcalAuthed, defaultMinutes, onClose, onSave
 function FollowUpModal({ invoice, gcalAuthed, onClose, onSave }) {
   const [date, setDate] = useState(() => {
     if (invoice.followUpDate) return invoice.followUpDate;
-    const d = new Date(); d.setDate(d.getDate() + 3); return d.toISOString().slice(0, 10);
+    return hstDatePlus(3);
   });
   const [saving, setSaving] = useState(false);
-  const preset = (days) => { const d = new Date(); d.setDate(d.getDate() + days); setDate(d.toISOString().slice(0, 10)); };
+  const preset = (days) => { setDate(hstDatePlus(days)); };
 
   const handleSave = async () => {
     setSaving(true);

@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.3 — 2026-10-29
+
+- Fix date bug: `today()` in `src/App.jsx` used `toISOString()` (UTC), so from 2pm to midnight Hawaii time it returned tomorrow's date. It now formats in `Pacific/Honolulu`. The Follow Up modal's default (+3 days) and its day presets had the same UTC bug; they use a new `hstDatePlus()` helper. `api/schedule-request.js` and `api/vapi-call-ended.js` were checked: neither derives a calendar date from `toISOString().slice(0,10)` (the only `toISOString()` uses are full timestamps), so no change there.
+
 ## v1.40.2 — 2026-10-28
 
 - SMS agent now handles a reply to our address/email request. New `api/_lib/sms-reply-capture.js`, called from `api/sms-inbound.js` after the drip stop and before `autoReply()`. If our newest outbound text to the number (last 48 hours) asked for a "service address" or "email address", and the reply looks like one (address: a number plus words, not yes/no/stop, under 150 chars, no "?"; email: contains an address with "@"), it finds the newest non-deleted invoice from the last 7 days whose `client_info` phone matches and writes the answer to it: `job_address` as `{label, line1, line2, city, state: "HI", zip}` with the full text as `line1`, or `client_info.email`, plus `clients.addresses` (appended, or fills a blank entry; skipped if already there) or `clients.email`. Then sends "Perfect, got it! We have your address as [x]. See you [day] at [time]. Mahalo!" and logs it. The confirmation is skipped (data still saved) when `sms_outbound_enabled` is off. No match, no recent estimate, or a failed write falls through to the normal agent unchanged.
