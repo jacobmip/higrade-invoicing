@@ -4070,6 +4070,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // addresses are edited later.
       const epoch = formEpochRef.current;
       const f = formRef.current;
+      // Never persist a document with no client name: opening "+ New" used to
+      // mint a blank INV#### on the first debounce. Migration 105 enforces the
+      // same rule in the database. The draft layer still keeps the local edit.
+      if (!f.client || !String(f.client).trim()) return null;
       const c = clients.find(x => x.name === f.client);
       const cAddrs = Array.isArray(c?.addresses) ? c.addresses : [];
       // jobAddressId is session-only (never in DB); fall back to the snapshot's

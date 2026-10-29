@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.0 — 2026-10-29
+
+- Fix blank invoices: the invoice form's autosave (`flushAutoSaveRef` in `src/App.jsx`) now refuses to save while the client name is empty, so opening "+ New" no longer mints a blank INV####/EST####. The local draft still keeps whatever was typed.
+- Migration 105: `invoices_client_name_not_empty` check constraint, a database backstop. NULL is allowed; blank or whitespace is refused. Soft-deleted rows are exempt (62 blank ones already exist, all soft-deleted).
+
 ## v1.40.9 — 2026-10-29
 
 - Google review request: when an invoice is seen changing to paid (any save path, admin session), the client gets one text with the review link from `settings.google_review_link`. Skipped for estimates, blacklisted clients, clients with no mobile, a blank or placeholder link, and any client who already has an outbound text mentioning "Google review". New `src/reviewRequest.js`.

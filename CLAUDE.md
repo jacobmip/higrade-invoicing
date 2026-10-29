@@ -185,7 +185,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 104; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 105; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -372,7 +372,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **104** — **applied and verified 2026-10-29.** Inserts `settings.google_review_link` (placeholder `https://g.page/r/PLACEHOLDER/review`, `on conflict do nothing`). Read by `src/reviewRequest.js`, which texts the client once when `App()` sees an invoice flip to `paid`; a value containing `PLACEHOLDER`, or blank, means off. Edited in Settings > Google Review Link.
 
-Next migration is `105_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **105** — **written 2026-10-29.** `invoices_client_name_not_empty`: `check (deleted_at is not null or client_name is null or btrim(client_name) <> '')`. Backstop for the autosave guard in `flushAutoSaveRef` (v1.41.0), which stops a new document being saved until a client name exists. Soft-deleted rows are exempt because 62 blank ones already exist (all soft-deleted); restoring one needs a name first. `save_invoice_with_items` turns a null name into `''`, so a blank save now raises a check violation instead of storing a blank row.
+
+Next migration is `106_<short_description>.sql` (076, 077 are taken on disk, 078 is written but unapplied). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 
