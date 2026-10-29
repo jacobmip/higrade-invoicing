@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.9 — 2026-10-28
+
+- No more junk "Missed call - no name given" leads. In `api/vapi-call-ended.js`, `capture_abandoned_call` is skipped for an inbound call when the customer said under 5 words (same count as `shouldQueueDrip()`, which is untouched) and `endedReason` is `customer-ended-call`; logs "Skipped lead: no engagement". Voicemail / no-answer and 5+ words still file the lead. A call where Lisa filed an estimate is never skipped, so its recording still links.
+
 ## v1.39.8 — 2026-10-28
 
 - Inbound calls now get the drip too. After the kickoff text logic in `api/vapi-call-ended.js`, `shouldQueueDrip()` decides; if it approves, the kickoff counts as Message 1 and only Messages 2 and 3 are queued (24h, 48h). If the kickoff was not sent (`sms_outbound_enabled` false, or the send failed), all three are queued, Message 1 due immediately. If it declines, nothing is queued. Same templates as outbound (`dripMessages()`); queueing is now a shared `queueDrip()`. The result is returned as `drip` in the response.

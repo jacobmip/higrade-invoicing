@@ -192,6 +192,28 @@ function shouldQueueDrip(message) {
   return { drip: true, reason: 'engaged_no_booking' };
 }
 
+// Same word count shouldQueueDrip() uses, as its own function so the lead gate
+// below does not reach into the drip decision.
+function customerWordCount(message) {
+  const msgs = message?.artifact?.messages || [];
+  const text = (Array.isArray(msgs) ? msgs : [])
+    .filter(m => m?.role === 'user')
+    .map(m => m.message || m.content || '')
+    .join(' ');
+  return text.split(/\s+/).filter(w => w.length > 1).length;
+}
+
+// No abandoned-call lead for a hang-up with nothing said: under 5 words and the
+// customer ended the call. Voicemail and no-answer still file one (they tried
+// to reach us). A call where Lisa filed an estimate is never skipped, so
+// capture_abandoned_call can still link it for the recording.
+function shouldSkipAbandonedLead(message) {
+  const endedReason = message?.endedReason || message?.call?.endedReason || '';
+  if (endedReason !== 'customer-ended-call') return false;
+  if (extractFiledEstimate({ message })) return false;
+  return customerWordCount(message) < 5;
+}
+
 // Outbound: the party we dialled, with the "there" fallback the drip texts use.
 function extractCustomerName(p) {
   const m = p?.message || p || {};
@@ -318,7 +340,9 @@ export default async function handler(req, res) {
   // filed" is expected and capturing would turn our own call into a fake
   // inbound lead and a duplicate estimate.
   let rescued = null;
-  if (!outbound) try {
+  const skipLead = !outbound && shouldSkipAbandonedLead(params?.message || params || {});
+  if (skipLead) console.log('[vapi-call-ended] Skipped lead: no engagement', { to, callId });
+  if (!outbound && !skipLead) try {
     rescued = await rpc('capture_abandoned_call', {
       p_secret: expected,
       p_caller_id: to,
