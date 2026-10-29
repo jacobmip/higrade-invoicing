@@ -20,6 +20,7 @@
 // api/ai-estimator.js, which is also all this file needs.
 
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
+import { checkAppointment, speakSlot } from './availability-check.js';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
 // A reply that loses a job costs vastly more than the model does. At roughly
@@ -116,6 +117,9 @@ HARD RULES
 
 ${clientName ? `This is an existing customer: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
 ${hasOpenEstimate ? 'There is ALREADY an open job on file for them, so do NOT set ready_to_file. Anything new they tell you goes to the office instead.' : ''}
+
+CHECKING THE CALENDAR
+Before confirming any appointment time, the system will verify availability. If the time is taken, offer the next free slot. You never see the calendar yourself, so do not promise a specific time is open; pencil it in and the system corrects you if it is not.
 
 FILING THE JOB
 Set ready_to_file to true only once you have BOTH what is wrong AND either an appointment time or an address. Partial is fine after that; the office fills the rest. Do not wait for everything.
@@ -250,6 +254,28 @@ export async function draftReply({ phone, clientName, hasOpenEstimate }) {
     out.reply = (stop > 160 ? cut.slice(0, stop + 1) : cut).trim();
   }
   out.usage = json.usage;
+
+  // Never book a time the calendar has not cleared. The suggested slot is
+  // offered in the reply only, not written to `appointment`: the customer has
+  // not agreed to it yet, and the next turn can book it once they say yes.
+  out.appointment = String(out.appointment || '').trim();
+  if (out.appointment) {
+    const chk = await checkAppointment(out.appointment);
+    out.availability = chk.status;
+    if (chk.status === 'busy') {
+      console.log('[sms-agent] requested time busy', out.appointment);
+      out.appointment = '';
+      out.reply = chk.next
+        ? `Sorry, that time is already taken. The next opening I have is ${speakSlot(chk.next.start)}. Would that work for you?`
+        : 'Sorry, that day is fully booked. What other day works for you?';
+    } else if (chk.status === 'error') {
+      console.error('[sms-agent] availability check failed, not booking:', chk.detail);
+      out.appointment = '';
+      out.reply = 'I could not confirm that time just yet. What day and time window is best for a callback from our team to lock it in?';
+    }
+    // Filing needs the problem plus an appointment or an address.
+    if (!out.appointment && !String(out.address || '').trim()) out.ready_to_file = false;
+  }
   return out;
 }
 

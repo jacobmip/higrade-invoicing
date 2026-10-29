@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.39.5 — 2026-10-28
+
+- Lisa now checks the calendar before booking by text or web form. New helper `api/_lib/availability-check.js` calls `/api/availability` (the same endpoint Vapi uses, both work and personal Google calendars) with the webhook secret.
+- SMS agent: if the time the model proposes is not inside a free window of 90+ minutes, the appointment is dropped and the reply is replaced with "that time is taken, next opening is X" (or "that day is fully booked"). If the check fails, no appointment is set and the customer is asked for a callback window. The offered slot is not written as the appointment until the customer agrees. Prompt gained a note that availability is verified by the system.
+- Web form: a busy or unverifiable preferred time is omitted from `p_appointment`; the lead is still filed and the preferred date/window stays in the problem text for Jake. Each path is logged.
+
 ## v1.39.4 — 2026-10-28
 
 - Moved Undo button to bottom of Edit tab, above Done button.

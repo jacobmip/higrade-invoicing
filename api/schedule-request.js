@@ -26,6 +26,7 @@
 import {
   rpc, readBody, getSetting, sendTwilioSms, alreadySentMessage, recordSmsSnapshot,
 } from './_lib/sms.js';
+import { checkAppointment } from './_lib/availability-check.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
@@ -162,6 +163,20 @@ export default async function handler(req, res) {
                        : 'Did NOT agree to texts. Call or email only.',
   ].filter(Boolean).join('\n');
 
+  // Check the calendar before pencilling anything in. A busy or unreadable
+  // calendar drops the time (the preferred date/window is still in the problem
+  // text) and the lead is filed regardless; Jake schedules it by hand.
+  let appointment = hawaiiAppointment(clean(params.preferred_date, 40), clean(params.preferred_window, 40));
+  if (appointment) {
+    const chk = await checkAppointment(appointment);
+    if (chk.status === 'free') {
+      console.log('[schedule-request] availability: free, keeping', appointment);
+    } else {
+      console.log(`[schedule-request] availability: ${chk.status}${chk.detail ? ` (${chk.detail})` : ''}, omitting ${appointment}`);
+      appointment = null;
+    }
+  }
+
   const args = {
     p_secret: secret,
     p_name: name,
@@ -178,8 +193,7 @@ export default async function handler(req, res) {
     // attribution work exists to tell apart.
     p_lead_channel: resolveChannel(params.channel),
     p_services: service ? [service] : null,
-    p_appointment: hawaiiAppointment(clean(params.preferred_date, 40),
-                                     clean(params.preferred_window, 40)),
+    p_appointment: appointment,
   };
 
   try {
