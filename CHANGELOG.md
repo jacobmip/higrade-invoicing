@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.1 — 2026-10-29
+
+- Remove the Google review request feature from `src/App.jsx` (import, paid-status watcher that called `maybeSendReviewRequest`, Settings > Google Review Link field) because it caused constant page refresh. Deleted migration file 104; `src/reviewRequest.js` is left in place, unreferenced.
+
 ## v1.41.0 — 2026-10-29
 
 - Fix blank invoices: the invoice form's autosave (`flushAutoSaveRef` in `src/App.jsx`) now refuses to save while the client name is empty, so opening "+ New" no longer mints a blank INV####/EST####. The local draft still keeps whatever was typed.

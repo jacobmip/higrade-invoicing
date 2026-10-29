@@ -98,7 +98,7 @@ src/
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
   lisaActions.js     — `sendLisaText()` / `queueLisaCall()`: the AI chat's send_sms and place_call, shared by the per-invoice chat (App.jsx `handleGlobalAIAction`) and the global agent (`aiAgent.js`); both call `/api/sms-inbound` with the admin session (v1.38.0)
-  reviewRequest.js   — `maybeSendReviewRequest()`: one Google review text per client when an invoice is first seen flipping to paid (v1.40.9); sent through `sendLisaText()`, guarded by an outbound `client_messages` row mentioning "Google review"
+  reviewRequest.js   — orphaned since v1.41.1: nothing imports it (the Google review text was removed from App.jsx because it caused a constant page refresh)
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
   AddressAutocomplete.jsx — street input with Google Places suggestions (v1.37.0); calls `/api/geocode?mode=autocomplete`, then `/api/geocode?address=` for city/state/zip
@@ -370,7 +370,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **103** — **applied and verified 2026-10-29.** `clients.blacklisted` boolean default false, `clients.blacklist_reason` text. See the schema entry.
 
-- **104** — **applied and verified 2026-10-29.** Inserts `settings.google_review_link` (placeholder `https://g.page/r/PLACEHOLDER/review`, `on conflict do nothing`). Read by `src/reviewRequest.js`, which texts the client once when `App()` sees an invoice flip to `paid`; a value containing `PLACEHOLDER`, or blank, means off. Edited in Settings > Google Review Link.
+- **104** — applied 2026-10-29, **file removed in v1.41.1** with the Google review feature. The `settings.google_review_link` row may still exist in the database; nothing reads it.
 
 - **105** — **written 2026-10-29.** `invoices_client_name_not_empty`: `check (deleted_at is not null or client_name is null or btrim(client_name) <> '')`. Backstop for the autosave guard in `flushAutoSaveRef` (v1.41.0), which stops a new document being saved until a client name exists. Soft-deleted rows are exempt because 62 blank ones already exist (all soft-deleted); restoring one needs a name first. `save_invoice_with_items` turns a null name into `''`, so a blank save now raises a check violation instead of storing a blank row.
 
