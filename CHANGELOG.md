@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.4 — 2026-10-29
+
+- SMS agent (`api/_lib/sms-agent.js`): new `saveProgressiveData()` runs every turn after the reply is sent and logged, before the `ready_to_file` check. A name replaces a blank or placeholder client name; an address fills a blank `job_address` and the problem fills blank `notes` on the client's newest estimate from the last 7 days (estimates only). Only-if-blank on every field, never throws. Not added: a separate `visits` write on filing, because `create_estimate_from_lead` already writes the visit (and overwriting it would drop the calendar `eventId`).
+
 ## v1.41.3 — 2026-10-29
 
 - In-app AI: new `get_messages` tool (`api/_lib/agent-tools.js`, executor in `src/aiAgent.js`) reads a client's SMS thread by `client_id` or last 10 phone digits, newest N (default 30, max 100) returned oldest first, each line stamped in Hawaii time and labelled CUSTOMER / LISA / JAKE (outbound with a `related_call_id` is Lisa, without is Jake). `client_messages` added to the `query_database` description and to its table allowlist, so it is readable under the user's own RLS.

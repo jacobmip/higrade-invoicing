@@ -331,6 +331,9 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   await sendTwilioSms({ to: phone, body: out.reply });
   await logOutbound({ secret, phone, body: out.reply });
 
+  // Progressive save: runs every turn, so a name given on turn 2 survives a hangup.
+  await saveProgressiveData(phone, clientId, out);
+
   let filed = null;
   let estimatorDispatch = null;
   if (out.ready_to_file && !hasOpenEstimate) {
@@ -378,6 +381,60 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
     (filed ? `, filed ${filed.estimate_id || filed.id || 'lead'}` : '') +
     (estimatorDispatch ? `, estimator ${estimatorDispatch}` : '') +
     (out.needs_human ? ', FLAGGED FOR JAKE' : '');
+}
+
+/**
+ * Save whatever the model pinned down this turn, without waiting for
+ * ready_to_file. Every write is only-if-blank, so it can never overwrite
+ * something Jake or the customer already set. Never throws: the reply has
+ * already gone out.
+ */
+async function saveProgressiveData(phone, clientId, out) {
+  try {
+    if (!clientId) return;
+    const base = supabaseUrl();
+    const key = supabaseKey();
+    const read = { apikey: key, Authorization: `Bearer ${key}` };
+    const write = { ...read, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+    const name = String(out.name || '').trim();
+    const address = String(out.address || '').trim();
+    const problem = String(out.problem || '').trim();
+
+    if (name) {
+      const [c] = await select(`clients?id=eq.${clientId}&select=name`);
+      const existing = (c?.name || '').trim();
+      if (!existing || /missed call|no name|text lead/i.test(existing)) {
+        await fetch(`${base}/rest/v1/clients?id=eq.${clientId}`, {
+          method: 'PATCH', headers: write, body: JSON.stringify({ name }),
+        });
+      }
+    }
+
+    if (address || problem) {
+      // Newest estimate for this client in the last 7 days. Estimates only, so
+      // a real invoice is never touched.
+      const cutoff = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+      const [inv] = await select(
+        `invoices?client_id=eq.${clientId}&type=eq.estimate&deleted_at=is.null` +
+        `&created_at=gte.${encodeURIComponent(cutoff)}&select=id,job_address,notes&order=created_at.desc&limit=1`
+      );
+      if (inv) {
+        const patch = {};
+        if (address && !inv.job_address?.line1) {
+          patch.job_address = { label: 'Service address', line1: address, line2: '', line3: '', city: '', state: 'HI', zip: '' };
+        }
+        if (problem && !inv.notes) patch.notes = problem;
+        if (Object.keys(patch).length) {
+          await fetch(`${base}/rest/v1/invoices?id=eq.${encodeURIComponent(inv.id)}`, {
+            method: 'PATCH', headers: write, body: JSON.stringify(patch),
+          });
+          console.log(`[sms-agent] progressive: saved ${Object.keys(patch).join(', ')} to ${inv.id}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[sms-agent] progressive save failed:', e.message || e);
+  }
 }
 
 /**
