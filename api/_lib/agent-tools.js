@@ -200,12 +200,30 @@ export const AGENT_TOOLS = [
       'Live read-only query against the invoicing database as a PostgREST path, under the signed-in user\'s permissions. ' +
       'Use it only when the other tools cannot answer, or to check for records created since the app loaded (a new lead from the receptionist). ' +
       'Tables: invoices (id, type, client_name, date, due_date, status, notes, internal_notes, source, visits, created_at), invoice_items (invoice_id, name, description, qty, price), ' +
-      'clients (name, email, phone, address1, address2, address3, addresses), payments (invoice_id, amount, method, date), expenses, saved_items, invoice_events (invoice_id, kind, created_at). ' +
+      'clients (name, email, phone, address1, address2, address3, addresses), payments (invoice_id, amount, method, date), expenses, saved_items, invoice_events (invoice_id, kind, created_at), ' +
+      'client_messages (id, client_id, phone_number, direction (\'inbound\'/\'outbound\'), body, related_call_id, created_at, media). ' +
+      'direction inbound means the customer sent it; outbound means it was sent to the customer. ' +
+      'related_call_id is the Twilio SID: if it starts with SM or MM, Lisa sent it automatically via the Twilio API; if null or empty, Jake sent it manually from the app. ' +
+      'Messages for a client: client_messages?client_id=eq.{uuid}&order=created_at.asc. By phone: client_messages?phone_number=ilike.*{last10digits}*&order=created_at.asc. Prefer get_messages for reading a thread. ' +
       'Totals are not stored; sum qty*price. Example: invoices?select=id,client_name,date,source&source=eq.ai_receptionist&order=created_at.desc&limit=10',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string' } },
       required: ['query'],
+    },
+  },
+  {
+    name: 'get_messages',
+    description:
+      'Get the SMS message thread for a client or phone number. Returns messages in chronological order, showing who sent each one (customer, Jake, or Lisa). ' +
+      'Use this when Jake asks to read texts, see what a customer said, or extract info from a conversation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client UUID. Use find_client first if you only have a name or phone.' },
+        phone_number: { type: 'string', description: 'Phone number (last 10 digits). Use if you do not have the client UUID.' },
+        limit: { type: 'integer', description: 'Max messages to return (the most recent ones, oldest first). Default 30.' },
+      },
     },
   },
 

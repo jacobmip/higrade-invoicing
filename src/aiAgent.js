@@ -325,7 +325,7 @@ function queryBusinessData(input, ctx) {
 // tables, no RPCs.
 const READABLE_TABLES = new Set([
   'invoices', 'invoice_items', 'clients', 'payments', 'expenses', 'saved_items',
-  'invoice_events', 'invoice_versions', 'job_photos', 'client_versions',
+  'invoice_events', 'invoice_versions', 'job_photos', 'client_versions', 'client_messages',
 ]);
 async function queryDatabase(input) {
   let q = String(input.query || '').trim().replace(/^\/?(rest\/v1\/)?/, '');
@@ -344,7 +344,42 @@ async function queryDatabase(input) {
   try { return { rows: JSON.parse(body) }; } catch { return { raw: body }; }
 }
 
-// ─── Writes ──────────────────────────────────────────────────────────────────
+// The SMS thread for one client or phone, oldest first, each line labelled by
+// who sent it. related_call_id is overloaded (Twilio SID, Vapi call id or
+// null): null on an outbound row means Jake typed it in the app, anything else
+// means Lisa's automation sent it. RLS (owner or admin) decides what comes back.
+async function getMessages(input, ctx) {
+  const clientId = String(input.client_id || '').trim();
+  let digits = String(input.phone_number || '').replace(/\D/g, '').slice(-10);
+  if (!digits && clientId) {
+    const c = ctx.getData().clients.find(x => String(x.id) === clientId);
+    digits = String(c?.phone || c?.mobile || '').replace(/\D/g, '').slice(-10);
+  }
+  if (!clientId && digits.length < 7) return { error: 'Give a client_id or a phone number.' };
+  const limit = Math.min(Math.max(parseInt(input.limit, 10) || 30, 1), 100);
+  const conds = [];
+  if (clientId) conds.push(`client_id.eq.${encodeURIComponent(clientId)}`);
+  if (digits) conds.push(`phone_number.ilike.*${digits}*`);
+  // Newest N, then flipped, so a long thread returns its latest messages in order.
+  const r = await queryDatabase({
+    query: `client_messages?select=direction,body,related_call_id,created_at,media&or=(${conds.join(',')})&order=created_at.desc&limit=${limit}`,
+  });
+  if (r.error) return r;
+  if (!Array.isArray(r.rows)) return { error: 'Unexpected response reading messages.' };
+  const rows = r.rows.reverse();
+  if (!rows.length) return { count: 0, thread: 'No messages found.' };
+  const when = (t) => new Date(t).toLocaleString('en-US', {
+    timeZone: 'Pacific/Honolulu', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  const who = (m) => m.direction === 'inbound' ? 'CUSTOMER' : (m.related_call_id ? 'LISA' : 'JAKE');
+  const thread = rows.map(m => {
+    const att = Array.isArray(m.media) && m.media.length ? ` [${m.media.length} attachment${m.media.length === 1 ? '' : 's'}]` : '';
+    return `[${when(m.created_at)}] ${who(m)}: ${m.body || ''}${att}`;
+  });
+  return { count: rows.length, thread };
+}
+
+// ─── Writes ──────────────────────────────────────────────────────────────
 // Every write goes through ctx.onAction, which is App.jsx's handleGlobalAIAction
 // in strict mode (it throws instead of swallowing a failed save). The checks
 // here exist so the model gets a useful error back rather than a silent no-op.
@@ -632,6 +667,7 @@ const TOOLS = {
   business_summary: businessSummary,
   query_business_data: queryBusinessData,
   query_database: queryDatabase,
+  get_messages: getMessages,
   create_client: createClient,
   update_client: updateClient,
   add_job_site: addJobSite,
@@ -664,6 +700,7 @@ const PROGRESS = {
   business_summary: 'Adding up the numbers',
   query_business_data: 'Checking the numbers',
   query_database: 'Checking the database',
+  get_messages: 'Reading texts',
   create_client: (i) => `Adding client ${i.name || ''}`.trim(),
   update_client: 'Updating client',
   add_job_site: 'Adding job site',

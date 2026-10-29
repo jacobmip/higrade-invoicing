@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.3 — 2026-10-29
+
+- In-app AI: new `get_messages` tool (`api/_lib/agent-tools.js`, executor in `src/aiAgent.js`) reads a client's SMS thread by `client_id` or last 10 phone digits, newest N (default 30, max 100) returned oldest first, each line stamped in Hawaii time and labelled CUSTOMER / LISA / JAKE (outbound with a `related_call_id` is Lisa, without is Jake). `client_messages` added to the `query_database` description and to its table allowlist, so it is readable under the user's own RLS.
+
 ## v1.41.2 — 2026-10-29
 
 - SMS agent (`api/_lib/sms-agent.js`): a customer's "Okay" 34 seconds after Lisa penciled in a time hit the 45 second reply cooldown and was dropped, so no estimate was filed. Cooldown cut to 15 seconds, and a short confirmation (Okay, Yes, Sounds good...) skips the cooldown when Lisa's last text mentioned a day or time. The prompt now tells her to set `ready_to_file` on that confirmation and carry the penciled appointment. `create_estimate_from_lead` verified: it exists (migrations 062/077) and the call's parameter names match.
