@@ -416,14 +416,14 @@ async function saveProgressiveData(phone, clientId, out) {
       const cutoff = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
       const [inv] = await select(
         `invoices?client_id=eq.${clientId}&type=eq.estimate&deleted_at=is.null` +
-        `&created_at=gte.${encodeURIComponent(cutoff)}&select=id,job_address,notes&order=created_at.desc&limit=1`
+        `&created_at=gte.${encodeURIComponent(cutoff)}&select=id,job_address,internal_notes&order=created_at.desc&limit=1`
       );
       if (inv) {
         const patch = {};
         if (address && !inv.job_address?.line1) {
           patch.job_address = { label: 'Service address', line1: address, line2: '', line3: '', city: '', state: 'HI', zip: '' };
         }
-        if (problem && !inv.notes) patch.notes = problem;
+        if (problem && !(inv.internal_notes || '').trim()) patch.internal_notes = problem;
         if (Object.keys(patch).length) {
           await fetch(`${base}/rest/v1/invoices?id=eq.${encodeURIComponent(inv.id)}`, {
             method: 'PATCH', headers: write, body: JSON.stringify(patch),

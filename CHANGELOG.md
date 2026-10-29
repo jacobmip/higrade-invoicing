@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.5 — 2026-10-29
+
+- SMS agent (`api/_lib/sms-agent.js`): `saveProgressiveData()` now writes the problem description to `invoices.internal_notes` (office-only) instead of `notes` (customer-facing). The blank check reads `internal_notes`, trimmed.
+
 ## v1.41.4 — 2026-10-29
 
 - SMS agent (`api/_lib/sms-agent.js`): new `saveProgressiveData()` runs every turn after the reply is sent and logged, before the `ready_to_file` check. A name replaces a blank or placeholder client name; an address fills a blank `job_address` and the problem fills blank `notes` on the client's newest estimate from the last 7 days (estimates only). Only-if-blank on every field, never throws. Not added: a separate `visits` write on filing, because `create_estimate_from_lead` already writes the visit (and overwriting it would drop the calendar `eventId`).
