@@ -12417,6 +12417,11 @@ export default function App() {
         ? [{ id: 'primary', label: '', line1: c.address1 || '', line2: c.unit || '', city, state, zip, line3: [city, state, zip].filter(Boolean).join(' ') }]
         : [];
       const form = { name: c.name || "", email: c.email || "", email2: c.email2 || "", mobile: c.mobile || c.phone || "", phone: c.phone || c.mobile || "", address1: c.address1 || "", unit: c.unit || "", address2: c.address2 || "", address3: c.address3 || "", addresses };
+      const dupId = await db.findDuplicateClient(form);
+      if (dupId) {
+        const existing = dataRef.current.clients.find(x => x.id === dupId);
+        if (existing) return { ...existing, duplicate: true };
+      }
       const id = await db.insertClient(form);
       const newClient = { ...form, id };
       setDataNow(d => ({ ...d, clients: [...d.clients, newClient] }));
@@ -12890,6 +12895,13 @@ export default function App() {
 
   const saveClient = async (form, editing) => {
     if (editing === "new") {
+      const dupId = await db.findDuplicateClient(form);
+      const dup = dupId && dataRef.current.clients.find(c => c.id === dupId);
+      if (dup) {
+        alert(`Client with this phone/email already exists: ${dup.name}. Showing existing record.`);
+        setView("list"); setTab("clients"); setOpenClientId(dup.id);
+        return dup;
+      }
       const id = await db.insertClient(form);
       const saved = { ...form, id };
       setData(d => ({ ...d, clients: [...d.clients, saved] }));
@@ -13733,6 +13745,12 @@ export default function App() {
               }));
             }}
             onCreateClient={async (form) => {
+              const dupId = await db.findDuplicateClient(form);
+              const dup = dupId && dataRef.current.clients.find(c => c.id === dupId);
+              if (dup) {
+                alert(`Client with this phone/email already exists: ${dup.name}. Using the existing record.`);
+                return dup;
+              }
               const id = await db.insertClient(form);
               const newClient = { ...form, id };
               db.recordClientVersion(newClient, "Created").catch(() => {});
