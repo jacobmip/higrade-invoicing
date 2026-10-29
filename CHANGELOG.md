@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.6 — 2026-10-29
+
+- Address suggestions no longer fail silently. When Google refuses the lookup (API key, billing, or the Places service switched off), the street field now says "Address suggestions unavailable (REASON). Type the address in full." and `/api/geocode` logs and returns Google's own error message. Before, a refusal looked exactly like "no suggestions", which is how the dropdown went dead everywhere with nothing to say why.
+
 ## v1.41.5 — 2026-10-29
 
 - SMS agent (`api/_lib/sms-agent.js`): `saveProgressiveData()` now writes the problem description to `invoices.internal_notes` (office-only) instead of `notes` (customer-facing). The blank check reads `internal_notes`, trimmed.

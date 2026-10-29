@@ -37,7 +37,10 @@ export default async function handler(req) {
     });
     const pd = await pr.json();
     if (pd.status !== 'OK' && pd.status !== 'ZERO_RESULTS') {
-      return new Response(JSON.stringify({ error: pd.status || 'Autocomplete failed' }), {
+      // Pass Google's own explanation through. Without it a refused key, a
+      // billing problem or a disabled API all looked like "no suggestions".
+      console.error('[geocode] autocomplete refused:', pd.status, pd.error_message || '');
+      return new Response(JSON.stringify({ error: pd.status || 'Autocomplete failed', message: pd.error_message || null }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
