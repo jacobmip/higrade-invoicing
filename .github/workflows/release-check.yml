@@ -82,3 +82,59 @@ jobs:
           BUILD_DATE=$(grep -oE 'APP_BUILD_DATE[^"]*"[^"]+"' src/version.js | grep -oE '"[^"]+"' | tr -d '"')
           echo "Build date: $BUILD_DATE"
           echo "OK: $VERSION is bumped and logged."
+
+  # Enforces hard rule 14 for the two cases a script can see: a new migration
+  # file, and a new source file. Added 2026-10-29 because Jake's Hermes agent
+  # (which reads AI-OS/.hermes.md, not this repo's CLAUDE.md) shipped migrations
+  # 101-105 and new files while updating only AI-OS/STATUS.md. Claude Code
+  # sessions load CLAUDE.md on their own; Hermes does not, so the check sits
+  # here, where every writer's push lands, rather than in any one agent's
+  # instructions.
+  docs-updated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: New migrations and source files must be documented in CLAUDE.md
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "No previous commit to diff against; skipping."
+            exit 0
+          fi
+
+          ADDED=$(git diff --name-only --diff-filter=A "$BEFORE" "$AFTER")
+          MISSING=""
+
+          # A migration is documented when CLAUDE.md names its number in bold
+          # (the migrations list format, e.g. **105**) or names its file.
+          for f in $(echo "$ADDED" | grep -E '^supabase/migrations/[0-9]+_.*\.sql$' || true); do
+            base=$(basename "$f")
+            num=$(echo "$base" | grep -oE '^[0-9]+')
+            if ! grep -qE "\*\*${num}\*\*|${base}" CLAUDE.md; then
+              MISSING="${MISSING}\n  ${f}  (add a **${num}** line to 'Migrations applied')"
+            fi
+          done
+
+          # A new source file is documented when CLAUDE.md names it, normally in
+          # the Source layout block. src/App.jsx.bak is rule 11's restore point.
+          for f in $(echo "$ADDED" | grep -E '^(src/[^/]+\.(js|jsx)|api/.+\.js)$' | grep -v '^src/App\.jsx\.bak$' || true); do
+            base=$(basename "$f")
+            if ! grep -qF "$base" CLAUDE.md; then
+              MISSING="${MISSING}\n  ${f}  (add it to 'Source layout')"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "FAILED: added but not documented in CLAUDE.md (hard rule 14):"
+            printf "$MISSING\n"
+            echo ""
+            echo "CLAUDE.md is the source of truth for the schema, migrations and files."
+            echo "AI-OS/STATUS.md is where things stand; it does not replace this."
+            exit 1
+          fi
+          echo "OK: every added migration and source file is named in CLAUDE.md."

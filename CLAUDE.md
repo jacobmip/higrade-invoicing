@@ -77,6 +77,19 @@ Read this file first. It captures everything an AI agent needs to safely continu
     the schema as of migration 018 for two months while the database went to
     041 — `version.js` and `CHANGELOG.md` stayed current the whole time because
     rule 13 forced them, and nothing forced this.
+    - **It binds every writer, not just Claude Code.** Jake's Hermes agent works on
+      this repo and this database too, and it reads `AI-OS/.hermes.md`, not this file.
+      On 2026-10-28/29 it shipped migrations 101-105 and new source files while
+      updating only `AI-OS/STATUS.md`. The two docs have different jobs: **this file
+      is how the app works** (schema, migrations and whether each is applied, files,
+      routes, invariants, model ids); **`AI-OS/STATUS.md` is where things stand**
+      (open items, what waits on Jake). A change that touches both updates both.
+    - **Enforced by CI since 2026-10-29** (`docs-updated` job in
+      `.github/workflows/release-check.yml`): a push that adds a migration this file
+      does not name as `**NNN**`, or a `src/` or `api/` file this file does not name,
+      goes red. Like rule 13's check it never blocks the deploy. It cannot see a
+      database change made without a migration file, so those still rely on the
+      reminder in `AI-OS/scripts/apply-migration.py` and on the rule itself.
 
 ## Stack
 - **Frontend**: Vite + React. `src/App.jsx` is ~10,300 lines and intentionally monolithic; a few later features live in their own files (see Source layout).
@@ -109,6 +122,8 @@ src/
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
   AddressAutocomplete.jsx — street input with Google Places suggestions (v1.37.0); calls `/api/geocode?mode=autocomplete`, then `/api/geocode?address=` for city/state/zip
+  TimeClockTab.jsx   — Time Clock tab: start/stop a shift with the raw GPS fix, job picker, the week's entries. Pay numbers are computed by the migration 072 trigger, never here; a bad GPS fix never blocks a clock event
+  ActivityBits.jsx   — GPS activity display (migration 097): the tech's own `ActivityBadge` and the admin's live `ActivityBoard`
   HoursTracker.jsx   — admin Hours card in Reports: all workers' time_entries by week or range, admin edit of start/end (v1.28.8)
   WelcomePage.jsx    — `/welcome` invite onboarding (public route) and the Pending-setup screen (migrations 082-083)
   billTo.js          — bill-to / job-site address resolution
@@ -374,6 +389,8 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **100** — **applied and verified 2026-10-28.** `invoices.estimator_items` jsonb and `estimator_approval` text (null | approved | declined, check constraint). See the schema entry. Dry-run first, then constraint exercised in a rolled-back transaction.
 
 - **101** — **applied and verified 2026-10-28.** `sms_drip_queue` (phone, call_id, message_index, message, scheduled_at, sent_at, stopped_at, stop_reason). Written by `api/vapi-call-ended.js` when `shouldQueueDrip()` approves an outbound call (v1.39.7: no estimate filed, no opt-out phrase, 5+ customer words or voicemail/no-answer; reason logged, not stored) (rows for messages 2 and 3; message 1 is sent immediately). **Inbound calls (v1.39.8) use the same gate: the kickoff text is message 1, so only 2 and 3 are queued; if the kickoff was not sent, all three are queued with message 1 due now.**, stopped by `api/sms-inbound.js` on any reply, sent by `AI-OS/scripts/sms_drip.py`. RLS on, no policies: service role only. `sms_drip.py` logs messages 2 and 3 to `client_messages` since v1.39.7.
+
+- **102** — **applied 2026-10-28 (per AI-OS STATUS; not re-verified here).** `push_invoice_to_calendar()` raises `INVALID_STATE` when the invoice's `client_name` is blank instead of titling the event 'Job', a database backstop for the blank-invoice bug. Documented late, 2026-10-29: it shipped without a CLAUDE.md line, which is what the `docs-updated` CI check now catches.
 
 - **103** — **applied and verified 2026-10-29.** `clients.blacklisted` boolean default false, `clients.blacklist_reason` text. See the schema entry.
 
