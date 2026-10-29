@@ -273,6 +273,53 @@ function businessSummary(input, ctx) {
   };
 }
 
+// Short, phone-sized answers to the common money questions. Built on the data
+// the app already holds and calcTotals, so the numbers match the screen.
+function queryBusinessData(input, ctx) {
+  const today = hawaiiToday();
+  const { invoices, clients } = ctx.getData();
+  const live = invoices.filter(i => !i.deletedAt);
+  const invs = live.filter(i => i.type !== 'estimate');
+  const fmt = (n) => `$${money(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const line = (i) => `${i.id} ${i.client || ''}: ${fmt(ctx.calcTotals(i).balance)}${i.dueDate ? ` (due ${i.dueDate})` : ''}`;
+  const type = input.query_type;
+
+  if (type === 'outstanding' || type === 'overdue') {
+    let open = invs.filter(i => isUnpaidInvoice(i, ctx.calcTotals));
+    if (type === 'overdue') open = open.filter(i => i.dueDate && i.dueDate < today);
+    open.sort((a, b) => ctx.calcTotals(b).balance - ctx.calcTotals(a).balance);
+    const total = open.reduce((s, i) => s + ctx.calcTotals(i).balance, 0);
+    if (!open.length) return { summary: type === 'overdue' ? 'No overdue invoices.' : 'Nothing outstanding.' };
+    return { summary: [`${open.length} ${type} invoice${open.length === 1 ? '' : 's'}, ${fmt(total)} total.`, ...open.slice(0, 4).map(line)].join('\n') };
+  }
+  if (type === 'revenue_month' || type === 'revenue_week') {
+    const from = type === 'revenue_month' ? `${today.slice(0, 7)}-01` : addDays(today, -7);
+    const inRange = invs.filter(i => i.date && i.date >= from && i.date <= today);
+    const invoiced = inRange.reduce((s, i) => s + ctx.calcTotals(i).total, 0);
+    let collected = 0;
+    for (const i of invs) for (const p of i.payments || []) if (p.date && p.date >= from && p.date <= today) collected += Number(p.amount) || 0;
+    return { summary: `${type === 'revenue_month' ? 'This month' : 'Last 7 days'} (${from} to ${today}):\nInvoiced ${fmt(invoiced)} across ${inRange.length} invoices.\nCollected ${fmt(collected)}.` };
+  }
+  if (type === 'top_clients') {
+    const by = {};
+    for (const i of invs.filter(x => x.status === 'paid')) by[i.client || 'Unknown'] = (by[i.client || 'Unknown'] || 0) + ctx.calcTotals(i).total;
+    const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    return { summary: top.length ? ['Top clients by paid invoices:', ...top.map(([n, v]) => `${n}: ${fmt(v)}`)].join('\n') : 'No paid invoices yet.' };
+  }
+  if (type === 'recent_jobs') {
+    const recent = [...invs].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 10);
+    return { summary: recent.length ? recent.map(i => `${i.id} ${i.date || ''} ${i.client || ''} ${i.status || ''} ${fmt(ctx.calcTotals(i).total)}`).join('\n') : 'No invoices.' };
+  }
+  if (type === 'client_lookup') {
+    const q = lc(input.client_name).trim();
+    if (!q) return { error: 'Give a client name.' };
+    const hits = clients.filter(c => lc(c.name).includes(q)).slice(0, 3);
+    if (!hits.length) return { summary: `No client matching "${input.client_name}".` };
+    return { summary: hits.map(c => `${c.name}: ${c.phone || c.mobile || 'no phone'}, ${c.email || 'no email'}, ${[c.address1, c.address2].filter(Boolean).join(', ') || 'no address'}`).join('\n') };
+  }
+  return { error: 'Unknown query_type.' };
+}
+
 // Live read under the signed-in user's own session, so RLS decides what comes
 // back exactly as it does for the rest of the app. GET only, a fixed list of
 // tables, no RPCs.
@@ -582,6 +629,7 @@ const TOOLS = {
   search_price_book: searchPriceBook,
   get_schedule: getSchedule,
   business_summary: businessSummary,
+  query_business_data: queryBusinessData,
   query_database: queryDatabase,
   create_client: createClient,
   update_client: updateClient,
@@ -613,6 +661,7 @@ const PROGRESS = {
   search_price_book: 'Checking the price book',
   get_schedule: 'Checking the schedule',
   business_summary: 'Adding up the numbers',
+  query_business_data: 'Checking the numbers',
   query_database: 'Checking the database',
   create_client: (i) => `Adding client ${i.name || ''}`.trim(),
   update_client: 'Updating client',

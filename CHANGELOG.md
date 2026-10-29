@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.40.6 — 2026-10-29
+
+- Global AI chat: new `query_business_data` tool (outstanding, overdue, revenue_month, revenue_week, top_clients, recent_jobs, client_lookup). Runs in the browser on the app's loaded data and `calcTotals`, so answers match the screen; read-only, no new route. Schema in `api/_lib/agent-tools.js`, executor in `src/aiAgent.js`.
+- v1.40.5 was skipped: the Lisa visits fix it was meant for already shipped in migration 065.
+
 ## v1.40.4 — 2026-10-29
 
 - Settings: new "What's New" card at the bottom of the Settings tab. `CHANGELOG.md` is imported as a raw string at build time (`?raw`), parsed into version blocks, and the five newest are shown in a scrollable list (max height 400px). Purely client-side; no new route.

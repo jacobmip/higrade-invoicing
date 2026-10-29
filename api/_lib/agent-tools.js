@@ -181,6 +181,20 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'query_business_data',
+    description:
+      'Quick business answers in one call: who owes money, overdue invoices, revenue this month or this week, top clients, recent jobs, or a client lookup. ' +
+      'Use for questions like "who owes me money", "what is my revenue this month", "show me overdue invoices". Read-only; uses the same totals as the screen.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query_type: { type: 'string', enum: ['outstanding', 'overdue', 'revenue_month', 'revenue_week', 'top_clients', 'recent_jobs', 'client_lookup'] },
+        client_name: { type: 'string', description: 'For client_lookup: full or partial name.' },
+      },
+      required: ['query_type'],
+    },
+  },
+  {
     name: 'query_database',
     description:
       'Live read-only query against the invoicing database as a PostgREST path, under the signed-in user\'s permissions. ' +
