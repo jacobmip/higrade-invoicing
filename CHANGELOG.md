@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.9 — 2026-10-30
+
+- **The apprentice on a job can be changed or cleared.** The Default Apprentice from Settings was stamped onto every new estimate and invoice by the database and shown only as read-only text under Assigned Tech, so it could not be undone. It is now a dropdown, "Apprentice on this job", that starts on the default and saves on change (None clears it).
+- **Converting keeps your choice.** Converting an estimate (in the app, or by the customer approving on their link or paying a deposit) used to stamp the default again on the new invoice. Both paths now carry the estimate's apprentice across, including "none".
+- The commission picker was also labelled "Apprentice", which is what made the two look like one setting. It is now "Commission", with "Hourly only (no commission)" as the empty choice. It still decides pay, still starts at hourly only, and is not linked to the apprentice on the job.
+- No migration: the database trigger only fills an empty apprentice on insert, so editing afterwards was always allowed.
+
 ## v1.41.8 — 2026-10-30
 
 - Deleted invoices no longer flash in the list on app load. The invoice query already excluded `deleted_at` rows; the flash came from the localStorage cache painted before the fetch finished, which could still hold documents deleted since (on another device or by Lisa). The cache is now filtered on hydrate.

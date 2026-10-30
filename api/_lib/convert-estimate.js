@@ -146,6 +146,10 @@ export async function convertEstimateToInvoice(estimateId) {
       owner_id: est.owner_id || null,
       // Whoever ran the estimate runs the invoice (migration 053).
       assigned_tech_id: est.assigned_tech_id || est.owner_id || null,
+      // Keep the estimate's apprentice (migration 094). A null here is filled
+      // with the Default Apprentice by the insert trigger; the PATCH below puts
+      // back an estimate that deliberately had none.
+      apprentice_id: est.apprentice_id || null,
       // The invoice takes the estimate's schedule (kind relabelled to 'job') and
       // so its Google event ids; the estimate lets go of them below, so no two
       // rows claim one event. The sync_first_visit trigger derives gcal_date,
@@ -156,6 +160,17 @@ export async function convertEstimateToInvoice(estimateId) {
   if (!insertRes.ok) {
     const t = await insertRes.text();
     throw new Error(`Invoice insert failed: ${insertRes.status} ${t}`);
+  }
+
+  // The estimate deliberately had no apprentice: undo the Default Apprentice the
+  // insert trigger stamped on the new invoice.
+  if (!est.apprentice_id) {
+    const appRes = await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(newId)}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ apprentice_id: null }),
+    });
+    if (!appRes.ok) console.error('[convert-estimate] apprentice clear failed:', await appRes.text());
   }
 
   // Belt-and-suspenders on ownership: if the BEFORE INSERT trigger clobbered

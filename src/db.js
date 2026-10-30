@@ -1565,6 +1565,24 @@ export async function setTechPay(techId, { hourlyRate, commissionPct }) {
 // carries an optimistic-lock token this doesn't need. The database pins both
 // fields to their existing value for anyone but the owner (migration 075), so
 // calling these as a non-admin is a harmless no-op, not an error.
+// The apprentice on a job (migration 094). New admin-owned documents start with
+// settings.default_apprentice_id, stamped by the default_assigned_tech trigger
+// on INSERT only, so this plain update is what lets Jake change or clear it per
+// job. save_invoice_with_items never names the column, so a full save can't
+// undo it either. Admin-only by RLS; a non-admin's update is a silent no-op.
+export async function getInvoiceApprentice(invoiceId) {
+  const { data, error } = await supabase.from('invoices')
+    .select('apprentice_id').eq('id', invoiceId).maybeSingle()
+  if (error) throw error
+  return data ? (data.apprentice_id || null) : undefined // undefined: no row yet
+}
+
+export async function setInvoiceApprentice(invoiceId, apprenticeId) {
+  const { error } = await supabase.from('invoices')
+    .update({ apprentice_id: apprenticeId || null }).eq('id', invoiceId)
+  if (error) throw error
+}
+
 export async function setInvoiceCommissionTech(invoiceId, techId) {
   const { data: before } = await supabase.from('invoices')
     .select('commission_tech_id').eq('id', invoiceId).maybeSingle()
