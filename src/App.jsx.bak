@@ -4192,6 +4192,17 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // "Late fee: waived" line so the waiver is visible while editing.
   const lateFeeWouldApply = !isEstimate && !!form.lateFeeWaived && calcLateFee({ ...form, lateFeeWaived: false }, t).fee > 0;
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  // A new document gets its apprentice from the database's insert trigger, which
+  // the form never sees. Read it once the row exists so the picker shows the
+  // pre-selected default instead of None.
+  useEffect(() => {
+    if (!isAdmin || !autoSavedId || form.apprenticeId !== undefined) return;
+    let cancelled = false;
+    db.getInvoiceApprentice(autoSavedId)
+      .then(v => { if (!cancelled && v !== undefined) setForm(f => (f.apprenticeId === undefined ? { ...f, apprenticeId: v } : f)); })
+      .catch(e => console.warn("getInvoiceApprentice failed:", e));
+    return () => { cancelled = true; };
+  }, [isAdmin, autoSavedId, form.apprenticeId]);
   const updateItem = (i, updated) => setForm(f => ({ ...f, items: f.items.map((it, j) => j === i ? updated : it) }));
   // v1.28.7: snapshot through the one existing version path, tagged with the
   // event and the acting user. `next` is the form as it will be after the
@@ -5183,11 +5194,39 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
                 The primary tech who ran the job. Drives the tech scorecard in Reports.
               </div>
-              {form.apprenticeId && (users || []).find(u => u.id === form.apprenticeId) && (
-                <div style={{ fontSize: 11, color: "#778", marginTop: 4 }}>
-                  Apprentice: {(users || []).find(u => u.id === form.apprenticeId).displayName || "Unnamed"}
-                </div>
-              )}
+            </div>
+          )}
+
+          {/* Apprentice on this job (migration 094). New documents start on the
+              Default Apprentice from Settings (stamped by the database on
+              insert); this picker changes or clears it per job and saves at
+              once, like the commission picker below. It is not the commission
+              setting: that one decides pay and starts at Hourly only. Shown once
+              the document has a saved row, since there is nothing to write to
+              before that. undefined = not loaded yet; null = no apprentice. */}
+          {isAdmin && autoSavedId && (
+            <div style={{ padding: "12px 16px 0" }}>
+              <label style={S.label}>Apprentice on this job</label>
+              <select
+                style={S.input}
+                value={form.apprenticeId || ""}
+                disabled={form.apprenticeId === undefined}
+                onChange={async (e) => {
+                  const v = e.target.value || null;
+                  const prev = form.apprenticeId;
+                  setField("apprenticeId", v);
+                  try { await db.setInvoiceApprentice(autoSavedId, v); }
+                  catch (err) { console.warn("setInvoiceApprentice failed:", err); setField("apprenticeId", prev); }
+                }}
+              >
+                <option value="">{form.apprenticeId === undefined ? "Loading..." : "None"}</option>
+                {(users || []).filter(u => u.id === form.apprenticeId || (u.role !== "admin" && u.tier !== "admin")).map(u => (
+                  <option key={u.id} value={u.id}>{u.displayName || "Unnamed"}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
+                Starts on your Default Apprentice. Change or clear it for this job.
+              </div>
             </div>
           )}
 
@@ -5200,7 +5239,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               auto-saved): there is nothing to flag before it has one. */}
           {isAdmin && (invoice?.id || form.id || autoSavedId) && (
             <div style={{ padding: "12px 16px 0" }}>
-              <label style={S.label}>Apprentice</label>
+              <label style={S.label}>Commission</label>
               <select
                 style={S.input}
                 value={form.commissionTechId || ""}
@@ -5211,7 +5250,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   catch (err) { console.warn("setInvoiceCommissionTech failed:", err); }
                 }}
               >
-                <option value="">No apprentice (hourly only)</option>
+                <option value="">Hourly only (no commission)</option>
                 {(users || []).filter(u => u.id === form.commissionTechId || u.tier === "apprentice").map(u => (
                   <option key={u.id} value={u.id}>
                     {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
@@ -11080,7 +11119,7 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
       {isAdmin && (
         <div style={card}>
           <div style={heading}>Default Apprentice</div>
-          <div style={body}>New invoices and estimates you create get this apprentice attached automatically.</div>
+          <div style={body}>New invoices and estimates you create start with this apprentice. You can change or clear it on each job.</div>
           <select style={S.input} value={defaultApprentice} onChange={e => handleSetDefaultApprentice(e.target.value)}>
             <option value="">None</option>
             {(allUsers || []).filter(u => u.role !== "admin" && u.tier !== "admin").map(u => (
@@ -13260,6 +13299,13 @@ export default function App() {
     }
     try {
       await db.upsertInvoice(copy, true);
+      // The insert trigger stamps the Default Apprentice on the new document.
+      // Carry the source's own choice instead, including "none". undefined means
+      // the source never loaded one, so the default stands.
+      if (form.apprenticeId !== undefined) {
+        try { await db.setInvoiceApprentice(newId, form.apprenticeId); }
+        catch (e) { console.warn("carry apprentice on convert failed:", e); }
+      }
       if (deleteSource) {
         await db.deleteInvoice(form.id);
       } else {
