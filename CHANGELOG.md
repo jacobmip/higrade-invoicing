@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.7 — 2026-10-30
+
+- Service worker cache busting (`public/sw.js`): `activate` now deletes every cache, not only differently-named ones, and the file carries a `// vX.Y.Z` comment on line 1 that changes each release, so browsers (Android/Chrome in particular) see a new service worker on every deploy instead of serving old cached assets. `CACHE` stays `higrade-v2`; the name no longer matters because all caches are cleared.
+
 ## v1.41.6 — 2026-10-29
 
 - Address suggestions no longer fail silently. When Google refuses the lookup (API key, billing, or the Places service switched off), the street field now says "Address suggestions unavailable (REASON). Type the address in full." and `/api/geocode` logs and returns Google's own error message. Before, a refusal looked exactly like "no suggestions", which is how the dropdown went dead everywhere with nothing to say why.

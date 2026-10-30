@@ -1,3 +1,4 @@
+// v1.41.7
 // Service worker for HI Grade Invoicing.
 // Strategy:
 //   - HTML (navigation): network-first, fall back to cache only when offline.
@@ -7,7 +8,9 @@
 //   - Static assets (JS/CSS/fonts/images): cache-first — safe because Vite
 //     fingerprints filenames, so a new deploy fetches new hashes automatically.
 //   - API and Supabase requests: network-only (never cache live data).
-//   - On activation: delete old caches and take control immediately.
+//   - On activation: delete ALL caches and take control immediately.
+//   - The version comment on line 1 is updated with every release so this file's
+//     bytes change on each deploy and browsers detect a new service worker.
 
 const CACHE = 'higrade-v2';
 
@@ -29,11 +32,11 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('activate', (e) => {
-  // Drop any caches from previous versions so a stale bundle can't linger,
-  // then take control of all open tabs immediately.
+  // Drop every cache unconditionally so a stale bundle can't linger, then
+  // take control of all open tabs immediately.
   e.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    await Promise.all(keys.map(k => caches.delete(k)));
     await self.clients.claim();
   })());
 });

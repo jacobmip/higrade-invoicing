@@ -65,6 +65,7 @@ Read this file first. It captures everything an AI agent needs to safely continu
       session, and the ritual is what got dropped. A git hook would not have
       helped: every Claude Code web session starts from a fresh clone, so
       `.git/hooks` is empty where most of the work happens.
+    - **Also update the `// vX.Y.Z` comment on line 1 of `public/sw.js` to the new version.** The service worker only reinstalls when its bytes change, and its `activate` handler clears all caches; without the stamp, Android/Chrome keeps serving old cached assets.
 14. **Update the docs in the same commit as the change.** `CLAUDE.md` is the
     single source of truth for the schema, migrations, document numbering, the
     invariants and the sharp edges; `HANDOFF.md` covers architecture patterns,
