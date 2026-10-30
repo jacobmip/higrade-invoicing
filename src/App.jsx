@@ -12182,6 +12182,9 @@ export default function App() {
       const raw = localStorage.getItem(CACHE_KEY);
       if (raw) {
         const cached = JSON.parse(raw);
+        // The cache can hold rows soft-deleted since it was written (another
+        // device, Lisa); drop them so they never paint before loadAll lands.
+        if (Array.isArray(cached.invoices)) cached.invoices = cached.invoices.filter(i => !i.deletedAt);
         setData(cached);
         nextNumRef.current = cached.nextNum || 753;
         nextEstimateNumRef.current = cached.nextEstimateNum || 712;

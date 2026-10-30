@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.41.8 — 2026-10-30
+
+- Deleted invoices no longer flash in the list on app load. The invoice query already excluded `deleted_at` rows; the flash came from the localStorage cache painted before the fetch finished, which could still hold documents deleted since (on another device or by Lisa). The cache is now filtered on hydrate.
+
 ## v1.41.7 — 2026-10-30
 
 - Service worker cache busting (`public/sw.js`): `activate` now deletes every cache, not only differently-named ones, and the file carries a `// vX.Y.Z` comment on line 1 that changes each release, so browsers (Android/Chrome in particular) see a new service worker on every deploy instead of serving old cached assets. `CACHE` stays `higrade-v2`; the name no longer matters because all caches are cleared.
