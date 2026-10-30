@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.42.0 — 2026-10-30
+
+- **A default apprentice for each lead.** Settings > Default Apprentice now has one row per lead (you, plus every Service Tech and Journeyman), each with its own apprentice picker. When Kaulana becomes a Service Tech, set his row and yours to the same new apprentice and both of your new jobs start with them. Only people at the Apprentice tier are offered, and nobody can be their own apprentice.
+- **Migration 106** teaches the database's new-job trigger to read each owner's own default first, then (for you only) the original single default, so nothing changes until you set a second row. Lisa's leads are owned by you, so they follow your row. **Written and tested locally; not yet applied** (see the Hermes prompt in the session). Until it is applied, rows other than yours save but do nothing.
+- Editing a job's apprentice afterwards still sticks: the trigger only runs when a job is first created.
+
 ## v1.41.9 — 2026-10-30
 
 - **The apprentice on a job can be changed or cleared.** The Default Apprentice from Settings was stamped onto every new estimate and invoice by the database and shown only as read-only text under Assigned Tech, so it could not be undone. It is now a dropdown, "Apprentice on this job", that starts on the default and saves on change (None clears it).

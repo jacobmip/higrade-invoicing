@@ -11013,18 +11013,28 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
     db.loadTechPay().then(p => { if (!cancelled) setTechPay(p); }).catch(e => console.warn("loadTechPay failed:", e));
     return () => { cancelled = true; };
   }, [isAdmin]);
-  // Default Apprentice (migration 094): settings.default_apprentice_id, stamped
-  // onto new admin-owned documents by the default_assigned_tech trigger.
-  const [defaultApprentice, setDefaultApprentice] = useState("");
+  // Default Apprentice, one per lead (migrations 094/098, per-lead since 106).
+  // The default_assigned_tech trigger stamps the owner's apprentice onto each new
+  // document. An admin's row is the original single key, so Lisa's leads (owned
+  // by Jake) keep following it; every other lead has
+  // `default_apprentice_id:<their uuid>`. Empty = no default.
+  const apprenticeLeads = useMemo(() => (allUsers || []).filter(u =>
+    u.role === "admin" || ["admin", "service_tech", "journeyman"].includes(u.tier)), [allUsers]);
+  const leadKey = (u) => (u.role === "admin" ? "default_apprentice_id" : `default_apprentice_id:${u.id}`);
+  const [defaultApprentices, setDefaultApprentices] = useState({});
+  const leadKeys = apprenticeLeads.map(leadKey).join(",");
   useEffect(() => {
-    if (!isAdmin) return;
-    db.getSetting("default_apprentice_id").then(v => setDefaultApprentice(v || "")).catch(e => console.warn("getSetting failed:", e));
-  }, [isAdmin]);
-  const handleSetDefaultApprentice = async (id) => {
-    const prev = defaultApprentice;
-    setDefaultApprentice(id);
-    try { await db.setSetting("default_apprentice_id", id || null); }
-    catch (e) { console.warn("set default apprentice failed:", e); setDefaultApprentice(prev); }
+    if (!isAdmin || !leadKeys) return;
+    let cancelled = false;
+    Promise.all(leadKeys.split(",").map(k => db.getSetting(k).then(v => [k, v || ""]).catch(() => [k, ""])))
+      .then(pairs => { if (!cancelled) setDefaultApprentices(Object.fromEntries(pairs)); });
+    return () => { cancelled = true; };
+  }, [isAdmin, leadKeys]);
+  const handleSetDefaultApprentice = async (key, id) => {
+    const prev = defaultApprentices[key] || "";
+    setDefaultApprentices(m => ({ ...m, [key]: id }));
+    try { await db.setSetting(key, id || null); }
+    catch (e) { console.warn("set default apprentice failed:", e); setDefaultApprentices(m => ({ ...m, [key]: prev })); }
   };
   const handleSetPay = async (userId, patch) => {
     const prev = techPay[userId];
@@ -11119,13 +11129,24 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
       {isAdmin && (
         <div style={card}>
           <div style={heading}>Default Apprentice</div>
-          <div style={body}>New invoices and estimates you create start with this apprentice. You can change or clear it on each job.</div>
-          <select style={S.input} value={defaultApprentice} onChange={e => handleSetDefaultApprentice(e.target.value)}>
-            <option value="">None</option>
-            {(allUsers || []).filter(u => u.role !== "admin" && u.tier !== "admin").map(u => (
-              <option key={u.id} value={u.id}>{(u.displayName || "Unnamed") + (u.tier ? " (" + u.tier + ")" : "")}</option>
-            ))}
-          </select>
+          <div style={body}>Each lead's new invoices and estimates start with the apprentice set here. Two leads can share one apprentice. You can still change or clear it on each job.</div>
+          {apprenticeLeads.map(lead => {
+            const key = leadKey(lead);
+            const value = defaultApprentices[key] || "";
+            return (
+              <div key={lead.id} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#333", marginBottom: 4 }}>
+                  {(lead.displayName || "Unnamed") + (lead.id === profile?.id ? " (me)" : "")}
+                </div>
+                <select style={S.input} value={value} onChange={e => handleSetDefaultApprentice(key, e.target.value)}>
+                  <option value="">None</option>
+                  {(allUsers || []).filter(u => u.id !== lead.id && (u.tier === "apprentice" || u.id === value)).map(u => (
+                    <option key={u.id} value={u.id}>{u.displayName || "Unnamed"}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
         </div>
       )}
 
