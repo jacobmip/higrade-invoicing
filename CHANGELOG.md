@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.42.1 — 2026-11-01
+
+- **Fix: converting an estimate to an invoice in the app crashed halfway** with "Conversion saved locally but the cloud sync failed: Can't find variable: sourceUpdated". Broken since v1.35.3 (2026-10-28): the estimate's updated copy was declared inside one block and saved from another, so the new invoice was saved but the estimate was never marked converted, kept its payments and kept its calendar link. Approve & Sign and deposits on the customer link use the server path and were not affected.
+- **Finishing the stuck ones.** Converting an estimate whose paired invoice (EST1070 -> INV1070) already exists and is linked to nothing now asks to link them and finish, instead of minting yet another invoice. The invoice keeps its contents; the estimate is marked converted, and its payments and visits are cleared only when the invoice already carries them. Retries after a refresh before this fix may have created extra invoices under new numbers; those need deleting by hand.
+
 ## v1.42.0 — 2026-10-30
 
 - **A default apprentice for each lead.** Settings > Default Apprentice now has one row per lead (you, plus every Service Tech and Journeyman), each with its own apprentice picker. When Kaulana becomes a Service Tech, set his row and yours to the same new apprentice and both of your new jobs start with them. Only people at the Apprentice tier are offered, and nobody can be their own apprentice.

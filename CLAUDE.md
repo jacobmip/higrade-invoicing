@@ -296,6 +296,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - Mint via `mintDocId(type)` in App.jsx, which draws from `nextDocNumRef`.
 - Never mint from `nextNumRef` / `nextEstimateNumRef`. They are dead.
 - Never assign `nextDocNumRef` downwards; use `bumpDocNum()`, which only raises.
+- **A paired invoice with nothing linked to it is a half-finished conversion** (v1.42.1). Under shared numbering INV1070 can only be EST1070's conversion, so `convertInvoice` finishes the job (links the estimate, clears what moved) instead of minting a second invoice. v1.35.3 to v1.42.0 left one of these behind on every in-app conversion.
 - Documents below 1000 predate this. The old scheme ran two independent
   sequences, so `INV0767` and `EST0767` are both real and unrelated. Conversion
   checks whether the paired id is free and falls back to a fresh number when it
