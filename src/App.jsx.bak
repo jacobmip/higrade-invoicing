@@ -13184,6 +13184,50 @@ export default function App() {
       return;
     }
 
+    // ── A conversion that stopped halfway ─────────────────────────────────────
+    // v1.35.3 to v1.42.0 saved the new invoice and then crashed before marking
+    // the estimate converted. Converting again would mint a second invoice for
+    // the same job (the paired number is taken). Under shared numbering
+    // (>= 1000) the paired invoice can only be this estimate's own conversion,
+    // so when it exists and nothing links to it, finish the job instead: link
+    // the estimate to it and clear what moved. The invoice is not touched.
+    if (!isEstTarget) {
+      const n = parseInt((/^(?:EST|INV)(\d+)$/.exec(form.id || "") || [])[1], 10);
+      const orphanId = Number.isFinite(n) && n >= 1000 ? `INV${String(n).padStart(4, "0")}` : null;
+      const orphan = orphanId && data.invoices.find(d => d.id === orphanId && d.type === "invoice");
+      const claimed = orphan && data.invoices.some(d => d.id !== form.id && d.convertedToId === orphanId);
+      if (orphan && !claimed) {
+        if (!window.confirm(`${orphanId} already exists from an earlier conversion of ${form.id} that did not finish.\n\nLink them and finish the conversion? ${orphanId} keeps its current contents.`)) return;
+        const sum = ps => (ps || []).reduce((t, p) => t + (Number(p.amount) || 0), 0);
+        // Only clear the estimate's payments when the invoice already carries
+        // them; otherwise keep them, so no money disappears.
+        const paymentsMoved = sum(orphan.payments) >= sum(form.payments) - 0.01;
+        const visitsMoved = (orphan.visits || []).length > 0;
+        const finished = {
+          ...form, convertedToId: orphanId, status: "converted",
+          ...(paymentsMoved ? { payments: [] } : {}),
+          ...(visitsMoved ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}),
+        };
+        try {
+          try { await db.upsertInvoice(finished, false); }
+          catch (e) {
+            if (e?.code !== "CONCURRENT_EDIT") throw e;
+            const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(form.id);
+            await db.upsertInvoice({ ...finished, updatedAt: freshUpdatedAt }, false);
+          }
+          setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === form.id ? finished : inv) }));
+          if (!paymentsMoved) alert(`${form.id} has payments that ${orphanId} does not show, so they were left on the estimate. Check both before relying on either total.`);
+          setSelected(orphan);
+          setView("form");
+          setTab("invoices");
+        } catch (e) {
+          console.error("Finishing conversion failed:", e);
+          alert("Could not finish the conversion: " + (e.message || e) + "\n\nNothing new was created. Refresh and try again.");
+        }
+        return;
+      }
+    }
+
     // ── The number ────────────────────────────────────────────────────────────
     // The number identifies the job, not the document, so a conversion keeps it:
     // EST1000 becomes INV1000. Reusing it is safe precisely because the shared
@@ -13294,6 +13338,19 @@ export default function App() {
     //                       estimate means the invoice was sent prematurely
     //                       — we don't want two competing copies.
     const deleteSource = targetType === "estimate";
+    // payments: [] is the other half of the move. The save RPC
+    // (migrations/059) deletes and reinserts a document's payment rows on
+    // every save, so persisting an empty list removes them from the estimate.
+    // Hand-keyed rows have a null paypal_capture_id and so are not protected
+    // by that RPC's PayPal clause; a genuine PayPal down payment never lands
+    // on an estimate anyway, because paypal-capture-order.js converts first.
+    // The estimate hands its visits to the invoice, so it must stop claiming
+    // the same Google events (two rows on one event is the duplicate we avoid).
+    // Declared here, not inside the else below: the cloud save further down
+    // reads it too. Scoped inside the else (v1.35.3 to v1.42.0) it threw
+    // "Can't find variable: sourceUpdated" after the invoice had already been
+    // saved, so every in-app conversion stopped halfway.
+    const sourceUpdated = deleteSource ? null : { ...form, convertedToId: newId, status: "converted", payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
     if (deleteSource) {
       setData(d => ({
         ...d,
@@ -13302,15 +13359,6 @@ export default function App() {
         nextEstimateNum: isEstTarget ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
     } else {
-      // payments: [] is the other half of the move. The save RPC
-      // (migrations/059) deletes and reinserts a document's payment rows on
-      // every save, so persisting an empty list removes them from the estimate.
-      // Hand-keyed rows have a null paypal_capture_id and so are not protected
-      // by that RPC's PayPal clause; a genuine PayPal down payment never lands
-      // on an estimate anyway, because paypal-capture-order.js converts first.
-      // The estimate hands its visits to the invoice, so it must stop claiming
-      // the same Google events (two rows on one event is the duplicate we avoid).
-      const sourceUpdated = { ...form, convertedToId: newId, status: "converted", payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
       setData(d => ({
         ...d,
         invoices: [copy, ...d.invoices.map(inv => inv.id === form.id ? sourceUpdated : inv)],
