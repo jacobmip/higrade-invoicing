@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.42.2 — 2026-11-01
+
+- Converting no longer sits on "Saving..." forever. Convert waits for the pending auto-save first; if that save has not answered within 10 seconds (a stalled connection, often after the phone backgrounded the app), it now stops and says to check signal and reopen the app, instead of hanging. It never converts without the save, which would risk putting the same payment on both documents.
+
 ## v1.42.1 — 2026-11-01
 
 - **Fix: converting an estimate to an invoice in the app crashed halfway** with "Conversion saved locally but the cloud sync failed: Can't find variable: sourceUpdated". Broken since v1.35.3 (2026-10-28): the estimate's updated copy was declared inside one block and saved from another, so the new invoice was saved but the estimate was never marked converted, kept its payments and kept its calendar link. Approve & Sign and deposits on the customer link use the server path and were not affected.
