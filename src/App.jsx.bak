@@ -4540,7 +4540,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // conversion's own write to that estimate fail the optimistic lock. Since
     // that write is what moves the payments off the estimate, losing it puts
     // the same money on both documents: the exact bug this flow was fixed for.
-    try { await flushAutoSaveRef.current(); } catch (e) { console.warn('flush before convert failed:', e); }
+    // Bounded: a database request that never answers (a stalled connection,
+    // often after the phone backgrounded the app) used to leave the screen on
+    // "Saving..." forever. Converting without the flush risks the lock problem
+    // described above, so stop and say so instead of carrying on.
+    let flushTimer;
+    const flushed = await Promise.race([
+      flushAutoSaveRef.current().then(() => true, (e) => { console.warn('flush before convert failed:', e); return true; }),
+      new Promise(r => { flushTimer = setTimeout(() => r(false), 10000); }),
+    ]);
+    clearTimeout(flushTimer);
+    if (!flushed) {
+      alert("Still saving after 10 seconds, so the conversion was not started. Check your signal, then close and reopen the app and try again.");
+      return;
+    }
     onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
   };
 
