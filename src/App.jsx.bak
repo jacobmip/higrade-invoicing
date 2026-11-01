@@ -13239,11 +13239,25 @@ export default function App() {
           ...(visitsMoved ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}),
         };
         try {
-          try { await db.upsertInvoice(finished, false); }
-          catch (e) {
-            if (e?.code !== "CONCURRENT_EDIT") throw e;
-            const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(form.id);
-            await db.upsertInvoice({ ...finished, updatedAt: freshUpdatedAt }, false);
+          // iPhone Safari drops requests that are in flight around a native
+          // confirm() and reports "TypeError: Load failed". This write only
+          // links two existing documents, so repeating it is harmless: retry
+          // network failures a few times before giving up.
+          const saveFinished = async () => {
+            try { await db.upsertInvoice(finished, false); }
+            catch (e) {
+              if (e?.code !== "CONCURRENT_EDIT") throw e;
+              const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(form.id);
+              await db.upsertInvoice({ ...finished, updatedAt: freshUpdatedAt }, false);
+            }
+          };
+          for (let attempt = 1; ; attempt++) {
+            try { await saveFinished(); break; }
+            catch (e) {
+              const network = e instanceof TypeError || /load failed|failed to fetch|network/i.test(String(e?.message || e));
+              if (!network || attempt >= 3) throw e;
+              await new Promise(r => setTimeout(r, 1500 * attempt));
+            }
           }
           setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === form.id ? finished : inv) }));
           if (!paymentsMoved) alert(`${form.id} has payments that ${orphanId} does not show, so they were left on the estimate. Check both before relying on either total.`);
