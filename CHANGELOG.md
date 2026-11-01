@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.42.3 — 2026-11-01
+
+- **The estimate/invoice cross-link button is back on jobs whose link was never saved.** Conversions done in the app from v1.35.3 to v1.42.0 crashed before storing the link, so those estimates kept showing "→ Invoice" and their invoices showed "→ Estimate", which converts the invoice back to an estimate and deletes the invoice. Both sides now pair by number (EST1170 ↔ INV1170, numbers 1000 and up) when no link is stored:
+  - the invoice shows "← EST1170" and switches to it;
+  - the estimate shows "→ INV1170", and tapping it stores the missing link (marks the estimate converted, clears payments and visits only if the invoice already has them) and opens the invoice.
+- Pairing only happens when nothing else claims the document, so a converted estimate never shows someone else's invoice.
+
 ## v1.42.2 — 2026-11-01
 
 - Converting no longer sits on "Saving..." forever. Convert waits for the pending auto-save first; if that save has not answered within 10 seconds (a stalled connection, often after the phone backgrounded the app), it now stops and says to check signal and reopen the app, instead of hanging. It never converts without the save, which would risk putting the same payment on both documents.

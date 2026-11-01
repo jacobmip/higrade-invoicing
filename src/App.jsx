@@ -4527,12 +4527,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   };
 
   // Convert estimate ↔ invoice (creates a copy, doesn't replace original).
-  const handleConvert = async () => {
+  const handleConvert = async ({ finishing = false } = {}) => {
     const targetType = isEstimate ? "invoice" : "estimate";
     const msg = targetType === "estimate"
       ? `Convert this invoice back to an estimate? The original invoice will be DELETED — only the new estimate will remain.`
       : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
-    if (!confirm(msg)) return;
+    // Finishing a half-done conversion asks its own question in convertInvoice.
+    if (!finishing && !confirm(msg)) return;
     // Flush the pending auto-save first, the same as handleOpenLinked does.
     // confirm() blocks the event loop, so a debounce timer armed within 800ms
     // of the tap fires the instant it returns — writing the estimate with its
@@ -4567,10 +4568,26 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const linkedDoc = useMemo(() => {
     const all = data?.invoices || [];
     const byId = (id) => (id ? all.find(d => d.id === id) : null);
+    const linked = isEstimate
+      ? (byId(form.convertedToId) || byId(form.downPaymentInvoiceId) || null)
+      : (all.find(d => d.type === "estimate" && (d.convertedToId === form.id || d.downPaymentInvoiceId === form.id)) || null);
+    if (linked) return linked;
+    // No stored link, but under shared numbering (>= 1000) EST1170 and INV1170
+    // are the same job. The in-app conversion crashed before storing the link
+    // from v1.35.3 to v1.42.0, which left the invoice showing "-> Estimate":
+    // a button that deletes the invoice and mints a new estimate. Pair by
+    // number instead. `unfinished` marks the estimate side, where tapping
+    // finishes the conversion (stores the link) rather than just switching.
+    const n = parseInt((/^(?:EST|INV)(\d+)$/.exec(form.id || "") || [])[1], 10);
+    if (!Number.isFinite(n) || n < 1000) return null;
+    const pad = String(n).padStart(4, "0");
     if (isEstimate) {
-      return byId(form.convertedToId) || byId(form.downPaymentInvoiceId) || null;
+      const inv = all.find(d => d.id === `INV${pad}` && d.type === "invoice");
+      const claimed = inv && all.some(d => d.id !== form.id && d.convertedToId === inv.id);
+      return inv && !claimed ? { ...inv, unfinished: true } : null;
     }
-    return all.find(d => d.type === "estimate" && (d.convertedToId === form.id || d.downPaymentInvoiceId === form.id)) || null;
+    const est = all.find(d => d.id === `EST${pad}` && d.type === "estimate");
+    return est && (!est.convertedToId || est.convertedToId === form.id) ? est : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.invoices, isEstimate, form.id, form.convertedToId, form.downPaymentInvoiceId]);
 
@@ -5635,12 +5652,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={handlePrint} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><Icon name="print" size={16} color="#444" /> Print / PDF</button>
               {invoice && linkedDoc && (
-                <button onClick={handleOpenLinked} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <button onClick={linkedDoc.unfinished && onConvert ? () => handleConvert({ finishing: true }) : handleOpenLinked} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   <Icon name="swap" size={16} color={ORANGE} /> {isEstimate ? "→ " : "← "}{linkedDoc.id}
                 </button>
               )}
               {invoice && !linkedDoc && onConvert && (
-                <button onClick={handleConvert} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <button onClick={() => handleConvert()} style={{ ...S.btn("ghost"), flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   <Icon name="swap" size={16} color="#444" /> {isEstimate ? "→ Invoice" : "→ Estimate"}
                 </button>
               )}
