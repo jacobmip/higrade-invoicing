@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.42.4 — 2026-11-01
+
+- Finishing a half-done conversion ("→ INV####" on an unlinked estimate) now retries up to three times when the network drops the request. iPhone Safari reported this as "Could not finish the conversion: TypeError: Load failed", typically when a save was still in flight around the confirmation box. The step only links two existing documents, so repeating it is safe.
+
 ## v1.42.3 — 2026-11-01
 
 - **The estimate/invoice cross-link button is back on jobs whose link was never saved.** Conversions done in the app from v1.35.3 to v1.42.0 crashed before storing the link, so those estimates kept showing "→ Invoice" and their invoices showed "→ Estimate", which converts the invoice back to an estimate and deletes the invoice. Both sides now pair by number (EST1170 ↔ INV1170, numbers 1000 and up) when no link is stored:
