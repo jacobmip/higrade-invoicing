@@ -4555,7 +4555,26 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       alert("Still saving after 10 seconds, so the conversion was not started. Check your signal, then close and reopen the app and try again.");
       return;
     }
-    onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType);
+    // From here the conversion owns this document's row: it writes the
+    // estimate as converted (or deletes the invoice), then opens the other
+    // document. Opening it remounts the form (FormBoundary is keyed on the
+    // document id since v1.38.5), and the unmount flush would save THIS form's
+    // stale copy back over that write -- the estimate came back as an unlinked
+    // draft every time. Everything is already flushed above, so suspend this
+    // form's saves for the duration and resume if we are still mounted after
+    // (the user cancelled, or it failed).
+    skipFlushRef.current = true;
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+    // convertInvoice returns true once it has opened the other document. React
+    // unmounts this form after that, in a later commit, so the pause must stay
+    // on: lifting it here let the unmount flush through (proven by test). Only
+    // a cancel or a failure that stays on this document resumes saving.
+    let switched = false;
+    try {
+      switched = (await onConvert?.({ ...form, updatedAt: updatedAtRef.current }, targetType)) === true;
+    } finally {
+      if (!switched) skipFlushRef.current = false;
+    }
   };
 
   // ─── Estimate ↔ invoice cross-link ─────────────────────────────────────────
@@ -13201,7 +13220,7 @@ export default function App() {
         setSelected(existing);
         setView("form");
         setTab(existing.type === "estimate" ? "estimates" : "invoices");
-        return;
+        return true;
       }
       // The counterpart is not in live data, so it was deleted. Falling through here
       // would mint a SECOND invoice carrying another copy of this estimate's payments,
@@ -13264,6 +13283,7 @@ export default function App() {
           setSelected(orphan);
           setView("form");
           setTab("invoices");
+          return true;
         } catch (e) {
           console.error("Finishing conversion failed:", e);
           alert("Could not finish the conversion: " + (e.message || e) + "\n\nNothing new was created. Refresh and try again.");
@@ -13477,6 +13497,7 @@ export default function App() {
     setSelected(copy);
     setView("form");
     setTab(targetType === "estimate" ? "estimates" : "invoices");
+    return true;
   };
 
   const partialSaveInvoice = async (updated) => {

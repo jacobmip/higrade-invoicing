@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.42.5 — 2026-11-01
+
+- **Fix: converting saved the link and then wiped it 0.6 seconds later.** Reproduced in a browser test against a fake database: after the conversion wrote the estimate as Converted and linked, a third save wrote it back as an unlinked Draft. Cause: since v1.38.5 the form is rebuilt whenever you switch documents (`FormBoundary` keyed on the document id), so opening the new invoice tore down the estimate form, and its save-on-close wrote its old copy over the conversion. This is why the "→ INV####" button would not stick and why tapping again offered to convert again. The form now pauses its own saves once Convert has saved it, for as long as the conversion runs, and stays paused if the conversion opened the other document. Cancelling, or a failure that stays on the estimate, resumes saving.
+- Correction to v1.42.4: the network retry added there was a guess, not the cause. It stays, since it is harmless, but "Saving..." under the confirm box and the lost link were this bug.
+- Verified with `test/e2e/convert.mjs` (new): finishing a half-done conversion, a fresh conversion, and cancelling. Each conversion now makes exactly two saves, and the link survives a full reload and leaving the screen.
+
 ## v1.42.4 — 2026-11-01
 
 - Finishing a half-done conversion ("→ INV####" on an unlinked estimate) now retries up to three times when the network drops the request. iPhone Safari reported this as "Could not finish the conversion: TypeError: Load failed", typically when a save was still in flight around the confirmation box. The step only links two existing documents, so repeating it is safe.
