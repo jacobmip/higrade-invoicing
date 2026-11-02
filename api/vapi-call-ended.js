@@ -405,7 +405,7 @@ export default async function handler(req, res) {
   if (!to) {
     console.warn('[vapi-call-ended] no caller number in payload');
     // Still keep the call id, so the recording is findable later.
-    await recordCall({ callId, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params) });
+    await recordCall({ callId, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params), transcript: extractTranscript(params) });
     return json(res, 200, { ok: true, skipped: 'no caller number in payload' });
   }
 
@@ -415,7 +415,7 @@ export default async function handler(req, res) {
   const blocked = await findBlacklistedClient(to);
   if (blocked) {
     console.log('[vapi-call-ended] Skipped: blacklisted client', { to, callId, client: blocked.name, reason: blocked.blacklist_reason || null });
-    await recordCall({ callId, phone: to, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params) });
+    await recordCall({ callId, phone: to, seconds: extractSeconds(params), direction: extractDirection(params), summary: extractSummary(params), transcript: extractTranscript(params) });
     return json(res, 200, { ok: true, skipped: 'blacklisted client' });
   }
 
@@ -464,7 +464,7 @@ export default async function handler(req, res) {
     phone: to,
     seconds: extractSeconds(params),
     direction: extractDirection(params),
-    summary: extractSummary(params),
+    summary: extractSummary(params), transcript: extractTranscript(params),
   });
 
   // ─── Call archive email ──────────────────────────────────────────────────

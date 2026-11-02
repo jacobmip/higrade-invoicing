@@ -50,7 +50,7 @@ function json(res, status, body) {
 // Upsert, so a Vapi retry of the same report is harmless, and a later report
 // that does know the estimate fills it in. Never throws: a failure here must
 // not affect the rest of the end-of-call handling.
-export async function recordCall({ callId, invoiceId, phone, seconds, direction, summary }) {
+export async function recordCall({ callId, invoiceId, phone, seconds, direction, summary, transcript, clientId, callQueueId }) {
   if (!callId) return false;
   try {
     const row = { call_id: String(callId) };
@@ -59,6 +59,9 @@ export async function recordCall({ callId, invoiceId, phone, seconds, direction,
     if (Number.isFinite(seconds)) row.seconds = Math.round(seconds);
     if (direction === 'inbound' || direction === 'outbound') row.direction = direction;
     if (summary) row.summary = String(summary);
+    if (transcript) row.transcript = String(transcript).slice(0, 20000);
+    if (clientId) row.client_id = String(clientId);
+    if (callQueueId) row.call_queue_id = Number(callQueueId);
     const res = await fetch(`${supaUrl()}/rest/v1/vapi_calls?on_conflict=call_id`, {
       method: 'POST',
       headers: serviceHeaders({

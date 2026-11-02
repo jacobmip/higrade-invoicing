@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.45.0 — 2026-11-02
+
+- **New: Calls tab (admin, in the More sheet).** `src/CallsTab.jsx` lists every `vapi_calls` row, linked to a client or document or not: direction badge, caller name (client record, else the outbound queue row's name, else the phone number), summary, Hawaii time, duration, and Client / Document chips. Tapping a row opens a sheet with the full summary, the transcript, and a Play Recording button (same `getRecordingUrl()` as the estimate's recordings).
+- **Migration 108:** `vapi_calls.client_id` (uuid, no FK), `transcript` (text) and `call_queue_id` (bigint).
+- `api/_lib/call-recording.js` `recordCall()` accepts `transcript`, `clientId` and `callQueueId`; `api/vapi-call-ended.js` now stores the transcript on all three `recordCall()` calls.
+- AI-OS `outbound_call.py check` now writes `summary`, `transcript`, `call_queue_id` and a phone-matched `client_id` on the outbound `vapi_calls` row.
+- New `phone` icon in `Icon`.
+
 ## v1.44.0 — 2026-11-02
 
 - **Fix: Lisa's SMS bookings now actually save to the database.** Root cause: `_lib/sms-agent.js` passed `sms_webhook_secret` as `p_secret` to `create_estimate_from_lead()`, but that RPC validates against `lead_secret`. Since the two settings hold different values, every SMS booking attempt silently failed with FORBIDDEN inside the function while the reply ("You got it, see you at 4!") already went out to the customer. Confirmed by the Jennifer toilet-flooding case on 2026-11-02, where Jake had to manually create the client and estimate after Lisa told her the 4 PM appointment was booked. Fix: `leadSecret()` helper fetches `lead_secret` from settings and is now used for the `create_estimate_from_lead()` call.

@@ -17,6 +17,7 @@ import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
+import CallsTab from './CallsTab.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
@@ -728,6 +729,7 @@ const Icon = ({ name, size = 20, color = "currentColor" }) => {
     payment:   <svg {...p}><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
     check:     <svg {...p} strokeWidth={2.5}><polyline points="20 6 9 17 4 12"/></svg>,
     eye:       <svg {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+    phone:     <svg {...p}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
     clock:     <svg {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
     pencil:    <svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
     chevron:   <svg {...p}><polyline points="9 18 15 12 9 6"/></svg>,
@@ -13737,6 +13739,7 @@ export default function App() {
     { id: "clients",   label: "Clients",   icon: "clients"   },
   ];
   const moreNavItems = [
+    ...(isAdmin ? [{ id: "calls", label: "Calls", icon: "phone" }] : []),
     { id: "timeclock", label: "Time Clock", icon: "clock"    },
     { id: "payments",  label: "Payments",   icon: "dollar"   },
     { id: "pricebook", label: "Price Book", icon: "items"    },
@@ -13927,6 +13930,7 @@ export default function App() {
         {tab === "expenses"  && <ExpensesTab expenses={filteredData.expenses || []} onSave={addExpense} onDelete={deleteExpense} newToken={expenseNewToken} />}
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} selfLevels={selfLevels} onSetCompetency={handleSetCompetency} onSetSelfLevel={handleSetSelfLevel} />}
         {tab === "calendar"  && <CalendarTab isAdmin={isAdmin && !effectiveOwnerId} invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
+        {tab === "calls" && isAdmin && <CallsTab isAdmin={isAdmin} setSubHeader={setSubHeader} onOpenInvoice={openInvoiceById} onOpenClient={(clientId) => { setView("list"); setTab("clients"); setOpenClientId(clientId); }} />}
         {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} activitySeg={activitySeg} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
