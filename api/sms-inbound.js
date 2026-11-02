@@ -131,7 +131,9 @@ async function appPlaceCall(res, user, params) {
 
   const callsOn = String(await getSetting('outbound_calls_enabled') || 'false').toLowerCase() === 'true';
   let telegram = false;
-  if (!duplicate) {
+  if (!duplicate && !APPROVE_BASE) {
+    // Only send Telegram notification if approval links are not available (fallback for old systems).
+    // When approval links work, Lani returns the link to Jake in the chat instead.
     telegram = await telegramNotify(
       `Call #${id} queued from the app chat\nTo: ${name || 'unknown'} (${phone})\nPurpose: ${about}\n` +
       (callsOn

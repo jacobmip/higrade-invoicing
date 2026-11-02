@@ -478,7 +478,7 @@ export const AGENT_TOOLS = [
   {
     name: 'place_call',
     description:
-      "Queue an outbound phone call for Lisa to a customer. Does NOT dial: it files the call and Jake approves it on Telegram, or from the approval_link in the result, before Lisa dials. Give him that link. " +
+      "Queue an outbound phone call for Lisa to a customer. Does NOT dial: it files the call and Jake approves it from the approval_link before Lisa dials. Return the link to Jake in your reply so he can tap it to approve. " +
       'Calls only go out in Hawaii calling hours and only while outbound calls are switched on in settings.',
     input_schema: {
       type: 'object',
