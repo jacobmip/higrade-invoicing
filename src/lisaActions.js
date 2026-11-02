@@ -56,3 +56,15 @@ export async function queueLisaCall({ phone, name, about, context, invoiceId }) 
   if (!out.duplicate && out.approvalLink) text += ` Approval link (live once Lisa asks): ${out.approvalLink}`;
   return { ...out, text };
 }
+
+export async function approveLisaCall({ callToken }) {
+  if (!callToken) throw new Error('Call token is required to approve a call.');
+  const res = await fetch(api('/api/approve-call'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: callToken, approval: 'approved' }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Request failed (${res.status})`);
+  return { ...out, text: 'Call approved and will dial shortly.' };
+}

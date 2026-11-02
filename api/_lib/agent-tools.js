@@ -493,6 +493,18 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'approve_call',
+    description:
+      "Approve a pending outbound call so Lisa will dial it. Jake can say 'approve', 'ok', 'yes', or similar one-word confirmation to trigger this tool automatically when a call is queued and waiting for approval.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        call_id: { type: 'string', description: 'The ID of the pending call to approve. When Jake just said yes/ok/approve to a queued call, the system finds it automatically.' },
+      },
+      required: ['call_id'],
+    },
+  },
+  {
     name: 'delete_document',
     description: 'Delete one estimate or invoice (moves it to Recently Deleted). Jake must confirm in a dialog.',
     input_schema: {

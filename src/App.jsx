@@ -9,7 +9,7 @@ import { useActivityTracking } from "./activity.js";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
-import { sendLisaText, queueLisaCall } from './lisaActions.js';
+import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
@@ -532,10 +532,17 @@ Send a text message from Lisa's number (sends immediately):
 - Take the phone from CLIENTS above or from what Jake said. If there is no phone number, ask for it in plain text instead of emitting the action.
 - When asked to 'polish', 'rewrite', or 'clean up' a message for a customer, rewrite it in Lisa's voice (warm, Hawaiian, Aloha/Mahalo, under 160 chars, no pricing), show the polished version clearly with the label 'Polished message:', then immediately use send_sms to send it to the customer's phone. If you don't have the phone number, ask for it first. Never just show the polished text in chat without also offering to send it.
 
-Queue an outbound call for Lisa (does NOT dial; Jake approves it on Telegram first):
+Queue an outbound call for Lisa (does NOT dial; Jake approves it on Telegram first or by saying 'approve'/'ok'/'yes' in chat):
 {"action":"place_call","phone":"8085551234","name":"John","about":"following up on the water heater estimate from last week","context":"customer asked about financing options","summary":"one sentence"}
 - You can queue an outbound call using place_call. Use this when Jake says "call", "give a call", "follow up by phone", or "reach out to". The call needs Jake's approval before it dials, so never say the call was made; say it is queued.
 - The "about" field tells Lisa WHY she is calling: write it as a clear one-sentence brief. "context" is optional facts she may confirm, never money amounts.
+- Jake can approve a queued call by typing a one-word approval in chat (see approve_call below).
+
+Approve a queued outbound call (auto-detected when Jake says approve/ok/yes/etc in response to a place_call):
+{"action":"approve_call","callToken":"<token-from-pending-call>","summary":"Call approved."}
+- You can detect when Jake has sent a queued call and approve it inline. When there is a pending call_queue row (status="queued", approval_asked_at is set) and Jake says 'approve', 'ok', 'yes', 'yep', 'approved', 'confirm', 'go', or similar one-word approval, IMMEDIATELY emit this action with the token from that pending call (the system will tell you what it is).
+- Never ask for confirmation; just approve it if the signal is clear.
+- Respond after approving with something like: "Call approved, Lisa will dial shortly."
 
 Schedule a job on Google Calendar (use when Jake mentions scheduling, booking, or setting up a job for a client on a specific date/time):
 {"action":"schedule_job","clientName":"exact or partial name","date":"YYYY-MM-DD","time":"HH:MM","durationHours":2,"jobDescription":"short description","address":"job site address if Jake gives one, else omit","summary":"one sentence"}
@@ -1051,6 +1058,16 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       // The legacy 'estimate' action stays as a preview-then-confirm card.
       const previewEstimate = actions.find(a => a.action === "estimate" && a.items?.length);
       const otherActions = actions.filter(a => a !== previewEstimate);
+
+      // Auto-detect one-word approval of a pending call
+      if (!otherActions.length && !previewEstimate && userMsg) {
+        const approval = userMsg.trim().toLowerCase();
+        const approvalWords = ['approve', 'ok', 'yes', 'yep', 'approved', 'confirm', 'go', 'uh-huh', 'yup'];
+        if (approvalWords.includes(approval)) {
+          // Emit approve_call action; the global handler will look up the pending call
+          otherActions.push({ action: 'approve_call', callToken: 'pending', summary: 'Approved call.' });
+        }
+      }
 
       // Actions that operate on a single invoice. When the chat is open
       // inside an invoice, Jake almost always means "this invoice" — even
@@ -12738,6 +12755,22 @@ export default function App() {
         return { text: (parsed.action === "send_sms" ? "Text not sent: " : "Call not queued: ") + (e.message || e) };
       }
       return r;
+    }
+    // Approve a pending outbound call in response to Jake's one-word approval
+    if (parsed.action === "approve_call") {
+      const token = String(parsed.callToken || "").trim();
+      if (!token || token === "pending") {
+        // For 'pending' placeholder, we'd need to query the database for the most recent
+        // unapproved call. For now, return an error message telling Jake to use the link.
+        return { text: "I found a pending call but cannot identify which one without more context. Please tap the approval link that was sent on Telegram, or be more specific about which call you want to approve." };
+      }
+      try {
+        const r = await approveLisaCall({ callToken: token });
+        return r;
+      } catch (e) {
+        if (opts.strict) throw e;
+        return { text: "Call approval failed: " + (e.message || e) };
+      }
     }
     if (parsed.action === "delete_client") {
       const target = data.clients.find(c => c.name === parsed.clientName);
