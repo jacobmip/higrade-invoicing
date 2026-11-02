@@ -52,6 +52,15 @@ function supabaseKey() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 }
 
+// create_estimate_from_lead validates against 'lead_secret', NOT 'sms_webhook_secret'.
+// The two are different values. Using the wrong one causes every filing attempt to fail
+// with FORBIDDEN inside the RPC, silently caught by the caller's try/catch. That is
+// exactly why Jennifer's toilet emergency produced a reply ("You got it, see you at 4!")
+// but no estimate, no client, and no calendar event.
+async function leadSecret() {
+  return process.env.LEAD_SECRET || (await getSetting('lead_secret'));
+}
+
 async function select(path) {
   const k = supabaseKey();
   const res = await fetch(`${supabaseUrl()}/rest/v1/${path}`, {
@@ -338,8 +347,13 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   let estimatorDispatch = null;
   if (out.ready_to_file && !hasOpenEstimate) {
     try {
+      // IMPORTANT: create_estimate_from_lead validates p_secret against
+      // settings.lead_secret, NOT settings.sms_webhook_secret. They are
+      // different values. Passing the SMS webhook secret here causes a silent
+      // FORBIDDEN failure inside the RPC every time.
+      const lsecret = await leadSecret();
       filed = await rpc('create_estimate_from_lead', {
-        p_secret: secret,
+        p_secret: lsecret,
         p_name: out.name || clientName || 'Text lead - no name given',
         p_phone: phone,
         p_caller_id: phone,
@@ -355,6 +369,24 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
       // The reply already went out, which is the part the customer sees. A
       // failed file is Jake's email alert plus this log line, not a dropped lead.
       console.error('[sms-agent] file failed:', e.message || e);
+    }
+  }
+
+  // After a successful filing: push to Google Calendar, then dispatch the
+  // AI ballpark estimator. Both are best-effort; a failure here never undoes
+  // the reply that already went out.
+  if (filed?.estimate_id) {
+    // trg_push_lead_appointment (migration 033) fires on INSERT for source='ai_lead'
+    // and handles the calendar push via the Apps Script webhook. But that trigger
+    // runs asynchronously through pg_net. push_invoice_to_calendar() is a
+    // synchronous belt-and-suspenders: it creates the event immediately and writes
+    // the gcal_event_id back into the visits array so the app can find and move it.
+    // It is a no-op if the estimate already has a gcal_event_id.
+    try {
+      await rpc('push_invoice_to_calendar', { p_id: filed.estimate_id });
+      console.log('[sms-agent] calendar push ok', filed.estimate_id);
+    } catch (e) {
+      console.error('[sms-agent] calendar push failed (non-fatal):', e.message || e);
     }
   }
 

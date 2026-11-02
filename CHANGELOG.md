@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.44.0 — 2026-11-02
+
+- **Fix: Lisa's SMS bookings now actually save to the database.** Root cause: `_lib/sms-agent.js` passed `sms_webhook_secret` as `p_secret` to `create_estimate_from_lead()`, but that RPC validates against `lead_secret`. Since the two settings hold different values, every SMS booking attempt silently failed with FORBIDDEN inside the function while the reply ("You got it, see you at 4!") already went out to the customer. Confirmed by the Jennifer toilet-flooding case on 2026-11-02, where Jake had to manually create the client and estimate after Lisa told her the 4 PM appointment was booked. Fix: `leadSecret()` helper fetches `lead_secret` from settings and is now used for the `create_estimate_from_lead()` call.
+- **New: SMS-booked estimates now get a Google Calendar event.** After `create_estimate_from_lead()` succeeds, `push_invoice_to_calendar()` is called synchronously as a belt-and-suspenders on top of the existing `trg_push_lead_appointment` trigger. Previously the trigger was the only path and its pg_net send is fire-and-forget.
+- `_lib/sms-agent.js` added to CLAUDE.md Source layout; sharp-edge note added about `lead_secret` vs `sms_webhook_secret`.
+
 ## v1.43.1 — 2026-11-02
 
 - **New: approve a queued call inline with one-word confirmation.** Jake can now type 'approve', 'ok', 'yes', 'yep', 'confirmed', 'go', or similar in the chat to immediately approve a queued outbound call, without tapping the approval link. The per-invoice chat auto-detects these approval words when a call is pending and emits the `approve_call` action, which posts to `/api/approve-call` (existing edge route from v1.43.0). Response shows inline: "Call approved, Lisa will dial shortly." This works in both per-invoice and global chats.
