@@ -126,6 +126,7 @@ src/
   TimeClockTab.jsx   — Time Clock tab: start/stop a shift with the raw GPS fix, job picker, the week's entries. Pay numbers are computed by the migration 072 trigger, never here; a bad GPS fix never blocks a clock event
   ActivityBits.jsx   — GPS activity display (migration 097): the tech's own `ActivityBadge` and the admin's live `ActivityBoard`
   HoursTracker.jsx   — admin Hours card in Reports: all workers' time_entries by week or range, admin edit of start/end (v1.28.8)
+  ApproveCallPage.jsx — public `/approve-call?token=` page: Jake approves or cancels one queued outbound call from a link; talks only to `/api/approve-call` (v1.43.0)
   WelcomePage.jsx    — `/welcome` invite onboarding (public route) and the Pending-setup screen (migrations 082-083)
   billTo.js          — bill-to / job-site address resolution
   competencies.js    — apprentice skill catalog + graduation math (migration 054)
@@ -149,6 +150,7 @@ api/                 — Vercel functions. **Hard limit: 12 nodejs routes — se
   register-device.js       — APNs token upsert
   call-recording.js        — edge route: GET ?id=<call id> streams a recording to an admin (logic in _lib/call-recording.js). Edge, so not counted against the 12
   vapi-call-ended.js       — Vapi end-of-call webhook + call record email; also `GET ?recording=<callId>` (admin session) for a call's recording link
+  approve-call.js          — edge route (not counted against the 12): GET `?token=` returns one call_queue row's details and state, POST `{token, approval}` writes `call_queue.approval` (the column the Telegram APPROVE reply writes). Token-only, no session. Answers only a row that is `queued` with `approval_asked_at` set, and only once: a repeat or conflicting answer returns the stored decision (v1.43.0)
   availability.js          — edge route: Jake's busy blocks and free 90+ minute windows for one Hawaii day (invoices' `gcal_date` and `visits` plus every Google calendar in `google_credentials`). Called by Lisa's `checkAvailability` Vapi tool before she books; authenticated by the webhook secret; fails closed with 502. Self-contained because `_lib/gcal.js` imports `node:crypto`
   sms-inbound.js           — Twilio inbound SMS webhook; also the Messages tab reply box (POST with an admin Bearer token and no Twilio signature sends and logs one text). The same admin POST with `op: 'place_call'` files a `call_queue` row for the AI chat's `place_call` (never dials; the AI-OS runner still needs the Telegram APPROVE) and sends a Telegram heads-up via `telegramNotify()` (v1.38.0). The send op (not `place_call`) also accepts `Authorization: Bearer <webhook secret>` for Lani on Telegram, and an optional `invoice_id` writes an `sms_sent` version snapshot server-side (v1.38.3)
   gcal.js                  — Google Calendar: server-side OAuth, callback, read/write, and attendee ops (`attendee`, `tech_email`) that invite the commission apprentice to a job's event (v1.27.5)
@@ -208,7 +210,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 105; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 107; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -402,7 +404,9 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **106** — **applied and verified 2026-10-31.** `default_assigned_tech()` reads the owner's own `settings` key `default_apprentice_id:<owner uuid>` first, then the original `default_apprentice_id` for admins only; skips a uuid that is not a profile or is the owner himself. Settings readable by techs (not on the 070 deny-list), so a tech's own INSERT can read his key; writes stay admin. Guarded: refuses to run unless the live function still has 098's lines (confirmed by re-running it, which correctly self-refused with "already applied"). Verified live, as a real non-admin via a rolled-back transaction: a tech's own per-lead key wins over the admin default, a self-referencing key is correctly skipped, and Jake's own insert still falls back to the admin-wide default.
 
-Next migration is `107_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+- **107** — **applied and verified 2026-11-02.** `call_queue.approval_token` text, nullable, unique partial index. Minted by `appPlaceCall` in `api/sms-inbound.js` (`randomBytes(12).toString('base64url')`) and returned as `approvalLink` (`/approve-call?token=`); rows queued before 107 or by `scripts/outbound_call.py` have none. **The link only works once the runner has stamped `approval_asked_at`**, which `appPlaceCall` deliberately does not do (a stamp at queue time makes the runner think approval is already pending and refuse to dial). Until then the page says the call is not waiting yet. To make the link useful, `outbound_call.py` must include it in its Telegram APPROVE request; that change is in the AI-OS repo and is not made.
+
+Next migration is `108_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

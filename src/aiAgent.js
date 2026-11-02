@@ -641,7 +641,7 @@ async function placeCall(input, ctx) {
     phone: input.phone, name: input.name, about: input.about, context: input.context,
     invoiceId: id && ctx.getData().invoices.some(i => i.id === id) ? id : null,
   });
-  return { ok: true, queued: true, dialed: false, call_id: r.id, note: r.text };
+  return { ok: true, queued: true, dialed: false, call_id: r.id, approval_link: r.approvalLink || null, note: r.text };
 }
 
 function sendDocumentEmail(input, ctx) {

@@ -21,6 +21,7 @@ import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import WelcomePage, { PendingSetupScreen } from './WelcomePage.jsx';
+import ApproveCallPage from './ApproveCallPage.jsx';
 import { runAgentMessage, describeFailure, claimsAction } from './aiAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 import { weekStartOf, weekEndOf, tierFor } from './commissionTiers.js';
@@ -13656,6 +13657,7 @@ export default function App() {
   // can view/sign/pay invoices without an owner account.
   if (window.location.pathname === "/sign") return <SignaturePage />;
   if (window.location.pathname === "/welcome") return <WelcomePage />;
+  if (window.location.pathname === "/approve-call") return <ApproveCallPage />;
   if (window.location.pathname.startsWith("/v/")) {
     const token = window.location.pathname.slice(3);
     return <PublicViewerPage token={token} />;

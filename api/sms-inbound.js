@@ -38,6 +38,7 @@ import {
   rpc, readBody, fullUrl, webhookSecret, secretMatches, validateTwilioSignature, twilioAuthToken,
   rehostTwilioMedia, getSetting, sendTwilioSms, supabaseUrl,
 } from './_lib/sms.js';
+import { randomBytes } from 'node:crypto';
 import { telegramNotify } from './_lib/convert-estimate.js';
 import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
@@ -85,6 +86,8 @@ function toE164(raw) {
 // message sent from here is a heads-up only: it must NOT stamp approval_asked_at
 // or ask for a reply, or the runner would see an approval "already pending" and
 // refuse to dial.
+const APPROVE_BASE = 'https://higrade-invoicing.vercel.app';
+
 async function appPlaceCall(res, user, params) {
   const phone = toE164(params.phone);
   const about = String(params.about || '').trim();
@@ -102,18 +105,21 @@ async function appPlaceCall(res, user, params) {
 
   // A model retry must not queue the same call twice.
   const dup = await fetch(
-    `${base}?phone=eq.${encodeURIComponent(phone)}&status=in.(queued,calling)&purpose=eq.${encodeURIComponent(about)}&select=id&limit=1`,
+    `${base}?phone=eq.${encodeURIComponent(phone)}&status=in.(queued,calling)&purpose=eq.${encodeURIComponent(about)}&select=id,approval_token&limit=1`,
     { headers });
   const dupRows = dup.ok ? await dup.json().catch(() => []) : [];
   let id = dupRows?.[0]?.id || null;
   let duplicate = !!id;
+  let token = dupRows?.[0]?.approval_token || null;
   if (!id) {
+    // The approval link's credential (migration 107): 96 random bits.
+    token = randomBytes(12).toString('base64url');
     const ins = await fetch(base, {
       method: 'POST',
       headers: { ...headers, Prefer: 'return=representation' },
       body: JSON.stringify({
         phone, client_name: name, purpose: about, context, invoice_id: invoiceId,
-        queued_by: `app chat (${user.email || user.id})`,
+        queued_by: `app chat (${user.email || user.id})`, approval_token: token,
       }),
     });
     const rows = await ins.json().catch(() => null);
@@ -132,7 +138,8 @@ async function appPlaceCall(res, user, params) {
         ? 'Lisa will ask you to APPROVE on Telegram right before she dials.'
         : 'outbound_calls_enabled is off, so it will not dial until that is switched on.'));
   }
-  return jsonOut(res, 200, { ok: true, id, phone, duplicate, outbound_calls_enabled: callsOn, telegram_sent: telegram });
+  const approvalLink = token ? `${APPROVE_BASE}/approve-call?token=${token}` : null;
+  return jsonOut(res, 200, { ok: true, id, callId: id, approvalLink, phone, duplicate, outbound_calls_enabled: callsOn, telegram_sent: telegram });
 }
 
 async function recordSmsSnapshot(invoiceId, to, note) {

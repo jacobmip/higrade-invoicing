@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.43.0 — 2026-11-02
+
+- **New: approve an outbound call from a link.** Queuing a call from the AI chat now mints an approval link (`/approve-call?token=...`) and hands it back in the reply. The page shows who Lisa would call and why, with Approve and Cancel; the answer is written to the same `call_queue.approval` column the Telegram reply writes, so the dialer needs no change. A call can be answered once: tapping again, or the opposite button, shows the stored answer.
+- The link only works once Lisa's approval gate has asked (`approval_asked_at` set). Before that the page says the call is not waiting for approval yet. The dialer script still needs to put the link in its Telegram request.
+- Migration 107 (`call_queue.approval_token`, applied). New edge route `api/approve-call.js` (does not count against the 12-function cap).
+
 ## v1.42.5 — 2026-11-01
 
 - **Fix: converting saved the link and then wiped it 0.6 seconds later.** Reproduced in a browser test against a fake database: after the conversion wrote the estimate as Converted and linked, a third save wrote it back as an unlinked Draft. Cause: since v1.38.5 the form is rebuilt whenever you switch documents (`FormBoundary` keyed on the document id), so opening the new invoice tore down the estimate form, and its save-on-close wrote its old copy over the conversion. This is why the "→ INV####" button would not stick and why tapping again offered to convert again. The form now pauses its own saves once Convert has saved it, for as long as the conversion runs, and stays paused if the conversion opened the other document. Cancelling, or a failure that stays on the estimate, resumes saving.
