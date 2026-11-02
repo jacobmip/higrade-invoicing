@@ -118,7 +118,7 @@ src/
   Communications.jsx — client profile Communications tab: texts + calls timeline (admin), plays audio via /api/call-recording
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
   TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
-  lisaActions.js     — `sendLisaText()` / `queueLisaCall()`: the AI chat's send_sms and place_call, shared by the per-invoice chat (App.jsx `handleGlobalAIAction`) and the global agent (`aiAgent.js`); both call `/api/sms-inbound` with the admin session (v1.38.0)
+  lisaActions.js     — `sendLisaText()` / `queueLisaCall()` / `approveLisaCall()`: the AI chat's send_sms, place_call, and approve_call, shared by the per-invoice chat (App.jsx `handleGlobalAIAction`) and the global agent (`aiAgent.js`); text and call queue use `/api/sms-inbound`, approve uses `/api/approve-call` (v1.38.0, approve_call added v1.43.1)
   reviewRequest.js   — orphaned since v1.41.1: nothing imports it (the Google review text was removed from App.jsx because it caused a constant page refresh)
   Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
   PriceBook.jsx      — price book picker
