@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.43.1 — 2026-11-02
+
+- **New: approve a queued call inline with one-word confirmation.** Jake can now type 'approve', 'ok', 'yes', 'yep', 'confirmed', 'go', or similar in the chat to immediately approve a queued outbound call, without tapping the approval link. The per-invoice chat auto-detects these approval words when a call is pending and emits the `approve_call` action, which posts to `/api/approve-call` (existing edge route from v1.43.0). Response shows inline: "Call approved, Lisa will dial shortly." This works in both per-invoice and global chats.
+- System prompt updated with the new `approve_call` action definition; `lisaActions.js` gains `approveLisaCall()` function.
+
 ## v1.43.0 — 2026-11-02
 
 - **New: approve an outbound call from a link.** Queuing a call from the AI chat now mints an approval link (`/approve-call?token=...`) and hands it back in the reply. The page shows who Lisa would call and why, with Approve and Cancel; the answer is written to the same `call_queue.approval` column the Telegram reply writes, so the dialer needs no change. A call can be answered once: tapping again, or the opposite button, shows the stored answer.
