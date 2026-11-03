@@ -1,3 +1,7 @@
+## v1.47.2 — 2026-11-03
+
+- **On My Way text uses first name only.** "Jake is on the way" instead of "Jacob Petersen is on the way".
+
 # HI Grade Invoicing — Changelog
 
 ## v1.47.1 — 2026-11-03

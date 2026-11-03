@@ -111,6 +111,9 @@ export default async function handler(req) {
   const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${user.id}&select=display_name&limit=1`, { headers: userHeaders });
   const techName = (profRes.ok && (await profRes.json())?.[0]?.display_name) || 'technician';
   const firstName = String(inv.clients?.name || inv.client_name || '').trim().split(/\s+/)[0] || 'there';
+  // Use only the first name of the tech so the text reads "Jake is on the way"
+  // not "Jacob Petersen is on the way".
+  const techFirst = techName.split(/\s+/)[0] || techName;
 
   // ETA only when the browser gave us a position and the job has a place to go.
   let eta = null;
@@ -129,7 +132,7 @@ export default async function handler(req) {
   }
 
   const arrive = eta != null ? `will arrive in approximately ${eta} minutes` : 'will arrive shortly';
-  const message = `Aloha ${firstName}, ${techName} is on the way and ${arrive}. Mahalo!`;
+  const message = `Aloha ${firstName}, ${techFirst} is on the way and ${arrive}. Mahalo!`;
 
   const sid = process.env.TWILIO_ACCOUNT_SID || (await setting('twilio_sid'));
   const token = process.env.TWILIO_AUTH_TOKEN || (await setting('twilio_token'));
