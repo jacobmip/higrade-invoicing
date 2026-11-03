@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.47.1 — 2026-11-03
+
+- **Lisa now collects and saves email.** Added `email` field to SMS agent JSON schema. `saveProgressiveData` writes email, name, and address back to the client record on every reply — name replaces all-caps or single-word placeholders, email and address only fill blank fields.
+- Sent outreach text to Hideki Kokorotei requesting address, full name, and email before Wednesday appointment.
+
 ## v1.46.1 — 2026-11-02
 
 - **Fix: Lisa's busy-calendar responses sound less robotic.** Replaced "Sorry, that time is already taken. The next opening I have is…" with natural phrasing that names the blocked day and drops the double-sorry. Now: "We're booked up Wednesday — we do have Thursday at 3 PM open. Does that work for you?"
