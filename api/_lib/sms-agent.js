@@ -146,6 +146,7 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
   "needs_human": false,
   "ready_to_file": false,
   "name": "their full name if you have it, else empty",
+  "email": "their email address if you have it, else empty",
   "address": "full service address with unit if you have it, else empty",
   "problem": "what is wrong, in their words, one or two sentences",
   "appointment": "YYYY-MM-DDTHH:MM in Hawaii time if agreed, else empty",
@@ -459,17 +460,36 @@ async function saveProgressiveData(phone, clientId, out) {
     const read = { apikey: key, Authorization: `Bearer ${key}` };
     const write = { ...read, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
     const name = String(out.name || '').trim();
+    const email = String(out.email || '').trim();
     const address = String(out.address || '').trim();
     const problem = String(out.problem || '').trim();
 
+    // Update client record with any new info we just learned.
+    const clientPatch = {};
     if (name) {
-      const [c] = await select(`clients?id=eq.${clientId}&select=name`);
+      const [c] = await select(`clients?id=eq.${clientId}&select=name,email`);
       const existing = (c?.name || '').trim();
-      if (!existing || /missed call|no name|text lead/i.test(existing)) {
-        await fetch(`${base}/rest/v1/clients?id=eq.${clientId}`, {
-          method: 'PATCH', headers: write, body: JSON.stringify({ name }),
-        });
-      }
+      // Replace placeholder names, all-caps single-word names, or names that
+      // are clearly less complete than what the customer just gave us.
+      const looksIncomplete = !existing
+        || /missed call|no name|text lead/i.test(existing)
+        || (existing === existing.toUpperCase() && !existing.includes(' '))
+        || (name.includes(' ') && !existing.includes(' '));
+      if (looksIncomplete) clientPatch.name = name;
+      if (email && !c?.email) clientPatch.email = email;
+    } else if (email) {
+      const [c] = await select(`clients?id=eq.${clientId}&select=email`);
+      if (!c?.email) clientPatch.email = email;
+    }
+    if (address) {
+      const [c] = await select(`clients?id=eq.${clientId}&select=address1`);
+      if (!c?.address1) clientPatch.address1 = address;
+    }
+    if (Object.keys(clientPatch).length) {
+      await fetch(`${base}/rest/v1/clients?id=eq.${clientId}`, {
+        method: 'PATCH', headers: write, body: JSON.stringify(clientPatch),
+      });
+      console.log(`[sms-agent] progressive: updated client ${clientId}: ${Object.keys(clientPatch).join(', ')}`);
     }
 
     if (address || problem) {
