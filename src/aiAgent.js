@@ -22,7 +22,7 @@
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
-import { sendLisaText, queueLisaCall } from './lisaActions.js';
+import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
 
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
@@ -634,14 +634,33 @@ async function sendSms(input, ctx) {
   return { ok: true, sent: true, phone: input.phone, note: r.text };
 }
 
-// Queues only. Nothing dials until the AI-OS runner gets Jake's Telegram approval.
+// Queue then immediately dial — Jake already confirmed in chat.
 async function placeCall(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
   const r = await queueLisaCall({
     phone: input.phone, name: input.name, about: input.about, context: input.context,
     invoiceId: id && ctx.getData().invoices.some(i => i.id === id) ? id : null,
   });
-  return { ok: true, queued: true, dialed: false, call_id: r.id, approval_link: r.approvalLink || null, note: r.text };
+  if (r.duplicate) {
+    return { ok: true, queued: true, dialing: false, call_id: r.id, note: r.text };
+  }
+  // Extract the token from the approval link and dial immediately.
+  let dialing = false;
+  let vapiCallId = null;
+  try {
+    const token = r.approvalLink ? new URL(r.approvalLink).searchParams.get('token') : null;
+    if (token) {
+      const approval = await approveLisaCall({ callToken: token });
+      dialing = approval.dialing === true;
+      vapiCallId = approval.vapiCallId || null;
+    }
+  } catch (e) {
+    console.warn('[placeCall] auto-dial failed, call is queued:', e.message || e);
+  }
+  const note = dialing
+    ? `Lisa is dialing ${input.name || input.phone} now.`
+    : `Call queued for ${input.name || input.phone}. It will dial when the runner picks it up.`;
+  return { ok: true, queued: true, dialing, call_id: r.id, vapiCallId, note };
 }
 
 function sendDocumentEmail(input, ctx) {
@@ -714,7 +733,7 @@ const PROGRESS = {
   schedule_job: (i) => `Booking ${i.client_name || 'job'}`,
   send_document_email: 'Preparing email',
   send_sms: (i) => `Texting ${i.phone || 'customer'}`,
-  place_call: (i) => `Queueing call to ${i.name || i.phone || 'customer'}`,
+  place_call: (i) => `Dialing ${i.name || i.phone || 'customer'}…`,
   delete_document: (i) => `Deleting ${i.document_id || 'document'}`,
 };
 const progressLabel = (name, input) => {

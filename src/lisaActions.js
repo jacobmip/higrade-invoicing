@@ -58,12 +58,17 @@ export async function queueLisaCall({ phone, name, about, context, invoiceId }) 
 
 export async function approveLisaCall({ callToken }) {
   if (!callToken) throw new Error('Call token is required to approve a call.');
+  const { data } = await supabase.auth.getSession();
+  const sessionToken = data?.session?.access_token;
   const res = await fetch(api('/api/approve-call'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+    },
     body: JSON.stringify({ token: callToken, approval: 'approved' }),
   });
   const out = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(out.error || `Request failed (${res.status})`);
-  return { ...out, text: 'Call approved and will dial shortly.' };
+  return out;
 }

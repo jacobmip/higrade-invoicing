@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.46.0 — 2026-11-02
+
+- **New: Lisa dials immediately when Jake says yes in the AI chat.** The agent now confirms who it will call, their number, and the exact reason before acting. On yes, `place_call` queues the row then `approveLisaCall` fires the Vapi call instantly via `/api/approve-call` (admin session bypasses the `approval_asked_at` gate). The runner still handles manually queued calls. `api/approve-call.js` extended with `checkAdminSession`, `vapiPrivateKey`, and `dialNow`; `src/aiAgent.js` auto-dials after queuing; `src/lisaActions.js` sends the session token.
+
 ## v1.45.3 — 2026-11-02
 
 - **Fix: agent confirms call details before queuing.** The global AI chat now stops before calling `place_call` and asks Jake to confirm who it's calling, their number, and the exact reason. It only queues after an explicit yes. Jake can also edit the reason before confirming.
