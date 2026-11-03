@@ -91,17 +91,18 @@ Get to a booked visit at a known address. A text thread that ends without an app
 
 To book a visit you need, in this order of importance:
 1. What is wrong, in enough detail to send the right person with the right parts
-2. A day and rough time that works for them
-3. The service address, including unit number
+2. The service address, including unit number — required before scheduling
+3. A day and rough time that works for them
 4. Their name
 
 You usually already have their number, because they texted you.
 
 HOW TO GET THERE
 - ASK ONE THING PER MESSAGE. Two questions in one text gets one answer, usually the easier one. This is the single most important rule here.
-- Lead toward the visit early. Once you understand roughly what is wrong, ask for a day rather than asking more diagnostic questions. You do not need to solve it over text, you need to get there.
-- Good move: "We can take a look at that. What day works better for you, tomorrow or Thursday?" Two concrete options beat "when would you like to come out", because an open question gets "idk".
-- When they give you a day and time, say you will pencil it in and the team will confirm. Then ask for the address. The address is the last thing you need and the easiest one to get once they have agreed to a time.
+- Lead toward the visit early. Once you understand roughly what is wrong, ask for the service address. Then once you have the address, offer day options.
+- Good move: "We can take a look at that. What's the service address?" Then once you have it: "What day works better for you, tomorrow or Thursday?"
+- ALWAYS confirm the service address before penciling in any appointment. Even for returning clients — addresses change, and the team cannot show up without it. If the address is not confirmed in this thread, ask for it before agreeing to a time.
+- When they give you a day and time AND you already have the address, pencil it in and say the team will confirm.
 - If they are vague or unsure about the problem, that is normal and it is not a reason to keep digging. Being unsure is a reason to come look. Say so: that is exactly what a visit is for.
 - If they go quiet mid-thread, your next message should make it trivially easy to say yes to a time.
 
@@ -132,9 +133,9 @@ CHECKING THE CALENDAR
 Before confirming any appointment time, the system will verify availability. If the time is taken, offer the next free slot. You never see the calendar yourself, so do not promise a specific time is open; pencil it in and the system corrects you if it is not.
 
 FILING THE JOB
-Set ready_to_file to true only once you have BOTH what is wrong AND either an appointment time or an address. Partial is fine after that; the office fills the rest. Do not wait for everything.
+Set ready_to_file to true only once you have ALL THREE: what is wrong, the service address, and either an appointment time or explicit confirmation they will call back to schedule. Do NOT set ready_to_file without an address — the team cannot show up without one.
 
-When the customer sends a short confirmation like "Okay", "Yes" or "Sounds good" after you have already penciled in a time, set ready_to_file to true immediately, and fill appointment with the time you penciled in earlier in the thread. You have what you need: problem plus appointment. Do not ask another question. A short closing reply like "Great, we will see you then! Mahalo!" is enough.
+When the customer sends a short confirmation like "Okay", "Yes" or "Sounds good" after you have already penciled in a time, set ready_to_file to true immediately, and fill appointment with the time you penciled in earlier in the thread — but only if the address is also confirmed in this thread. If you still need the address, ask for it instead of filing.
 
 ${catalog ? `PRICE BOOK. If you file, pick the ONE service name that best matches and put it in services. Never say any of this out loud.\n${catalog}` : ''}
 
@@ -354,7 +355,28 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   let estimatorDispatch = null;
   if (out.ready_to_file && !hasOpenEstimate) {
     try {
-      // IMPORTANT: create_estimate_from_lead validates p_secret against
+      // Re-check immediately before filing: a concurrent message (e.g. "Thank you"
+      // arriving at the same millisecond as the booking confirmation) may have
+      // already filed an estimate while this turn was running the model. Check
+      // both by client_id and by phone number filed in the last 2 minutes.
+      let alreadyFiled = false;
+      if (clientId) {
+        const recheck = await select(
+          `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id&limit=1`
+        );
+        alreadyFiled = Array.isArray(recheck) && recheck.length > 0;
+      }
+      if (!alreadyFiled) {
+        const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+        const since = new Date(Date.now() - 120000).toISOString();
+        const recentByPhone = await select(
+          `invoices?client_info->>phone=ilike.*${last10}&created_at=gte.${encodeURIComponent(since)}&deleted_at=is.null&status=eq.outstanding&select=id&limit=1`
+        );
+        alreadyFiled = Array.isArray(recentByPhone) && recentByPhone.length > 0;
+      }
+      if (alreadyFiled) {
+        console.log('[sms-agent] estimate already filed concurrently, skipping duplicate');
+      } else {
       // settings.lead_secret, NOT settings.sms_webhook_secret. They are
       // different values. Passing the SMS webhook secret here causes a silent
       // FORBIDDEN failure inside the RPC every time.
@@ -372,6 +394,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
         p_heard_from: 'text message',
         p_lead_channel: 'sms',
       });
+      } // end else (not alreadyFiled)
     } catch (e) {
       // The reply already went out, which is the part the customer sees. A
       // failed file is Jake's email alert plus this log line, not a dropped lead.
