@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.48.1 — 2026-11-03
+
+- **Fix: "See you tomorrow/Wednesday/then" now treated as a confirmation.** Lisa no longer responds to post-booking confirmations with a new availability check. Expanded isConfirmation regex to include "see you [day]", "that works", "that's fine".
+- Soft-deleted duplicate EST1182 (created by the confused SMS rebooking loop).
+
+
 ## v1.48.0 — 2026-11-03
 
 - **Clients now have first name, last name and company fields** (migration 109, applied). Optional inputs in the client editor; saved with the client. The client detail header shows first + last name when set, with the company as a second line; the client list shows the company under the name.

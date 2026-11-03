@@ -329,7 +329,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   const lastOurs = ours[ours.length - 1];
   // Short customer confirmations (Okay, Yes, Sounds good, etc.) should never
   // be blocked by the cooldown: they are the customer agreeing to the booking.
-  const isConfirmation = /^(ok|okay|yes|yep|yeah|sure|sounds good|great|perfect|works|confirmed|got it|see you|thank|mahalo|aloha|👍|✓)[\s!.]*$/i.test((body || '').trim());
+  const isConfirmation = /^(ok|okay|yes|yep|yeah|sure|sounds good|great|perfect|works|confirmed|got it|see you( (then|tomorrow|wednesday|thursday|friday|saturday|sunday|monday|tuesday|\w+day))?|that works|that's fine|that's good|thank|mahalo|aloha|👍|✓)[\s!.]*$/i.test((body || '').trim());
   // Only bypass when our last text actually penciled in a time.
   const hasAppointmentPenciled = /pencil|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+\s*(am|pm)/i.test(lastOurs?.body || '');
   if (isConfirmation && hasAppointmentPenciled) {
