@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.47.4 — 2026-11-03
+
+- **Fix: Lisa no longer responds to contact info with a scheduling message.** When a customer shares their email, phone, or address without proposing a time, Lisa acknowledges it and moves on — no appointment check, no availability override.
+
+
 ## v1.47.3 — 2026-11-03
 
 - **Fix: per-invoice AI chat bulk updates now actually apply.** Root causes: (1) max_tokens not bumped for bulk item edits so model ran out of output space; (2) retry message too vague. Now detects "all items"/"16 items" requests and bumps to 4096 tokens; retry explicitly tells the model how many JSON blocks it failed to emit and forces 8192 tokens. Added system prompt rule: emit all update_item blocks back-to-back in one response.
