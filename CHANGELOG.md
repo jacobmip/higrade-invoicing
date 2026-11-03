@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.45.3 — 2026-11-02
+
+- **Fix: agent confirms call details before queuing.** The global AI chat now stops before calling `place_call` and asks Jake to confirm who it's calling, their number, and the exact reason. It only queues after an explicit yes. Jake can also edit the reason before confirming.
+
 ## v1.45.2 — 2026-11-02
 
 - **Fix: remove spurious "TELEGRAM_TOKEN missing on Vercel" message** from the call-queued confirmation in the AI chat. `lisaActions.js` no longer checks `telegram_sent`; queue confirmation now reads "Lisa will dial once the runner gets Jake's approval." No Telegram ping is sent at queue time (the runner handles approval at dial time as before).
