@@ -1,4 +1,9 @@
-## v1.47.2 — 2026-11-03
+# HI Grade Invoicing — Changelog
+
+## v1.47.3 — 2026-11-03
+
+- **Fix: per-invoice AI chat bulk updates now actually apply.** Root causes: (1) max_tokens not bumped for bulk item edits so model ran out of output space; (2) retry message too vague. Now detects "all items"/"16 items" requests and bumps to 4096 tokens; retry explicitly tells the model how many JSON blocks it failed to emit and forces 8192 tokens. Added system prompt rule: emit all update_item blocks back-to-back in one response.
+
 
 - **On My Way text uses first name only.** "Jake is on the way" instead of "Jacob Petersen is on the way".
 

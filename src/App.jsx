@@ -571,6 +571,7 @@ RULES:
 - CRITICAL: If Jake says create an invoice, make an estimate, add a line item, schedule a job, or any similar command word, you MUST respond with the action JSON immediately. Never describe the action — perform it.
 - If a client name is not specified but can be inferred from context or is the most recently mentioned client, use that client. Only ask for clarification if there is genuinely no way to determine the client.
 - CRITICAL: If Jake asks you to change, edit, adjust, tweak, rewrite, modify, or update ANY field on an existing line item — name, description, qty, price, taxable — you MUST emit an update_item action JSON. NEVER reply in plain text saying you updated something. The app only changes when it sees the JSON. If you reply "I've updated..." or "Updated the description..." without emitting the JSON action, the change does NOT happen and Jake sees a lie. Always emit the JSON.
+- CRITICAL BULK UPDATES: When updating multiple items at once, emit ALL update_item JSON blocks in the same response — back to back with no prose between them. Do not describe the plan first and then forget to emit. Do not say "Done!" until every block is in this response. If there are 16 items to update, there must be 16 update_item blocks in your reply.
 - When asked to create multiple invoices or estimates (e.g. "create 10 invoices", "make 5 sample estimates", "create 10 invoices and 10 estimates"), you MUST return ONE single JSON array containing one action object per document — never just one. If asked for 10 invoices, the array MUST have exactly 10 create_invoice objects. If asked for "10 invoices and 10 estimates", return ONE array with 20 objects total (10 create_invoice + 10 create_estimate). Do not split across multiple turns; do not stop after the first object. Vary clients, dates, and items across the documents. Keep desc concise (6 short steps) when generating in bulk so the full array fits in your response. Example shape: [{"action":"create_invoice",...},{"action":"create_invoice",...}, ...]
 - IMPORTANT: To save an estimate use action "create_estimate". Never use action "estimate" — that is not a valid action in this context.
 - NO BULK DELETES: You can delete ONE invoice or estimate at a time using delete_invoice. Never delete more than one in a single turn. If Jake asks to "delete all invoices", "wipe everything", "clear them all", or anything similar, refuse politely and tell him bulk deletes are handled outside the chat for safety — he should ask Computer (the agent that built this app) to do it directly.
@@ -593,7 +594,11 @@ async function callAI(messages, systemPrompt = null, opts = {}) {
         : (Array.isArray(lastUser?.content) ? lastUser.content.map(c => c?.text || "").join(" ") : "");
       const nums = [...txt.matchAll(/(\d{1,3})\s*(invoice|estimate|quote|bid|sample|doc)/gi)].map(m => parseInt(m[1], 10));
       const total = nums.reduce((a, b) => a + b, 0);
-      if (total >= 3) maxTokens = 8192; // ceiling — server clamps anyway
+      if (total >= 3) maxTokens = 8192;
+      // Bulk item updates need extra tokens too: "all items", "each line", "16 items", etc.
+      if (!maxTokens && /\b(all|every|each)\s+(item|line|service|description)s?\b|\b\d+\s+items?\b/i.test(txt)) {
+        maxTokens = 4096;
+      }
     } catch {}
   }
   const res = await fetch(api("/api/ai"), {
@@ -1044,9 +1049,14 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       // I've added...") without emitting the action JSON, so nothing happened.
       // Any completion phrase or action name with no JSON gets one forced retry.
       if (actions.length === 0 && claimsAction(cleanText) && !readOnly) {
+        // Count how many items the model mentioned updating so the retry can be specific.
+        const itemCountMatch = cleanText.match(/\b(\d+)\s+(item|line)/i);
+        const expectedCount = itemCountMatch ? itemCountMatch[1] : 'all';
+        const retryPrompt = `You described updating ${expectedCount} item(s) but emitted 0 JSON action blocks. The app only changes when it sees the JSON. Emit ALL the update_item JSON blocks now — one per item, back to back, no prose between them. Start immediately.`;
         const retryReply = await callAI(
-          [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: "You described an action but did not emit the JSON. You MUST emit the action as a JSON block. Emit ONLY the JSON now, no prose." }],
-          systemPrompt
+          [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: retryPrompt }],
+          systemPrompt,
+          { maxTokens: 8192 }
         );
         const retryActions = extractActionsJSON(retryReply);
         if (retryActions.length) {
