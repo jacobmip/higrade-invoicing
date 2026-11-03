@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.45.1 — 2026-11-02
+
+- **Fix: Telegram heads-up when a call is queued via the AI chat.** `appPlaceCall` in `api/sms-inbound.js` now calls `telegramNotify()` and returns `telegram_sent` so `lisaActions.js` can report success accurately. `TELEGRAM_TOKEN` added to Vercel production env vars.
+
 ## v1.45.0 — 2026-11-02
 
 - **New: Calls tab (admin, in the More sheet).** `src/CallsTab.jsx` lists every `vapi_calls` row, linked to a client or document or not: direction badge, caller name (client record, else the outbound queue row's name, else the phone number), summary, Hawaii time, duration, and Client / Document chips. Tapping a row opens a sheet with the full summary, the transcript, and a Play Recording button (same `getRecordingUrl()` as the estimate's recordings).

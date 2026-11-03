@@ -131,7 +131,20 @@ async function appPlaceCall(res, user, params) {
 
   const callsOn = String(await getSetting('outbound_calls_enabled') || 'false').toLowerCase() === 'true';
   const approvalLink = token ? `${APPROVE_BASE}/approve-call?token=${token}` : null;
-  return jsonOut(res, 200, { ok: true, id, callId: id, approvalLink, phone, duplicate, outbound_calls_enabled: callsOn });
+
+  // Heads-up to Jake on Telegram. Best-effort: a missing token just skips it.
+  let telegram_sent = false;
+  if (!duplicate) {
+    try {
+      const who = name ? `${name} (${phone})` : phone;
+      const tgMsg = `Call queued for ${who}\nReason: ${about}${approvalLink ? `\n\nApproval link (live once the runner asks): ${approvalLink}` : ''}`;
+      telegram_sent = await telegramNotify(tgMsg);
+    } catch (e) {
+      console.error('[sms-inbound] telegram notify failed:', e.message || e);
+    }
+  }
+
+  return jsonOut(res, 200, { ok: true, id, callId: id, approvalLink, phone, duplicate, outbound_calls_enabled: callsOn, telegram_sent });
 }
 
 async function recordSmsSnapshot(invoiceId, to, note) {
