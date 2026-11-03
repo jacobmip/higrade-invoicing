@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.48.0 — 2026-11-03
+
+- **Clients now have first name, last name and company fields** (migration 109, applied). Optional inputs in the client editor; saved with the client. The client detail header shows first + last name when set, with the company as a second line; the client list shows the company under the name.
+- **Email salutations use the first name.** Invoice and estimate emails say "Aloha Shannon," instead of the full name; company-looking names (LLC, Inc, Corp, Construction, Contracting, Services, Co., Company) keep the full name.
+- **Lisa's SMS agent greets existing customers by first name**, with the full name still in her prompt.
+- Backfill split existing personal names into first and last; three clients set by hand.
+
 ## v1.47.4 — 2026-11-03
 
 - **Fix: Lisa no longer responds to contact info with a scheduling message.** When a customer shares their email, phone, or address without proposing a time, Lisa acknowledges it and moves on — no appointment check, no availability override.

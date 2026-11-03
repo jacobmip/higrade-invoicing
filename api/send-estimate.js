@@ -1,5 +1,14 @@
 export const config = { runtime: 'edge' };
 
+function salutationName(fullName) {
+  if (!fullName) return '';
+  // Company names keep the full name
+  if (/\b(LLC|Inc|Corp|Construction|Contracting|Services|Co\.|Company)\b/i.test(fullName)) return fullName;
+  // Individuals: first name only
+  return fullName.trim().split(/\s+/)[0];
+}
+
+
 export default async function handler(req) {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
@@ -23,7 +32,7 @@ export default async function handler(req) {
       .replace(/'/g, '&#39;');
     const messageHtml = message && message.trim()
       ? escapeHtml(message).replace(/\n/g, '<br>')
-      : `Aloha ${escapeHtml(clientName || '')},<br><br>We've prepared estimate <strong>${escapeHtml(estimateId || '')}</strong> for your review.`;
+      : `Aloha ${escapeHtml(salutationName(clientName))},<br><br>We've prepared estimate <strong>${escapeHtml(estimateId || '')}</strong> for your review.`;
 
     const reviewBtn = viewLink
       ? `<div style="text-align: center; margin: 20px 0 8px;">

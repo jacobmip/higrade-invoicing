@@ -171,6 +171,9 @@ function toClient(row) {
     name: row.name,
     email: row.email || '',
     email2: row.secondary_email || '',
+    firstName: row.first_name || '',
+    lastName: row.last_name || '',
+    companyName: row.company_name || '',
     mobile: row.mobile || '',
     phone: row.phone || '',
     contact: row.contact || '',
@@ -1113,6 +1116,10 @@ function clientPayload(client) {
   } : null
   return {
     name: client.name,
+    // Only when the caller knows them, so a partial client object (an AI update, a quick-add) never clears them by omission.
+    ...(typeof client.firstName === 'string' ? { first_name: client.firstName.trim() || null } : {}),
+    ...(typeof client.lastName === 'string' ? { last_name: client.lastName.trim() || null } : {}),
+    ...(typeof client.companyName === 'string' ? { company_name: client.companyName.trim() || null } : {}),
     email: client.email || null,
     secondary_email: client.email2 || null,
     mobile: client.mobile || null,

@@ -6537,7 +6537,7 @@ function newAddressId() {
 
 function emptyClient() {
   return {
-    name: "", email: "", email2: "", phone: "", contact: "",
+    name: "", firstName: "", lastName: "", companyName: "", email: "", email2: "", phone: "", contact: "",
     notes: "",
     addresses: [],
     billingAddress: null,
@@ -6583,7 +6583,7 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
   const sectionLabelStyle = { fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" };
   return (
     <div>
-      {[["name", "Name"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"]].map(([k, l]) => (
+      {[["name", "Name"], ["firstName", "First name (optional)"], ["lastName", "Last name (optional)"], ["companyName", "Company (optional)"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"]].map(([k, l]) => (
         <div key={k} style={{ marginBottom: compact ? 9 : 12 }}>
           <label style={{ ...S.label, marginBottom: compact ? 3 : 4 }}>{l}</label>
           <input style={S.input} value={form[k] || ""} onChange={e => setField(k, e.target.value)} type={k === "email" || k === "email2" ? "email" : "text"} />
@@ -7189,7 +7189,8 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
               card. The detail BODY below stays selectable on purpose — copying an
               address or a phone number out of it is genuinely useful on a job. */}
           <div style={{ flex: 1, minWidth: 0, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
-            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.firstName ? [c.firstName, c.lastName].filter(Boolean).join(" ") : c.name}</div>
+            {c.companyName && <div style={{ fontSize: 12, color: "#aab4cc" }}>{c.companyName}</div>}
             {c.phone && <div style={{ fontSize: 12, color: "#8899bb" }}>{c.phone}</div>}
           </div>
           <button onClick={() => startEdit(c)} style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 12 }}>Edit</button>
@@ -7338,6 +7339,7 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
             <div key={c.id} onClick={() => openDetail(c)} style={{ ...S.card, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{c.name}</div>
+                {c.companyName && <div style={{ fontSize: 13, color: "#666" }}>{c.companyName}</div>}
                 {c.phone && <div style={{ fontSize: 13, color: "#666" }}>{c.phone}</div>}
                 {c.email && <div style={{ fontSize: 13, color: "#666", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.email}</div>}
               </div>

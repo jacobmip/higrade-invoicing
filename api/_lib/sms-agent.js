@@ -81,6 +81,12 @@ function hawaiiNow() {
   };
 }
 
+function firstNameOf(name) {
+  if (!name) return name;
+  if (/\b(LLC|Inc|Corp|Construction|Contracting|Services|Co\.|Company)\b/i.test(name)) return name;
+  return name.trim().split(/\s+/)[0];
+}
+
 function systemPrompt({ now, clientName, hasOpenEstimate, catalog }) {
   return `You are Lisa, the front desk at HI Grade Plumbing LLC, a licensed plumbing company on Oahu, Hawaii. You are answering a TEXT MESSAGE. You are the same Lisa who answers the phone and replies on Yelp.
 
@@ -127,7 +133,7 @@ HARD RULES
 - If they are angry about a bill or demanding money, do not negotiate. Say Jacob will call them directly, and set needs_human to true.
 - If they ask for something you genuinely cannot answer, say the team will follow up and set needs_human to true.
 
-${clientName ? `This is an existing customer: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
+${clientName ? `This is an existing customer: ${firstNameOf(clientName)}. Full name on file: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
 ${hasOpenEstimate ? 'There is ALREADY an open job on file for them, so do NOT set ready_to_file. Anything new they tell you goes to the office instead.' : ''}
 
 CHECKING THE CALENDAR
