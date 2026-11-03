@@ -276,13 +276,17 @@ export async function draftReply({ phone, clientName, hasOpenEstimate }) {
     out.availability = chk.status;
     if (chk.status === 'busy') {
       console.log('[sms-agent] requested time busy', out.appointment);
-      // Name the day that's blocked so the message isn't generic.
       const blockedDay = out.appointment ? speakSlot(out.appointment.length === 10
         ? out.appointment + 'T12:00' : out.appointment).split(' at ')[0] : null;
+      const nextSlot = chk.next ? speakSlot(chk.next.start) : null;
+      const nextDay = nextSlot ? nextSlot.split(' at ')[0] : null;
+      const sameDay = blockedDay && nextDay && blockedDay === nextDay;
       out.appointment = '';
-      out.reply = chk.next
-        ? `We're booked up ${blockedDay ? `${blockedDay}` : 'that window'} — we do have ${speakSlot(chk.next.start)} open. Does that work for you?`
-        : `We're booked up ${blockedDay ? `${blockedDay}` : 'that day'}. What other day works for you?`;
+      out.reply = nextSlot
+        ? (sameDay
+          ? `That time's taken — we do have ${nextSlot} open. Does that work for you?`
+          : `We're booked up ${blockedDay || 'that window'} — we do have ${nextSlot} open. Does that work for you?`)
+        : `We're booked up ${blockedDay || 'that day'}. What other day works for you?`;
     } else if (chk.status === 'error') {
       console.error('[sms-agent] availability check failed, not booking:', chk.detail);
       out.appointment = '';
