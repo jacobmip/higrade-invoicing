@@ -1,8 +1,8 @@
 # HI Grade Invoicing — Changelog
 
-## v1.45.1 — 2026-11-02
+## v1.45.2 — 2026-11-02
 
-- **Fix: Telegram heads-up when a call is queued via the AI chat.** `appPlaceCall` in `api/sms-inbound.js` now calls `telegramNotify()` and returns `telegram_sent` so `lisaActions.js` can report success accurately. `TELEGRAM_TOKEN` added to Vercel production env vars.
+- **Fix: remove spurious "TELEGRAM_TOKEN missing on Vercel" message** from the call-queued confirmation in the AI chat. `lisaActions.js` no longer checks `telegram_sent`; queue confirmation now reads "Lisa will dial once the runner gets Jake's approval." No Telegram ping is sent at queue time (the runner handles approval at dial time as before).
 
 ## v1.45.0 — 2026-11-02
 

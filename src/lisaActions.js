@@ -49,10 +49,9 @@ export async function queueLisaCall({ phone, name, about, context, invoiceId }) 
   if (!reason) throw new Error('Say why Lisa is calling.');
   const out = await post({ op: 'place_call', phone: p, name, about: reason, context, invoice_id: invoiceId });
   const who = name ? `${name} at ${p}` : p;
-  let text = `Call queued for ${who}. You'll get a Telegram approval request before Lisa dials.`;
+  let text = `Call queued for ${who}. Lisa will dial once the runner gets Jake's approval.`;
   if (out.duplicate) text = `That call to ${who} is already queued (#${out.id}). Nothing new was added.`;
   else if (!out.outbound_calls_enabled) text += ' Outbound calls are switched off right now, so it will wait until that is turned on.';
-  else if (!out.telegram_sent) text += ' The Telegram heads-up did not send (TELEGRAM_TOKEN missing on Vercel), but the approval request still comes when it is due to dial.';
   if (!out.duplicate && out.approvalLink) text += ` Approval link (live once Lisa asks): ${out.approvalLink}`;
   return { ...out, text };
 }
