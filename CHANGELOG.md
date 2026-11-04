@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.50.0 — 2026-11-03
+
+- **Inbound call capped at 5 minutes.** Calls over 5 min get cut off gracefully by Vapi — the purpose is name + problem + schedule, the text handles address/email/full name.
+- **Inbound prompt rewritten:** Lisa collects only 3 things on the call (name, problem, appointment). No email, no "how did you hear about us" for existing clients, no duplicate photo-request line.
+- **Outbound now checks calendar before booking.** `checkAvailability` tool was already attached but never instructed; added the CRITICAL rule to the outbound prompt.
+- **SMS agent gets phone-call context.** When an open unscheduled estimate exists for the client, Lisa sees the problem description and urgency captured on the call — she does not re-ask. Focus shifts to address and appointment confirmation.
+
+
 ## v1.49.1 — 2026-11-03
 
 - **Fix: SMS agent no longer confuses an existing unscheduled estimate with a completed booking.** `hasOpenEstimate` now splits into two states: (1) unscheduled — Lisa collects address and time and updates the existing estimate instead of creating a duplicate; (2) scheduled — Lisa tells the client the date and does not rebook. Fixes the root cause of the duplicate EST1181/1182 situation.

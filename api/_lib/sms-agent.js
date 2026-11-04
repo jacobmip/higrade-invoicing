@@ -139,6 +139,7 @@ ${hasOpenEstimate && openEstimateDate
   : hasOpenEstimate
   ? `There is already a scheduled visit on the books. Do not create a new booking.`
   : ''}
+${!hasOpenEstimate && openEstimateProblem ? `CONTEXT FROM THEIR PHONE CALL: The team already knows their issue is "${openEstimateProblem}"${openEstimateUrgency ? ` (${openEstimateUrgency})` : ''}. Do not ask them to describe the problem again. Focus on getting the service address and confirming the appointment.` : ''}
 
 CHECKING THE CALENDAR
 Before confirming any appointment time, the system will verify availability. If the time is taken, offer the next free slot. You never see the calendar yourself, so do not promise a specific time is open; pencil it in and the system corrects you if it is not.
@@ -231,7 +232,7 @@ function parseJson(text) {
  * Decide what Lisa would say next in a thread, without sending anything.
  * Exported so the preview path and the live path share one prompt.
  */
-export async function draftReply({ phone, clientName, hasOpenEstimate, openEstimateDate }) {
+export async function draftReply({ phone, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
@@ -355,9 +356,11 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   let openEstimateId = null;
   let openEstimateScheduled = false;
   let openEstimateDate = null;
+  let openEstimateProblem = null;
+  let openEstimateUrgency = null;
   if (clientId) {
     const open = await select(
-      `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id,gcal_date,visits&order=created_at.desc&limit=1`
+      `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id,gcal_date,visits,internal_notes,urgency&order=created_at.desc&limit=1`
     );
     if (Array.isArray(open) && open.length > 0) {
       hasOpenEstimate = true;
@@ -367,10 +370,14 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
       openEstimateScheduled = !!hasVisit;
       openEstimateDate = open[0].gcal_date ||
         (Array.isArray(open[0].visits) && open[0].visits[0]?.start) || null;
+      // Pull problem/urgency from the estimate so the SMS agent knows what
+      // was collected on the phone call and doesn't re-ask.
+      openEstimateProblem = String(open[0].internal_notes || '').trim() || null;
+      openEstimateUrgency = String(open[0].urgency || '').trim() || null;
     }
   }
 
-  const out = await draftReply({ phone, clientName, hasOpenEstimate: openEstimateScheduled, openEstimateDate });
+  const out = await draftReply({ phone, clientName, hasOpenEstimate: openEstimateScheduled, openEstimateDate, openEstimateProblem, openEstimateUrgency });
   if (out.skip) return out.skip;
   if (out.spam) return 'classified as spam, not replying';
   if (!out.reply) return 'model chose to say nothing';
