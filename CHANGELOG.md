@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.49.1 — 2026-11-03
+
+- **Fix: SMS agent no longer confuses an existing unscheduled estimate with a completed booking.** `hasOpenEstimate` now splits into two states: (1) unscheduled — Lisa collects address and time and updates the existing estimate instead of creating a duplicate; (2) scheduled — Lisa tells the client the date and does not rebook. Fixes the root cause of the duplicate EST1181/1182 situation.
+
+
 ## v1.49.0 — 2026-11-03
 
 - **Per-client Lisa auto-reply switch** (migration 110, applied). `clients.lisa_autoreply`, default on. An admin-only "Lisa" pill toggle sits in the thread header (Messages tab) and above the thread in the client profile and estimate/invoice Messages tab. Off means Lisa's SMS agent skips that client (`autoReply()` returns "lisa autoreply disabled for this client"); inbound texts are still logged. Flips instantly, reverts if the save fails.

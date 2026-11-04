@@ -134,7 +134,11 @@ HARD RULES
 - If they ask for something you genuinely cannot answer, say the team will follow up and set needs_human to true.
 
 ${clientName ? `This is an existing customer: ${firstNameOf(clientName)}. Full name on file: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
-${hasOpenEstimate ? 'There is ALREADY an open job on file for them, so do NOT set ready_to_file. Anything new they tell you goes to the office instead.' : ''}
+${hasOpenEstimate && openEstimateDate
+  ? `There is already a visit SCHEDULED for them on ${openEstimateDate.replace('T', ' at ').slice(0, 16)} Hawaii time. Do NOT rebook or propose a new time. If they want to change it, tell them to call the office.`
+  : hasOpenEstimate
+  ? `There is already a scheduled visit on the books. Do not create a new booking.`
+  : ''}
 
 CHECKING THE CALENDAR
 Before confirming any appointment time, the system will verify availability. If the time is taken, offer the next free slot. You never see the calendar yourself, so do not promise a specific time is open; pencil it in and the system corrects you if it is not.
@@ -227,7 +231,7 @@ function parseJson(text) {
  * Decide what Lisa would say next in a thread, without sending anything.
  * Exported so the preview path and the live path share one prompt.
  */
-export async function draftReply({ phone, clientName, hasOpenEstimate }) {
+export async function draftReply({ phone, clientName, hasOpenEstimate, openEstimateDate }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
@@ -344,15 +348,29 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   if (last && last.direction === 'outbound') return 'last word is already ours';
 
   // An open job means the conversation belongs to that job, not to a new lead.
+  // Split into two states: has a visit scheduled vs open but unscheduled.
+  // Unscheduled: Lisa should collect address + time and update the existing job.
+  // Scheduled: Lisa should not rebook — just confirm the date.
   let hasOpenEstimate = false;
+  let openEstimateId = null;
+  let openEstimateScheduled = false;
+  let openEstimateDate = null;
   if (clientId) {
     const open = await select(
-      `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id&limit=1`
+      `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id,gcal_date,visits&order=created_at.desc&limit=1`
     );
-    hasOpenEstimate = Array.isArray(open) && open.length > 0;
+    if (Array.isArray(open) && open.length > 0) {
+      hasOpenEstimate = true;
+      openEstimateId = open[0].id;
+      const hasVisit = open[0].gcal_date ||
+        (Array.isArray(open[0].visits) && open[0].visits.length > 0);
+      openEstimateScheduled = !!hasVisit;
+      openEstimateDate = open[0].gcal_date ||
+        (Array.isArray(open[0].visits) && open[0].visits[0]?.start) || null;
+    }
   }
 
-  const out = await draftReply({ phone, clientName, hasOpenEstimate });
+  const out = await draftReply({ phone, clientName, hasOpenEstimate: openEstimateScheduled, openEstimateDate });
   if (out.skip) return out.skip;
   if (out.spam) return 'classified as spam, not replying';
   if (!out.reply) return 'model chose to say nothing';
@@ -365,18 +383,45 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
 
   let filed = null;
   let estimatorDispatch = null;
-  if (out.ready_to_file && !hasOpenEstimate) {
+  if (out.ready_to_file) {
     try {
-      // Re-check immediately before filing: a concurrent message (e.g. "Thank you"
-      // arriving at the same millisecond as the booking confirmation) may have
-      // already filed an estimate while this turn was running the model. Check
-      // both by client_id and by phone number filed in the last 2 minutes.
+      // Re-check for concurrent races (see comment below).
       let alreadyFiled = false;
       if (clientId) {
         const recheck = await select(
-          `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id&limit=1`
+          `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id,gcal_date,visits&order=created_at.desc&limit=1`
         );
-        alreadyFiled = Array.isArray(recheck) && recheck.length > 0;
+        if (Array.isArray(recheck) && recheck.length > 0) {
+          const existing = recheck[0];
+          const hasVisit = existing.gcal_date ||
+            (Array.isArray(existing.visits) && existing.visits.length > 0);
+          if (hasVisit) {
+            // Already scheduled — don't create or update anything.
+            alreadyFiled = true;
+            console.log('[sms-agent] estimate already scheduled, skipping file');
+          } else {
+            // Unscheduled estimate exists — update it with address/appointment
+            // instead of creating a duplicate.
+            const patch = {};
+            if (out.address) {
+              patch.job_address = { label: 'Service address', line1: out.address, line2: '', line3: '', city: '', state: 'HI', zip: '' };
+            }
+            if (out.appointment) patch.gcal_date = out.appointment;
+            if (out.name) patch.client_name = out.name;
+            if (Object.keys(patch).length) {
+              const sbUrl = supabaseUrl();
+              const sbKey = supabaseKey();
+              await fetch(`${sbUrl}/rest/v1/invoices?id=eq.${encodeURIComponent(existing.id)}`, {
+                method: 'PATCH',
+                headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+                body: JSON.stringify(patch),
+              });
+            }
+            filed = { estimate_id: existing.id };
+            alreadyFiled = true;
+            console.log('[sms-agent] updated existing unscheduled estimate', existing.id);
+          }
+        }
       }
       if (!alreadyFiled) {
         const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
@@ -384,11 +429,12 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
         const recentByPhone = await select(
           `invoices?client_info->>phone=ilike.*${last10}&created_at=gte.${encodeURIComponent(since)}&deleted_at=is.null&status=eq.outstanding&select=id&limit=1`
         );
-        alreadyFiled = Array.isArray(recentByPhone) && recentByPhone.length > 0;
+        if (Array.isArray(recentByPhone) && recentByPhone.length > 0) {
+          console.log('[sms-agent] estimate filed concurrently by phone match, skipping');
+          alreadyFiled = true;
+        }
       }
-      if (alreadyFiled) {
-        console.log('[sms-agent] estimate already filed concurrently, skipping duplicate');
-      } else {
+      if (!alreadyFiled) {
       // settings.lead_secret, NOT settings.sms_webhook_secret. They are
       // different values. Passing the SMS webhook secret here causes a silent
       // FORBIDDEN failure inside the RPC every time.
