@@ -315,6 +315,10 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   if (String(await getSetting('sms_autoreply_enabled') || '').toLowerCase() !== 'true') {
     return 'autoreply off';
   }
+  if (clientId) {
+    const [c] = await select(`clients?id=eq.${encodeURIComponent(clientId)}&select=lisa_autoreply`);
+    if (c && c.lisa_autoreply === false) return 'lisa autoreply disabled for this client';
+  }
   if (OPT_OUT.test(body || '')) return 'opt-out, not replying';
   if (HELP.test(body || '')) {
     await sendTwilioSms({ to: phone, body: HELP_REPLY });

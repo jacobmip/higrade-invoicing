@@ -13,6 +13,7 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
+import { setClientLisaAutoreply } from './db.js';
 
 const NAVY = '#0a1628';
 const BLUE = '#0070ba';
@@ -268,6 +269,40 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
   );
 }
 
+// Admin-only pill: whether Lisa auto-replies to this client's texts
+// (clients.lisa_autoreply, migration 110). Flips at once, reverts on error. A
+// missing value counts as on. Reads the live value on mount because the app's
+// loaded client record is not refreshed after a toggle.
+function LisaToggle({ client, dark }) {
+  const [on, setOn] = useState(client?.lisaAutoreply !== false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!client?.id) return;
+    let live = true;
+    supabase.from('clients').select('lisa_autoreply').eq('id', client.id).maybeSingle()
+      .then(({ data }) => { if (live && data) setOn(data.lisa_autoreply !== false); });
+    return () => { live = false; };
+  }, [client?.id]);
+  if (!client?.id) return null;
+  const flip = async () => {
+    if (busy) return;
+    const prev = on;
+    setOn(!prev); setBusy(true);
+    try { await setClientLisaAutoreply(client.id, !prev); }
+    catch (e) { setOn(prev); console.error('[lisa toggle]', e); }
+    setBusy(false);
+  };
+  return (
+    <button type="button" onClick={flip} aria-pressed={on} title={on ? 'Lisa auto-reply is on' : 'Lisa auto-reply is off'}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: dark ? '#fff' : NAVY, fontSize: 12, fontWeight: 600 }}>
+      Lisa
+      <span style={{ width: 30, height: 16, borderRadius: 8, background: on ? '#f07c00' : '#9aa3b5', position: 'relative', transition: 'background .15s' }}>
+        <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 12, height: 12, borderRadius: 6, background: '#fff', transition: 'left .15s' }} />
+      </span>
+    </button>
+  );
+}
+
 // One client's thread, loaded on its own. Used in the client profile and the
 // estimate/invoice Messages tab. `client` is the app's client record.
 function ClientThreadInner({ client, canReply, height = 420, onRead }) {
@@ -296,6 +331,7 @@ function ClientThreadInner({ client, canReply, height = 420, onRead }) {
   const phone = rows.phone || client?.mobile || client?.phone;
   return (
     <div style={{ border: '1px solid #e5e7ee', borderRadius: 12, overflow: 'hidden' }}>
+      {canReply && <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 8px', borderBottom: '1px solid #eef0f5' }}><LisaToggle client={client} /></div>}
       <Thread messages={rows.messages} phone={phone} canReply={canReply && !!phone} onSent={load} height={height} />
     </div>
   );
@@ -370,6 +406,7 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus })
             <div style={{ color: '#fff', fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
             {open.client && <div style={{ color: '#8899bb', fontSize: 12 }}>{prettyPhone(open.phone)}</div>}
           </div>
+          {isAdmin && open.client && <LisaToggle client={open.client} dark />}
           {open.phone && <a href={`tel:${open.phone}`} style={{ color: '#fff', fontSize: 14, textDecoration: 'none', fontWeight: 600 }}>Call</a>}
         </div>
         <Thread messages={open.messages} phone={open.phone} canReply={isAdmin && !!open.phone} onSent={load} height="100%" />

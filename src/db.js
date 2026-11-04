@@ -174,6 +174,7 @@ function toClient(row) {
     firstName: row.first_name || '',
     lastName: row.last_name || '',
     companyName: row.company_name || '',
+    lisaAutoreply: row.lisa_autoreply !== false,
     mobile: row.mobile || '',
     phone: row.phone || '',
     contact: row.contact || '',
@@ -1582,6 +1583,12 @@ export async function getInvoiceApprentice(invoiceId) {
     .select('apprentice_id').eq('id', invoiceId).maybeSingle()
   if (error) throw error
   return data ? (data.apprentice_id || null) : undefined // undefined: no row yet
+}
+
+export async function setClientLisaAutoreply(clientId, enabled) {
+  const { error } = await supabase.from('clients')
+    .update({ lisa_autoreply: !!enabled }).eq('id', clientId)
+  if (error) throw error
 }
 
 export async function setInvoiceApprentice(invoiceId, apprenticeId) {
