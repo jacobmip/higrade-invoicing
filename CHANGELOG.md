@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.51.0 — 2026-11-05
+
+- **Pick your navigation app.** Settings has a new "Navigation App" card for every user, not just admins: Phone default, Apple Maps, Google Maps or Waze. It decides what opens when you tap Navigate on a job (both the Preview-tab Navigate button and the On My Way card's). Each person picks their own, and the choice is saved to their login, so it follows them to any phone they sign in on. Phone default behaves exactly as before (Apple Maps on iPhone, Google Maps elsewhere), so nothing changes until someone picks.
+- The two Navigate buttons had separate copies of the map-link code that disagreed slightly; both now use `src/navApp.js`.
+- No database change: stored in the user's own auth `user_metadata.nav_app`, which every user may update for themselves. Signing out clears the cached copy, so a shared phone does not carry the last person's choice.
+- Tested: link builder for every choice on iPhone and Android; and in a browser as a non-admin, picking Waze saves to the login and a second phone signing in shows Waze (`test/e2e/nav-app.mjs`).
+
 ## v1.50.0 — 2026-11-03
 
 - **Inbound call capped at 5 minutes.** Calls over 5 min get cut off gracefully by Vapi — the purpose is name + problem + schedule, the text handles address/email/full name.

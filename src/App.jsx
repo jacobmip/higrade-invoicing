@@ -16,6 +16,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import OnMyWay from './OnMyWay.jsx';
+import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
 import CallsTab from './CallsTab.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
@@ -11201,12 +11202,33 @@ function SettingsTab({ onAfterRestore, profile, isAdmin, allUsers, viewAsUserId,
     setPendingFile(null);
   };
 
+  // Navigation app (src/navApp.js): each person's own choice, saved on their
+  // login, so it shows for every tier, not just admins.
+  const [navApp, setNavAppState] = useState(getNavApp());
+  const [navStatus, setNavStatus] = useState("");
+  const handleSetNavApp = async (v) => {
+    const prev = navApp;
+    setNavAppState(v);
+    setNavStatus("Saving…");
+    try { await setNavApp(v); setNavStatus("Saved"); }
+    catch (e) { console.warn("set nav app failed:", e); setNavAppState(prev); setNavStatus("Could not save. Check your signal and try again."); }
+  };
+
   const card = { background: "#fff", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(10,22,40,0.06)" };
   const heading = { fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: 1, color: "#8899bb", textTransform: "uppercase", marginBottom: 8 };
   const body = { fontSize: 13, color: "#445", lineHeight: 1.5, marginBottom: 12 };
 
   return (
     <div style={{ padding: "16px", paddingBottom: 100 }}>
+      <div style={card}>
+        <div style={heading}>Navigation App</div>
+        <div style={body}>Which app opens when you tap Navigate on a job. This is your own setting and follows you to any phone you sign in on.</div>
+        <select style={S.input} value={navApp} onChange={e => handleSetNavApp(e.target.value)} aria-label="Navigation app">
+          {NAV_APPS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+        </select>
+        {navStatus && <div style={{ fontSize: 11, color: "#8894a8", marginTop: 6 }}>{navStatus}</div>}
+      </div>
+
       {isAdmin && (
         <div style={card}>
           <div style={heading}>Default Apprentice</div>

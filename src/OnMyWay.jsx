@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { supabase } from "./supabase.js";
 import { api } from "./apiBase.js";
+import { mapsUrl } from "./navApp.js";
 
 const ORANGE = "#E8622A";
 
@@ -10,12 +11,6 @@ function buildDestination(jobAddress) {
   return parts.join(", ");
 }
 
-function mapsUrl(address) {
-  const q = encodeURIComponent(address);
-  return /iPad|iPhone|iPod/.test(navigator.userAgent)
-    ? `https://maps.apple.com/?daddr=${q}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
-}
 
 export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, jobAddress, billingAddress, onSent }) {
   const [loading, setLoading] = useState(false);

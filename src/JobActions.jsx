@@ -6,18 +6,13 @@
 import { useEffect, useState } from "react";
 import { linesOf } from "./billTo.js";
 import * as TC from "./timeclock";
+import { mapsUrl } from "./navApp.js";
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
 const GREEN = "#16a085";
 const HEAD = "'Barlow Condensed', sans-serif";
 
-function mapsUrl(address) {
-  const q = encodeURIComponent(address);
-  return /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)
-    ? `https://maps.apple.com/?daddr=${q}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
-}
 
 export function JobContactActions({ name, phone, jobAddress, fallbackAddress, techName }) {
   const digits = (phone || "").replace(/[^\d+]/g, "");

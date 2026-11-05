@@ -114,6 +114,7 @@ src/
   printablePdf.js    — jsPDF invoice/estimate generator
   JobPhotos.jsx      — per-job photo gallery
   OnMyWay.jsx        — "on my way" customer notification
+  navApp.js          — per-user Navigate app (Phone default / Apple / Google / Waze): `mapsUrl()` used by both Navigate buttons (JobActions, OnMyWay), `setNavApp()` saves to the user's own auth `user_metadata.nav_app` (no table, no migration), cached in localStorage `higrade_nav_app` and cleared on sign-out. Settings card "Navigation App" shown to every tier (v1.51.0). Test: `test/e2e/nav-app.mjs`
   JobActions.jsx    — Call / On My Way / Navigate row (Preview tab) and the clock in/out button, both for non-admin users in the standard form
   Communications.jsx — client profile Communications tab: texts + calls timeline (admin), plays audio via /api/call-recording
   CallRecordings.jsx — Lisa's call recordings: list + player on the estimate (admin), and the `/?call=<id>` modal the Call record email opens
