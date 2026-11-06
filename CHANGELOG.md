@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.51.1 — 2026-11-06
+
+- **"→ Estimate" on an invoice no longer deletes the invoice.** It now creates an estimate from the invoice and keeps the invoice exactly as it was, with its payments and schedule. The two are linked: the invoice shows "← EST####" and the estimate shows "→ INV####" (status Converted). The estimate reuses the job number when it is free (INV1174 makes EST1174); if that number is taken, for example by a deleted estimate, it gets a fresh number and is still linked. This had deleted the invoice since the button was added on 2026-04-30. The button only appears on an invoice with no live estimate linked or paired by number, which is what happened on INV1174: either it was made as an invoice directly, or EST1174 was deleted. Test: `test/e2e/convert-reverse.mjs`.
+
 ## v1.51.0 — 2026-11-05
 
 - **Pick your navigation app.** Settings has a new "Navigation App" card for every user, not just admins: Phone default, Apple Maps, Google Maps or Waze. It decides what opens when you tap Navigate on a job (both the Preview-tab Navigate button and the On My Way card's). Each person picks their own, and the choice is saved to their login, so it follows them to any phone they sign in on. Phone default behaves exactly as before (Apple Maps on iPhone, Google Maps elsewhere), so nothing changes until someone picks.
