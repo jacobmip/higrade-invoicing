@@ -890,7 +890,7 @@ function resizeImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
   });
 }
 
-function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef, readOnly }) {
+function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef, readOnly, topInset }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -913,11 +913,49 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   // Scroll within the messages div only (direct scrollTop). scrollIntoView
   // bubbles up past the overflow container on iOS Safari and scrolls the
   // outer page, which made the whole page jump on every new message.
+  // Keyboard height while the typing box has focus (visualViewport), so the
+  // chat can shrink to the space between the form header and the keyboard.
+  const [focused, setFocused] = useState(false);
+  const [kb, setKb] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!focused || !vv) { setKb(0); return; }
+    const update = () => setKb(Math.max(0, Math.round(window.innerHeight - vv.height)));
+    update();
+    vv.addEventListener("resize", update);
+    return () => vv.removeEventListener("resize", update);
+  }, [focused]);
+  const headerBottom = () => Math.max(topInset ? topInset() : 0, window.visualViewport?.offsetTop || 0);
+  const panelHeight = focused && kb > 80
+    ? Math.max(220, Math.min(400, window.innerHeight - kb - headerBottom() - 20))
+    : 400;
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
-  }, [msgs, loading]);
+  }, [msgs, loading, panelHeight]);
+  // Put the whole chat between the form header and the keyboard. The invoice
+  // form scrolls inside its own panel (window.scrollY stays 0), so scroll the
+  // nearest scrolling ancestor, not the window.
+  const alignToKeyboard = () => {
+    const el = panelRef.current;
+    if (!el) return;
+    let sc = el.parentElement;
+    while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
+    const vv = window.visualViewport;
+    const visibleBottom = (vv ? vv.offsetTop + vv.height : window.innerHeight) - 8;
+    const r = el.getBoundingClientRect();
+    let delta = r.bottom - visibleBottom;
+    // Never push the top of the chat under the header.
+    if (r.top - delta < headerBottom() + 4) delta = r.top - headerBottom() - 4;
+    if (Math.abs(delta) <= 2) return;
+    if (sc) sc.scrollBy({ top: delta, behavior: "smooth" }); else window.scrollBy({ top: delta, behavior: "smooth" });
+  };
+  useLayoutEffect(() => {
+    if (!focused || kb <= 80) return;
+    const id = requestAnimationFrame(alignToKeyboard);
+    return () => cancelAnimationFrame(id);
+  }, [focused, kb, panelHeight]);
 
   // Hold the active recognition instance so we can stop a stuck one and
   // toggle the mic button off without crashing the whole app. iOS Safari
@@ -1183,7 +1221,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   // to promote the panel to a fixed overlay tied to visualViewport metrics
   // and lock body scroll on focus — that combination made the box visibly
   // shift around on every keystroke as the keyboard animated.
-  const containerStyle = { position: "relative", height: 400, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
+  const containerStyle = { position: "relative", height: panelHeight, transition: "height 120ms ease-out", background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
 
   return (
     <div ref={panelRef} data-no-swipe="true" style={containerStyle}>
@@ -1195,7 +1233,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           style={{ position: "absolute", top: 8, right: 10, zIndex: 5, background: "rgba(255,255,255,0.92)", border: "1px solid #dde2ee", borderRadius: 16, padding: "4px 10px", fontSize: 11, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, color: "#888", letterSpacing: 1, cursor: "pointer", textTransform: "uppercase", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}
         >Clear</button>
       )}
-      <div ref={messagesRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 62, overflowY: "auto", padding: 14 }}>
+      <div ref={messagesRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 62, overflowY: "auto", overscrollBehavior: "contain", padding: 14 }}>
         {msgs.map((m, i) => (
           <div key={i} style={{ marginBottom: 10, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={{ maxWidth: "85%", background: m.role === "user" ? NAVY : "#fff", color: m.role === "user" ? "#fff" : "#1a1a1a", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px", padding: "10px 13px", fontSize: 13, lineHeight: 1.55, boxShadow: "0 1px 4px rgba(0,0,0,0.09)" }}>
@@ -1283,24 +1321,13 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
           onInput={e => setInput(e.currentTarget.innerText)}
           onFocus={() => {
-            // Position the input bar just above the on-screen keyboard. iOS
-            // Safari does not reliably place a contentEditable when the
-            // keyboard opens, so after it has animated in we measure the
-            // visible (visualViewport) area and scroll the page so the input's
-            // bottom sits just above the keyboard. Scrolls in either direction
-            // (the input can start too low OR too high), and fires once per
-            // focus, so it lands precisely without continuous jumping.
-            setTimeout(() => {
-              const el = inputElRef.current;
-              if (!el) return;
-              const vv = window.visualViewport;
-              const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-              // 48px clears the iOS keyboard accessory bar (the prev/next/Done
-              // strip, ~44px) so it doesn't sit on top of the input.
-              const delta = el.getBoundingClientRect().bottom - (visibleBottom - 48);
-              if (Math.abs(delta) > 2) window.scrollBy({ top: delta, behavior: "smooth" });
-            }, 350);
+            // The keyboard effect above sizes and places the chat once the
+            // keyboard is up. iOS sometimes reports the keyboard late, so also
+            // re-place it once the keyboard has animated in.
+            setFocused(true);
+            setTimeout(alignToKeyboard, 400);
           }}
+          onBlur={() => setFocused(false)}
           // No Enter-to-send. Enter inserts a newline; the Send button is the
           // only way to submit. Mobile-friendly since Shift+Enter doesn't
           // exist on iOS keyboards.
@@ -5738,7 +5765,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               document.body
             )}
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq } : form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} /></div>}
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq } : form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} topInset={() => formHeaderRef.current?.getBoundingClientRect().bottom ?? 0} /></div>}
 
             {coMode && coMode.items.length === 0 && (
               <div style={{ fontSize: 13, color: "#999", padding: "8px 2px 12px" }}>No change order lines yet. Tap +, Price Book or AI.</div>
