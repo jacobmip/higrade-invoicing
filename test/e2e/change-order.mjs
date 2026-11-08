@@ -183,7 +183,7 @@ if (SCENARIO === 'page') {
     await page.waitForTimeout(900);
     await page.getByRole('button', { name: 'Price Book' }).click();
     await page.waitForTimeout(600);
-    await page.getByText('Angle stop replacement').last().locator('xpath=ancestor::div[.//button][1]').locator('button').last().click();
+    await page.getByRole('button', { name: 'Add Angle stop replacement' }).click();
     await page.waitForTimeout(1800);
     await page.getByRole('button', { name: 'Review & send' }).click();
     await page.waitForTimeout(800);
@@ -229,7 +229,7 @@ if (SCENARIO === 'page') {
     if (SCENARIO === 'mode') {
       await page.getByRole('button', { name: 'Price Book' }).click();
       await page.waitForTimeout(600);
-      await page.getByText('Angle stop replacement').last().locator('xpath=ancestor::div[.//button][1]').locator('button').last().click();
+      await page.getByRole('button', { name: 'Add Angle stop replacement' }).click();
       await page.waitForTimeout(2000);
       const co = db.change_orders[0];
       log('price book line saved on the change order:', co && co.items.length === 1 && co.items[0].name === 'Angle stop replacement' && co.items[0].price === 95 ? 'PASS' : 'FAIL ' + JSON.stringify(co));

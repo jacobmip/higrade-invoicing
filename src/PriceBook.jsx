@@ -83,6 +83,7 @@ export default function PriceBook({ items, onSelect, onClose }) {
                       {fmtPrice(item.price)}
                     </span>
                     <button
+                      aria-label={`Add ${item.name}`}
                       onClick={() => { onSelect(item); onClose(); }}
                       style={{ width: 26, height: 26, borderRadius: "50%", background: ORANGE, border: "none", color: "#fff", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, flexShrink: 0 }}
                     >

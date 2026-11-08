@@ -9,7 +9,7 @@
 // draft.status: 'draft' | 'sending' | 'sent' | 'cancelled' | 'failed', and
 // draft.result is the line shown afterwards. The parent stores both on the
 // chat message (onUpdate), so a reopened chat shows what happened.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { previewChangeOrderDraft, sendChangeOrderTo, sentSummary, saveChangeOrder, coTotals, ChangeOrderPhotos } from './ChangeOrders.jsx';
 
 const NAVY = '#0a1628';
@@ -121,7 +121,13 @@ export function ChangeOrderSendSheet({ invoiceId, linkedIds, row, items, taxPct,
   const [draft, setDraft] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const draftRef = useRef(null);
   const t = coTotals(items, taxPct);
+  // The preview replaces the button further down the sheet: bring it up.
+  useEffect(() => {
+    if (draft?.status === 'draft' && draftRef.current) requestAnimationFrame(() => draftRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!draft]);
   const label = `${invoiceId}-CO${(saved || row)?.seq || ''}`;
 
   const toPreview = async () => {
@@ -134,7 +140,7 @@ export function ChangeOrderSendSheet({ invoiceId, linkedIds, row, items, taxPct,
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 3000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto' }} onClick={() => !busy && onClose()}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 3000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }} onClick={() => !busy && onClose()}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#f4f6fa', width: '100%', maxWidth: 520, minHeight: '100%', paddingBottom: 24, fontFamily: "'Barlow', sans-serif" }}>
         <div style={{ background: NAVY, color: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 1 }}>
           <div>
@@ -166,9 +172,11 @@ export function ChangeOrderSendSheet({ invoiceId, linkedIds, row, items, taxPct,
             </>
           )}
           {draft && (
+            <div ref={draftRef} style={{ scrollMarginTop: 72 }}>
             <SendDraftCard draft={draft}
               onUpdate={(patch) => { setDraft(d => ({ ...d, ...patch })); if (patch.status === 'sent') onSent?.(patch.result); }}
               sendSms={async () => { throw new Error('not used'); }} />
+            </div>
           )}
           {draft?.status === 'cancelled' && <button onClick={onClose} style={{ ...btn(false), width: '100%', marginTop: 10 }}>Back to the invoice</button>}
           {draft?.status === 'sent' && <button onClick={onClose} style={{ ...btn(true), width: '100%', marginTop: 10 }}>Back to the invoice</button>}

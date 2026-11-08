@@ -1,5 +1,18 @@
 # HI Grade Invoicing — Changelog
 
+## v1.57.2 — 2026-11-08
+
+Change orders now move like the rest of the app. Each of these was measured on a phone-sized screen before and after.
+
+- **Starting a change order** scrolls so its toolbar and orange banner sit just under the invoice header. Before, they ended up hidden behind the header.
+- **A bar pinned to the bottom** while you build one shows the running total, whether the draft is saved, and Done for now / Review & send. Before, those buttons scrolled away once you had a few lines.
+- **Each new line comes into view** above that bar, the way a list follows a new row, and editing a line never moves the screen.
+- **Review & send now opens on screen** wherever you were scrolled. Before, once you had scrolled down it opened off the top and left a blank strip. The page behind it no longer scrolls along, and Preview email and text brings the preview up.
+- **Done for now, or finishing a send,** lands you on the Change orders card, where the change order now shows.
+- **The form can no longer get shifted sideways.** Testing showed the whole invoice could be cut off on the left after something on it was brought into view; the frame now snaps back.
+- The shorter banner says what change-order mode does in two lines. The Price Book "+" buttons have labels for screen readers.
+- Test: `test/e2e/co-scroll.mjs` (phone size, 7 invoice lines, 8 change order lines: positions under the header, above the bar, no sideways shift, sheet on screen, page behind locked, landing spot).
+
 ## v1.57.1 — 2026-11-08
 
 - **The Change orders card moved under the invoice's line items** (it sat up by the Call / On My Way buttons). It now reads Line Items, then Change orders, then tax and discount, which is where the extra work belongs. While you build a change order the card hides, since the orange banner at the top of Line Items takes its place.
