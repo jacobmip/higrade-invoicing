@@ -15,6 +15,7 @@ import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
+import { linkedDocIds, syncPartner, sharedPatch, sharedEqual } from './docLinks.js';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
@@ -3976,25 +3977,40 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     setTimeout(() => setUndoToast(false), 2000);
     setTimeout(() => refreshHistory(), 1500);
   };
+  // The job's other documents (estimate <-> invoice, src/docLinks.js). Their
+  // photos and history show on this one too.
+  const linkedIds = useMemo(
+    () => linkedDocIds({ ...form, id: form.id || autoSavedId }, data?.invoices || []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data?.invoices, form.id, autoSavedId, form.convertedToId, form.downPaymentInvoiceId, form.type]
+  );
+  const linkedKey = linkedIds.join(',');
+  const photoIds = () => [form.id || autoSavedId, ...linkedIds].filter(Boolean);
+  const [linkedEvents, setLinkedEvents] = useState([]);
+  const [linkedVersions, setLinkedVersions] = useState([]);
   const refreshHistory = async () => {
     if (!form.id) return;
     setRefreshingEvents(true);
     try {
-      const [evs, vers] = await Promise.all([
+      const [evs, vers, ...others] = await Promise.all([
         db.loadInvoiceEvents(form.id),
         db.loadInvoiceVersions(form.id),
+        ...linkedIds.map(id => Promise.all([db.loadInvoiceEvents(id), db.loadInvoiceVersions(id)])
+          .then(([e, v]) => ({ id, e, v })).catch(() => ({ id, e: [], v: [] }))),
       ]);
       setEvents(evs);
       setVersions(vers);
+      setLinkedEvents(others.flatMap(o => (o.e || []).map(ev => ({ ...ev, _doc: o.id }))));
+      setLinkedVersions(others.flatMap(o => (o.v || []).map(v => ({ ...v, _doc: o.id }))));
     } catch (e) { console.warn('loadHistory failed:', e); }
     setTimeout(() => setRefreshingEvents(false), 450);
   };
   // Keep old name as alias so existing call-sites don't need to change.
   const refreshEvents = refreshHistory;
-  useEffect(() => { refreshHistory(); /* eslint-disable-next-line */ }, [form.id]);
+  useEffect(() => { refreshHistory(); /* eslint-disable-next-line */ }, [form.id, linkedKey]);
   useEffect(() => { if (activeTab === 'history') refreshHistory(); /* eslint-disable-next-line */ }, [activeTab]);
-  useEffect(() => { const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [form.id, autoSavedId]);
-  useEffect(() => { if (activeTab !== 'preview') return; const id = form.id || autoSavedId; if (id) fetchInvoicePhotos(id).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [activeTab]);
+  useEffect(() => { const ids = photoIds(); if (ids.length) fetchInvoicePhotos(ids).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [form.id, autoSavedId, linkedKey]);
+  useEffect(() => { if (activeTab !== 'preview') return; const ids = photoIds(); if (ids.length) fetchInvoicePhotos(ids).then(setInvoicePhotos); /* eslint-disable-next-line */ }, [activeTab]);
   const [autoSaving, setAutoSaving] = useState(false);
   // Debounced auto-save — persists silently while the user edits so the back
   // button and the Save button are interchangeable. We skip the very first
@@ -4746,7 +4762,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       const m = canonicalMethod(p.method);
       return { date: p.date, label: m ? `${m} payment received` : "Payment received", type: "payment", amount: p.amount, sortKey: dayMs(p.date) + 1 };
     }),
-    ...events.map(ev => {
+    ...[...events, ...linkedEvents].map(ev => {
+      const r = historyRow(ev);
+      return r && ev._doc ? { ...r, label: `${r.label} (${ev._doc})` } : r;
+    }).filter(Boolean),
+  ].sort((a, b) => b.sortKey - a.sortKey);
+  function historyRow(ev) {
+    {
       const when = ev.created_at;
       if (ev.kind === 'sent') {
         const isText = ev.meta?.channel === 'sms';
@@ -4783,8 +4805,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         };
       }
       return null;
-    }).filter(Boolean),
-  ].sort((a, b) => b.sortKey - a.sortKey);
+    }
+  }
 
   const TABS = [{ id: "edit", label: "Edit", icon: "pencil" }, { id: "preview", label: "Preview", icon: "eye" }, { id: "history", label: "History", icon: "clock" }, { id: "photos", label: "Photos", icon: "camera" }, ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : [])];
   const tabIdx = Math.max(0, TABS.findIndex(t => t.id === activeTab));
@@ -5841,12 +5863,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   style={{ ...S.btn("ghost"), fontSize: 12, padding: "6px 12px", border: "1px solid #dde2ee", opacity: savingSnapshot ? 0.6 : 1 }}
                 >{savingSnapshot ? "Saving…" : "Save snapshot"}</button>
               </div>
-              {versions.length === 0 && (
+              {versions.length === 0 && linkedVersions.length === 0 && (
                 <div style={{ background: "#fff", borderRadius: 10, padding: "14px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", fontSize: 13, color: "#aaa" }}>
                   No snapshots yet. Versions are saved each time you send or save.
                 </div>
               )}
-              {versions.map((v) => {
+              {[...versions, ...linkedVersions].sort((a, b) => String(b.sent_at || b.created_at || '').localeCompare(String(a.sent_at || a.created_at || ''))).map((v) => {
                 const snap = v.snapshot || {};
                 const snapTotals = calcTotals(snap);
                 const fmtTs = (ts) => { try { return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ts; } };
@@ -5856,7 +5878,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: isBlue(v.event_type) ? "#2980b9" : "#1a1a1a" }}>
-                          v{v.version_number} — {EVENT_LABELS[v.event_type] || v.note || "Snapshot"}
+                          {v._doc ? `${v._doc} ` : ""}v{v.version_number} — {EVENT_LABELS[v.event_type] || v.note || "Snapshot"}
                         </div>
                         {v.event_type && <div style={{ fontSize: 11, fontWeight: 600, color: v.event_type === "email_sent" || v.event_type === "sms_sent" ? "#2980b9" : "#777", marginTop: 2 }}>
                           {v.triggered_by_name ? `By ${v.triggered_by_name}` : "By unknown user"}{v.triggered_by_tier ? ` (${TIER_LABELS[v.triggered_by_tier] || v.triggered_by_tier})` : ""}
@@ -5869,6 +5891,15 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                       </div>
                       {!lockedView && <button
                         onClick={() => {
+                          if (v._doc) {
+                            // A version of the job's other document: take its
+                            // shared parts (items, notes, tax, discount) only;
+                            // this document keeps its own number and type.
+                            if (!confirm(`Restore line items and notes from ${v._doc} v${v.version_number}? Your current edits will be replaced.`)) return;
+                            setForm(f => ({ ...f, ...sharedPatch(snap) }));
+                            goToTab("edit");
+                            return;
+                          }
                           if (!confirm(`Restore v${v.version_number}? Your current edits will be replaced.`)) return;
                           setForm({ discountType: "$", ...snap });
                           goToTab("edit");
@@ -5885,7 +5916,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 3 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 3 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div style={{ padding: 16 }}>
-          <JobPhotos invoiceId={form.id || autoSavedId} />
+          <JobPhotos invoiceId={form.id || autoSavedId} linkedIds={linkedIds} />
         </div>
       </div>
       {TABS.some(t => t.id === "messages") && (
@@ -8854,7 +8885,7 @@ function PublicViewerPage({ token }) {
   const handlePrintPdf = async () => {
     try {
       const mod = await import('./printablePdf.js');
-      const photos = invForm.id ? await fetchInvoicePhotos(invForm.id) : [];
+      const photos = (state.photos && state.photos.length) ? state.photos : (invForm.id ? await fetchInvoicePhotos(invForm.id) : []);
       const blob = await mod.buildPrintablePdf(invForm, {
         lateFee: lateFeeInfo,
         paymentInstructions: paymentInstructionsText,
@@ -12942,7 +12973,7 @@ export default function App() {
     const t = calcTotals(inv);
     const lateFee = calcLateFee(inv, t);
     const paymentInstructions = inv.type === 'estimate' ? '' : resolvePaymentInstructions();
-    const photos = inv.id ? await fetchInvoicePhotos(inv.id) : [];
+    const photos = inv.id ? await fetchInvoicePhotos([inv.id, ...linkedDocIds(inv, dataRef.current?.invoices || [])]) : [];
     return await mod.buildPrintablePdf(inv, { lateFee, paymentInstructions, photos });
   };
 
@@ -13494,6 +13525,8 @@ export default function App() {
       // estimate made from an invoice points at that invoice, exactly as if it
       // had been converted into it, so the cross-link shows on both.
       convertedToId: isEstTarget ? form.id : null,
+      // A brand-new row: not the source's age (src/docLinks.js SYNC_SINCE).
+      createdAt: null,
       viewToken: null,
       // Down-payment settings belong to the estimate, not the invoice it
       // becomes. Carrying them over made the new invoice think it still owed
@@ -13655,6 +13688,35 @@ export default function App() {
   // Silent auto-save — persists the form without navigating away. Creates a
   // new invoice on first call (assigning the next ID) and updates in place
   // thereafter. Returns the saved record so the form can lock onto its ID.
+  // Copy the shared fields of a just-saved document onto its linked estimate
+  // or invoice. Reads the partner fresh from the database, so its own
+  // payments, status and schedule are what is really stored, never a stale
+  // local copy. Never throws: the document itself is already saved.
+  const syncLinkedDoc = async (saved) => {
+    try {
+      const partner = syncPartner(saved, dataRef.current?.invoices || []);
+      if (!partner || sharedEqual(saved, partner)) return;
+      const write = async () => {
+        const fresh = await db.loadInvoiceWithItems(partner.id);
+        if (!fresh || fresh.deletedAt) return null;
+        if (sharedEqual(saved, fresh)) return fresh;
+        const next = { ...fresh, ...sharedPatch(saved) };
+        const res = await db.upsertInvoice(next, false);
+        return { ...next, updatedAt: res?.updatedAt || next.updatedAt };
+      };
+      let done;
+      try { done = await write(); }
+      catch (e) { if (e?.code !== 'CONCURRENT_EDIT') throw e; done = await write(); }
+      if (done) {
+        const fn = d => ({ ...d, invoices: d.invoices.map(inv => inv.id === done.id ? { ...inv, ...done } : inv) });
+        dataRef.current = fn(dataRef.current);
+        setData(fn);
+      }
+    } catch (e) {
+      console.warn(`Could not copy ${saved?.id} to its linked document:`, e);
+    }
+  };
+
   const autoSaveInvoice = async (form) => {
     const year = new Date(form.date || today()).getFullYear();
     // Existing record — just update.
@@ -13699,6 +13761,10 @@ export default function App() {
         }
       }
       if (!selected || selected.id !== id) setSelected(stamped);
+      // Same items, notes, internal notes, tax and discount on the job's other
+      // document (src/docLinks.js). Awaited, so opening the other document
+      // through the cross-link (which flushes first) shows the copy.
+      await syncLinkedDoc(stamped);
       return stamped;
     }
     // New record — mint an ID from the shared sequence.
