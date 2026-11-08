@@ -23,3 +23,6 @@ android/.idea
 *.jks
 .vercel
 .env*
+
+# e2e test screenshots
+/*.png
