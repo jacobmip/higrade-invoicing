@@ -43,7 +43,7 @@ import { telegramNotify } from './_lib/convert-estimate.js';
 import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
 import { handleInfoReply } from './_lib/sms-reply-capture.js';
-import { handleChangeOrderReply, sendChangeOrder } from './_lib/change-order.js';
+import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -185,6 +185,13 @@ async function appSend(req, res) {
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
       return await appPlaceCall(res, user, params);
+    }
+    // The exact email and text a change order send would produce. Session only.
+    if (params.op === 'preview_change_order') {
+      if (!user) return jsonOut(res, 403, { error: 'admin only' });
+      if (!params.change_order_id) return jsonOut(res, 400, { error: 'change_order_id is required' });
+      const r = await previewChangeOrder({ id: String(params.change_order_id) });
+      return jsonOut(res, r.ok ? 200 : 404, r);
     }
     // Email and/or text a change order's link to the customer (migration 111). Session only.
     if (params.op === 'send_change_order') {

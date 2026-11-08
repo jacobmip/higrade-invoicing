@@ -627,11 +627,19 @@ async function deleteDocument(input, ctx) {
 
 // Lisa's number, sent at once. document_id is optional: when the text is about
 // a saved document it also gets an sms_sent snapshot in that document's History.
+// Never sends (v1.56.0): returns a draft card. The chat shows the text, Jake
+// can edit it, and it goes out only when he taps Send (SendDraftCard).
 async function sendSms(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
   const inv = id ? ctx.getData().invoices.find(i => i.id === id) : null;
-  const r = await sendLisaText({ phone: input.phone, message: input.message, invoice: inv });
-  return { ok: true, sent: true, phone: input.phone, note: r.text };
+  const phone = String(input.phone || '').trim();
+  const message = String(input.message || '').trim();
+  if (!message) return { error: 'The message is empty.' };
+  return {
+    ok: true, sent: false,
+    note: 'Draft shown to Jake. Nothing is sent until he taps Send on it. Do not say it was sent; say the draft is ready.',
+    card: { type: 'confirm_sms', phone, message, invoiceId: inv?.id || null },
+  };
 }
 
 // Queue then immediately dial — Jake already confirmed in chat.
@@ -732,7 +740,7 @@ const PROGRESS = {
   save_price: 'Saving price',
   schedule_job: (i) => `Booking ${i.client_name || 'job'}`,
   send_document_email: 'Preparing email',
-  send_sms: (i) => `Texting ${i.phone || 'customer'}`,
+  send_sms: (i) => `Drafting a text to ${i.phone || 'customer'}`,
   place_call: (i) => `Dialing ${i.name || i.phone || 'customer'}…`,
   delete_document: (i) => `Deleting ${i.document_id || 'document'}`,
 };

@@ -624,7 +624,8 @@ Change order actions (use these, NOT add_items, whenever Jake says "change order
 {"action":"update_change_order","seq":1,"items":[...the full new list of lines...],"note":"","summary":"one sentence"}
 {"action":"send_change_order","seq":1,"send":"auto","summary":"one sentence"}
 Rules:
-- "send" is one of "none" (save as a draft), "email", "text", "both", or "auto" (every channel on file: email and text). Only send when Jake says send / email / text it / get it to the customer; "make", "write up" or "draft" a change order means "none".
+- "send" is one of "none" (save as a draft), "email", "text", "both", or "auto" (every channel on file: email and text). Use it when Jake says send / email / text it / get it to the customer; "make", "write up" or "draft" a change order means "none".
+- Sending never happens from your action: the app shows Jake the exact email and text as a draft, and it goes out only when he taps Send. Never say it was sent; say the draft is ready for him to check.
 - Optional "email" and "phone" fields override the contact on file; include them when Jake gives a different address or number.
 - Prices follow the same pricing rules as line items. Never add change order lines to the invoice yourself: the customer's approval does that.
 - Only draft or sent change orders can be updated or resent; approved and declined ones are final.
@@ -632,11 +633,13 @@ Rules:
 - Plain add_items is still right when Jake just wants a line on the invoice with no customer approval.`;
 }
 
-// Runs one change order action from the AI chat. Returns the text the chat
-// shows: what really happened, never the model's own claim.
+// Runs one change order action from the AI chat. Returns { text, draft? }:
+// text is what really happened, never the model's own claim. Nothing is sent
+// from here (v1.56.0): a send request saves the change order and returns a
+// draft for the chat's SendDraftCard, which sends only when Jake taps Send.
 export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, email, photos: chatPhotos }) {
-  if (!isInvoice) return 'Change orders go on the invoice. Convert this estimate to an invoice first.';
-  if (!invoiceId) return 'Save this invoice first (add a client), then I can make the change order.';
+  if (!isInvoice) return { text: 'Change orders go on the invoice. Convert this estimate to an invoice first.' };
+  if (!invoiceId) return { text: 'Save this invoice first (add a client), then I can make the change order.' };
   try {
     const list = await listChangeOrders(invoiceId);
     let row;
@@ -655,7 +658,8 @@ export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, ema
     } else {
       const seq = Number(a.seq) || (list.length ? list[list.length - 1].seq : null);
       row = list.find(c => c.seq === seq);
-      if (!row) return `There is no change order ${seq ? `CO${seq} ` : ''}on ${invoiceId}.`;
+      if (!row) return { text: `There is no change order ${seq ? `CO${seq} ` : ''}on ${invoiceId}.` };
+      if (a.action === 'send_change_order' && (row.status === 'approved' || row.status === 'declined')) return { text: `${invoiceId}-CO${row.seq} was already ${row.status} by the customer, so it cannot be sent again.` };
       const pics = (chatPhotos || []).length && row.status !== 'approved' && row.status !== 'declined' ? await uploadChat(row.seq) : [];
       if (a.action === 'update_change_order' || pics.length) {
         row = await saveChangeOrder({ row, invoiceId, items: a.action === 'update_change_order' && a.items?.length ? a.items : row.items, note: a.action === 'update_change_order' ? (a.note ?? row.note) : row.note, photos: [...(row.photos || []), ...pics] });
@@ -665,14 +669,28 @@ export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, ema
     const label = `${invoiceId}-CO${row.seq}`;
     const total = money(coTotals(row.items, a.taxPct).total);
     const mode = a.action === 'update_change_order' && !a.send ? 'none' : (a.send || (a.action === 'send_change_order' ? 'auto' : 'none'));
-    if (mode === 'none') return `${label} ${a.action === 'update_change_order' ? 'updated' : 'saved as a draft'} (${total})${photoNote}. Not sent yet.`;
-    const toEmail = (mode === 'email' || mode === 'both' || mode === 'auto') ? (a.email || email || null) : null;
-    const toPhone = (mode === 'text' || mode === 'both' || mode === 'auto') ? (a.phone || phone || null) : null;
-    if (!toEmail && !toPhone) return `${label} saved (${total}) but not sent: no ${mode === 'text' ? 'mobile number' : mode === 'email' ? 'email address' : 'email or mobile'} on file. Tell me where to send it.`;
-    const j = await sendChangeOrderTo({ id: row.id, invoiceId, phone: toPhone, email: toEmail });
-    const missing = mode === 'both' && (!toEmail || !toPhone) ? ` No ${!toEmail ? 'email' : 'mobile'} on file, so that part was skipped.` : '';
-    return `${label} (${total})${photoNote} ${sentSummary(j)}.${missing} It is added to the invoice when the customer approves.`;
+    if (mode === 'none') return { text: `${label} ${a.action === 'update_change_order' ? 'updated' : 'saved as a draft'} (${total})${photoNote}. Not sent yet.` };
+    const toEmail = (mode === 'email' || mode === 'both' || mode === 'auto') ? (a.email || email || '') : '';
+    const toPhone = (mode === 'text' || mode === 'both' || mode === 'auto') ? (a.phone || phone || '') : '';
+    const missing = !toEmail && !toPhone ? ' No email or mobile on file: add one in the draft.' : '';
+    return {
+      text: `${label} (${total})${photoNote} is saved. Here is the draft: check it and tap Send.${missing}`,
+      draft: { kind: 'change_order', coId: row.id, invoiceId, label, total, email: toEmail, phone: toPhone, status: 'draft' },
+    };
   } catch (e) {
-    return `Change order not done: ${e.message || e}`;
+    return { text: `Change order not done: ${e.message || e}` };
   }
+}
+
+// The exact email and text a send would produce (sends nothing).
+export async function previewChangeOrderDraft(id) {
+  const { data: s } = await supabase.auth.getSession();
+  const r = await fetch(api('/api/sms-inbound'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s?.session?.access_token || ''}` },
+    body: JSON.stringify({ op: 'preview_change_order', change_order_id: id }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || `Preview failed (${r.status})`);
+  return j;
 }

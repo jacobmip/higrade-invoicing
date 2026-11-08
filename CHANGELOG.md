@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.56.0 — 2026-11-08
+
+- **The AI chats always show a draft before sending anything to a customer.** In the invoice's AI chat and the header AI, asking for a text now puts a draft in the chat: the number and the message, which you can edit, with Send and Cancel. Nothing goes out until you tap Send. Cancel sends nothing. A change order the chat makes is saved first, then shown as a draft with the exact email (as the customer will see it) and the exact text, with Email/Text choices; it goes out only on Send. Before this, the AI chats texted the moment the model asked to.
+- **"Email this invoice" in the invoice's AI chat now works:** it opens the normal send screen, which shows the email and recipients and sends only when you confirm. Before, the chat accepted the request and nothing happened.
+- Tests: `test/e2e/change-order.mjs` scenarios `aisms` (edited text is what gets sent), `aicancel`, `aiemail`, `globalsms`, and `ai` / `aiphoto` now check nothing is sent before Send; `test/change-order.test.mjs` checks the preview sends nothing.
+
 ## v1.55.0 — 2026-11-08
 
 - **Photos on change orders.** In the change order screen, "Add photos" takes new pictures (camera or library) and "From job photos" picks ones already on the job, from the invoice or its estimate. New ones also land in the job's Photos tab, labelled with the change order. The customer sees them on the approval page (tap for full size) and in the email (up to 6, the rest on the page); the text says the photos are on the link. In the invoice AI chat, attach photos to your message ("change order for this, send it to them") and they go on the change order it makes. Removing a photo from a change order never deletes it from the job.

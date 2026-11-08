@@ -244,6 +244,17 @@ async function sendEmail({ to, subject, html }) {
   return j;
 }
 
+// The exact text and email a send would produce, sending nothing. The AI
+// chat shows this as a draft before Jake taps Send.
+export async function previewChangeOrder({ id }) {
+  const co = (await rest(`change_orders?id=eq.${encodeURIComponent(id)}&select=*&limit=1`))?.[0];
+  if (!co) return { ok: false, error: 'not_found' };
+  const inv = await invoiceFor(co.invoice_id);
+  if (!inv || inv.deleted_at) return { ok: false, error: 'invoice not found' };
+  const email = changeOrderEmail(co, inv);
+  return { ok: true, label: coLabel(co), text: changeOrderText(co, inv), email: { subject: email.subject, html: email.html } };
+}
+
 const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
 
 // Admin op from the app. Emails and/or texts the link (to = phone, email =

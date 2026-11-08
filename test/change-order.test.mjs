@@ -126,5 +126,10 @@ check('email shows the photo', em2.html.includes('job-photos/INV1300/a.jpg') && 
 check('text mentions photos', /Photos are on the link/.test(co.changeOrderText(pc, db.invoices[0])));
 check('no photos: text does not mention them', !/Photos are on/.test(co.changeOrderText({ ...pc, photos: [] }, db.invoices[0])));
 
+// Preview sends nothing.
+const sms0 = sms.length, mail0 = mail.length;
+const pv = await co.previewChangeOrder({ id: 'co8' });
+check('preview returns text + email, sends nothing', pv.ok && /Reply YES/.test(pv.text) && /Review &amp; Approve/.test(pv.email.html) && sms.length === sms0 && mail.length === mail0);
+
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);

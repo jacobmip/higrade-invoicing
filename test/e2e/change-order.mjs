@@ -6,6 +6,10 @@
 //   SCENARIO=ai       the invoice AI chat writes a change order and emails + texts it
 //   SCENARIO=photos   add a new photo and pick a job photo on a change order
 //   SCENARIO=aiphoto  the AI chat makes a change order from a message with a photo attached
+//   SCENARIO=aisms    invoice chat text: a draft first; edited text is what gets sent
+//   SCENARIO=aicancel invoice chat text: Cancel sends nothing
+//   SCENARIO=aiemail  invoice chat "email the invoice" opens the send screen, sends nothing
+//   SCENARIO=globalsms header AI text: a draft first, sent on Send
 //   SCENARIO=aiplain  a plain answer in the invoice AI chat shows (was a crash before v1.54.0)
 // Run: npm run build && npx vite preview --port 4173, then SCENARIO=... node test/e2e/change-order.mjs
 import { createRequire } from 'node:module'; const { chromium } = createRequire(import.meta.url)('playwright');
@@ -74,10 +78,20 @@ await page.route('**/*', async route => {
     }
     if (url.pathname === '/api/ai') {
       aiPrompts.push(b);
+      if (b?.mode === 'agent') {
+        const n = aiPrompts.filter(x => x.mode === 'agent').length;
+        if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'send_sms', input: { phone: '8085551234', message: 'Aloha Pat, just checking in on the water heater. Mahalo!' } }] });
+        return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'The draft text is ready for you to check.' }] });
+      }
+      if (SCENARIO === 'aisms' || SCENARIO === 'aicancel') return json({ content: [{ type: 'text', text: JSON.stringify({ action: 'send_sms', phone: '8085551234', message: 'Aloha Pat, the valve is in. Mahalo!', summary: 'Texted Pat' }) }] });
+      if (SCENARIO === 'aiemail') return json({ content: [{ type: 'text', text: JSON.stringify({ action: 'send_email', invoiceId: 'INV1300', summary: 'Emailing the invoice' }) }] });
       const text = SCENARIO === 'ai' || SCENARIO === 'aiphoto'
         ? JSON.stringify({ action: 'create_change_order', items: [{ name: 'Replace angle stop', desc: 'Corroded, leaking', qty: 2, price: 95, taxable: true }], note: 'Found behind the vanity', send: 'auto', summary: 'Created and sent CO1' })
         : 'INV1300 has one line: the water heater at $1,800.';
       return json({ content: [{ type: 'text', text }] });
+    }
+    if (url.pathname === '/api/sms-inbound' && b?.op === 'preview_change_order') {
+      return json({ ok: true, label: 'INV1300-CO1', text: 'HI Grade Plumbing: change order 1 for your job.\nReply YES to approve', email: { subject: 'Change order 1 for your job: please review', html: '<p>PREVIEW-EMAIL-BODY</p>' } });
     }
     if (url.pathname === '/api/public-invoice' && url.searchParams.get('co')) {
       return json({ changeOrder: { seq: 1, label: 'INV1300-CO1', status: coState, photos: [{ url: 'https://cwhgcxxszyvevjpbnnkc.supabase.co/storage/v1/object/public/job-photos/INV1300/old.jpg' }], items: [{ name: 'Add shutoff valve', desc: '3/4 inch', qty: 1, price: 150 }], note: 'Found during repair', totals: { subtotal: 150, tax: 7.07, total: 157.07 }, approved_at: coState === 'approved' ? new Date().toISOString() : null, approved_name: 'Pat Customer' },
@@ -201,6 +215,47 @@ if (SCENARIO === 'page') {
     const co = db.change_orders[0];
     log('change order saved with both photos:', co && co.photos.length === 2 && co.photos.some(p => /old\.jpg$/.test(p.url) && p.job_photo_id === 'jp1') && co.photos.some(p => /\/co1_/.test(p.url)) ? 'PASS' : 'FAIL ' + JSON.stringify(co?.photos));
   }
+  const sends = () => apiCalls.filter(c => c.path === '/api/sms-inbound' && c.body && (c.body.op === 'send_change_order' || (!c.body.op && c.body.body)));
+  if (SCENARIO === 'globalsms') {
+    await page.getByRole('button', { name: 'AI assistant' }).click();
+    await page.waitForTimeout(800);
+    await page.getByLabel('Chat message').fill('Text Pat that I am checking on the water heater');
+    await page.getByLabel('Chat message').press('Enter');
+    await page.waitForTimeout(3000);
+    log('header AI: draft shown, nothing sent:', (await page.getByText('Draft, not sent yet').count()) > 0 && sends().length === 0 ? 'PASS' : 'FAIL ' + JSON.stringify(sends()));
+    await page.getByRole('button', { name: 'Send', exact: true }).last().click();
+    await page.waitForTimeout(1500);
+    const sent = sends()[0];
+    log('header AI: sent on tap:', sent && /water heater/.test(sent.body.body) && /808/.test(sent.body.to) ? 'PASS' : 'FAIL ' + JSON.stringify(sends()));
+  }
+  if (SCENARIO === 'aisms' || SCENARIO === 'aicancel' || SCENARIO === 'aiemail') {
+    await page.getByRole('button', { name: 'AI', exact: true }).first().click();
+    await page.waitForTimeout(800);
+    const box = page.locator('[aria-label="Job description"]');
+    await box.click();
+    await page.keyboard.type(SCENARIO === 'aiemail' ? 'Email this invoice to them' : 'Text Pat that the valve is in');
+    await box.locator('xpath=following-sibling::button').last().click();
+    await page.waitForTimeout(3000);
+    if (SCENARIO === 'aiemail') {
+      log('send screen opened:', (await page.getByRole('button', { name: /send/i }).count()) > 0 && apiCalls.filter(c => c.path === '/api/send-email').length === 0 ? 'PASS' : 'FAIL');
+      if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
+    } else {
+      log('draft shown, nothing sent:', (await page.getByText('Draft, not sent yet').count()) > 0 && sends().length === 0 ? 'PASS' : 'FAIL ' + JSON.stringify(sends()));
+      if (SCENARIO === 'aicancel') {
+        await page.getByRole('button', { name: 'Cancel', exact: true }).last().click();
+        await page.waitForTimeout(1200);
+        log('cancel sends nothing:', sends().length === 0 && (await page.getByText('Cancelled. Nothing was sent.').count()) > 0 ? 'PASS' : 'FAIL');
+      } else {
+        const ta = page.getByLabel('Draft text message');
+        await ta.fill('Aloha Pat, the new valve is in and holding. Mahalo!');
+        if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
+        await page.getByRole('button', { name: 'Send', exact: true }).last().click();
+        await page.waitForTimeout(1500);
+        const sent = sends()[0];
+        log('edited text is what got sent:', sent && sent.body.body === 'Aloha Pat, the new valve is in and holding. Mahalo!' ? 'PASS' : 'FAIL ' + JSON.stringify(sends()));
+      }
+    }
+  }
   if (SCENARIO === 'ai' || SCENARIO === 'aiplain' || SCENARIO === 'aiphoto') {
     await page.getByRole('button', { name: 'AI', exact: true }).first().click();
     await page.waitForTimeout(800);
@@ -220,9 +275,14 @@ if (SCENARIO === 'page') {
       log('prompt has change order block + contact:', /CHANGE ORDERS on INV1300/.test(sys) && /email pat@example.com \| mobile 8085551234/.test(sys) ? 'PASS' : 'FAIL');
       const co = db.change_orders[0];
       log('change order saved from chat:', co && co.items[0].name === 'Replace angle stop' && co.items[0].qty === 2 && co.note === 'Found behind the vanity' ? 'PASS' : 'FAIL ' + JSON.stringify(co));
+      log('nothing sent before Send:', !apiCalls.some(c => c.body?.op === 'send_change_order') ? 'PASS' : 'FAIL');
+      log('draft shows the real email and text:', (await page.frameLocator('iframe[title="Email preview"]').getByText('PREVIEW-EMAIL-BODY').count()) > 0 && (await page.getByText(/Reply YES to approve/).count()) > 0 ? 'PASS' : 'FAIL');
+      if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR, fullPage: true });
+      await page.getByRole('button', { name: 'Send', exact: true }).last().click();
+      await page.waitForTimeout(1500);
       const call = apiCalls.find(c => c.body?.op === 'send_change_order');
-      log('auto = email + text:', call && call.body.email === 'pat@example.com' && call.body.to === '8085551234' ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
-      log('chat reports the real result:', (await page.getByText(/INV1300-CO1 \(\$198\.95\)(?: with \d+ photos?)? emailed to pat@example\.com and texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
+      log('auto = email + text, on Send:', call && call.body.email === 'pat@example.com' && call.body.to === '8085551234' ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
+      log('chat reports the real result:', (await page.getByText(/INV1300-CO1 emailed to pat@example\.com and texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
       log('invoice lines untouched:', !saves.some(x => x.items.some(i => /angle stop/i.test(i))) ? 'PASS' : 'FAIL');
       log('card refreshed:', (await page.getByText(/INV1300-CO1 · \$198\.95/).count()) > 0 ? 'PASS' : 'FAIL');
       if (SCENARIO === 'aiphoto') {
