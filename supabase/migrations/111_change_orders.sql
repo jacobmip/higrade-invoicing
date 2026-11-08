@@ -2,8 +2,8 @@
 -- ─── Change orders: extra work the customer approves mid-job ───────────────
 --
 -- A change order belongs to one invoice (the job). Jake writes the extra lines
--- in the app and sends a link (/co/<view_token>) by text. The customer
--- approves by signing on that page or by texting YES back. On approval the
+-- in the app and sends a link (/co/<view_token>) by email, text or both. The
+-- customer approves by signing on that page or by texting YES back. On approval the
 -- server (service role, api/_lib/change-order.js) adds the lines to the
 -- invoice, so nothing waits on Jake. Declined: the invoice is untouched.
 --
@@ -34,6 +34,7 @@ create table if not exists public.change_orders (
   view_token     text not null unique check (length(view_token) >= 16),
   sent_at        timestamptz,
   sent_to        text,                                 -- E.164 phone it was texted to
+  sent_email     text,                                 -- email address it was emailed to
   approved_at    timestamptz,
   approved_via   text check (approved_via in ('signature', 'sms')),
   approved_name  text,

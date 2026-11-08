@@ -5,6 +5,7 @@ process.env.SUPABASE_URL = 'https://fake.supabase.co';
 process.env.TELEGRAM_TOKEN = 't';
 process.env.TWILIO_ACCOUNT_SID = 'AC1'; process.env.TWILIO_AUTH_TOKEN = 'x'; process.env.TWILIO_FROM_NUMBER = '+18085550000';
 process.env.SMS_WEBHOOK_SECRET = 'whs';
+process.env.RESEND_API_KEY = 're';
 
 const db = {
   invoices: [{ id: 'INV1300', status: 'paid', tax: 4.712, client_name: 'Test', job_address: { line1: '1 Main St' }, deleted_at: null, updated_at: 'old' }],
@@ -13,7 +14,8 @@ const db = {
     items: [{ name: 'Add shutoff valve', desc: '3/4 inch', qty: 1, price: 150 }, { name: 'Extra hour', qty: 2, price: 100, taxable: false }], note: null }],
   invoice_events: [], settings: [{ key: 'sms_outbound_enabled', value: 'true' }],
 };
-const sms = [], tg = [];
+const sms = [], tg = [], mail = [];
+let failText = false;
 const match = (row, params) => {
   for (const [k, v] of params) {
     if (['select', 'order', 'limit', 'on_conflict'].includes(k)) continue;
@@ -28,6 +30,8 @@ globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url); const m = opts.method || 'GET';
   const ok = (b, s = 200) => new Response(b == null ? '' : JSON.stringify(b), { status: s });
   if (u.hostname === 'api.telegram.org') { tg.push(JSON.parse(opts.body).text); return ok({ ok: true }); }
+  if (u.hostname === 'api.resend.com') { mail.push(JSON.parse(opts.body)); return ok({ id: 'em1' }); }
+  if (u.hostname === 'api.twilio.com' && failText) return ok({ message: 'carrier blocked' }, 400);
   if (u.hostname === 'api.twilio.com') { sms.push(Object.fromEntries(new URLSearchParams(opts.body))); return ok({ sid: 'SM1' }, 201); }
   if (u.pathname.startsWith('/rest/v1/rpc/')) return ok({ ok: true });
   const table = u.pathname.replace('/rest/v1/', '');
@@ -93,6 +97,23 @@ check('two open: nothing approved', /several open/.test(r4) && db.change_orders.
 db.change_orders.push({ id: 'co5', invoice_id: 'INV1300', seq: 5, status: 'draft', view_token: 'tok_eeeeeeeeeeeeeeee', items: [{ name: 'Z', qty: 1, price: 20 }] });
 const s = await co.sendChangeOrder({ id: 'co5', to: '+18085559999' });
 check('send texts the link and marks sent', s.ok && db.change_orders[4].status === 'sent' && db.change_orders[4].sent_to === '+18085559999' && sms.some(x => x.To === '+18085559999' && /tok_eeee/.test(x.Body)));
+
+// Email only: no text goes out, the address is recorded, YES matching is untouched.
+db.change_orders.push({ id: 'co6', invoice_id: 'INV1300', seq: 6, status: 'draft', view_token: 'tok_ffffffffffffffff', items: [{ name: 'Pressure valve', desc: 'PRV 3/4', qty: 1, price: 300 }], note: 'Found at the meter' });
+const smsBefore = sms.length;
+const e1 = await co.sendChangeOrder({ id: 'co6', email: 'pat@example.com' });
+const m = mail[mail.length - 1];
+check('email only: sent, no text', e1.ok && e1.sent.email === 'pat@example.com' && !e1.sent.text && sms.length === smsBefore);
+check('email: to, bcc, subject, button link, nothing due', m && m.to[0] === 'pat@example.com' && m.bcc[0] === 'higradeplumbing@gmail.com' && /Change order 6 for your job at 1 Main St/.test(m.subject) && m.html.includes('/co/tok_ffffffffffffffff') && /Nothing is due now/.test(m.html) && /Aloha Test/.test(m.html));
+check('email escapes customer-visible text', !/<script/.test((await (async () => { const x = co.changeOrderEmail({ ...db.change_orders[5], note: '<script>x</script>' }, db.invoices[0]); return x.html; })())));
+check('email only: status sent, sent_email set, sent_to empty', db.change_orders[5].status === 'sent' && db.change_orders[5].sent_email === 'pat@example.com' && !db.change_orders[5].sent_to);
+// Both, with the text failing: email still goes, result says what failed.
+db.change_orders.push({ id: 'co7', invoice_id: 'INV1300', seq: 7, status: 'draft', view_token: 'tok_gggggggggggggggg', items: [{ name: 'Q', qty: 1, price: 5 }] });
+failText = true;
+const b = await co.sendChangeOrder({ id: 'co7', to: '+18085557777', email: 'pat@example.com' });
+failText = false;
+check('both, text fails: email sent, error reported', b.ok && b.sent.email && !b.sent.text && /text:/.test(b.errors.join()));
+check('bad email refused', !(await co.sendChangeOrder({ id: 'co7', email: 'not-an-email' })).ok);
 
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);

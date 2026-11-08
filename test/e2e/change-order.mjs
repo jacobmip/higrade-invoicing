@@ -2,6 +2,9 @@
 //   SCENARIO=send     create a change order on INV1300 and text it
 //   SCENARIO=landed   approved while the app was open: its lines reach the form and the save
 //   SCENARIO=page     the customer's /co/<token> page: sign and approve
+//   SCENARIO=email    the editor sends by email (client's email prefilled)
+//   SCENARIO=ai       the invoice AI chat writes a change order and emails + texts it
+//   SCENARIO=aiplain  a plain answer in the invoice AI chat shows (was a crash before v1.54.0)
 // Run: npm run build && npx vite preview --port 4173, then SCENARIO=... node test/e2e/change-order.mjs
 import { createRequire } from 'node:module'; const { chromium } = createRequire(import.meta.url)('playwright');
 const BASE = process.env.BASE || 'http://localhost:4173';
@@ -28,7 +31,8 @@ const db = {
 };
 db.invoices = [{ id:'INV1300', type:'invoice', client_name:'Test Client', date:'2026-11-08', status:'outstanding', converted_to_id:null, owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'t2', visits:null, updated_at: now, created_at: now, deleted_at:null }];
 db.invoice_items = [{ id:'a2', invoice_id:'INV1300', name:'Water heater', description:'', qty:1, price:1800, unit:'ea', taxable:true, sort_order:0 }];
-db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', addresses:[] }];
+db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
+const aiPrompts = [];
 db.change_orders = [];
 const apiCalls = [];
 let coState = 'sent';
@@ -59,8 +63,15 @@ await page.route('**/*', async route => {
     const b = req.postData() ? JSON.parse(req.postData()) : null;
     apiCalls.push({ path: url.pathname, q: url.search, body: b });
     if (url.pathname === '/api/sms-inbound' && b?.op === 'send_change_order') {
-      const co = db.change_orders.find(c => c.id === b.change_order_id); if (co) Object.assign(co, { status: 'sent', sent_to: b.to });
-      return json({ ok: true, label: 'INV1300-CO1' });
+      const co = db.change_orders.find(c => c.id === b.change_order_id); if (co) Object.assign(co, { status: 'sent', ...(b.to ? { sent_to: b.to } : {}), ...(b.email ? { sent_email: b.email } : {}) });
+      return json({ ok: true, label: 'INV1300-CO1', sent: { ...(b.email ? { email: b.email } : {}), ...(b.to ? { text: b.to } : {}) }, errors: [] });
+    }
+    if (url.pathname === '/api/ai') {
+      aiPrompts.push(b);
+      const text = SCENARIO === 'ai'
+        ? JSON.stringify({ action: 'create_change_order', items: [{ name: 'Replace angle stop', desc: 'Corroded, leaking', qty: 2, price: 95, taxable: true }], note: 'Found behind the vanity', send: 'auto', summary: 'Created and sent CO1' })
+        : 'INV1300 has one line: the water heater at $1,800.';
+      return json({ content: [{ type: 'text', text }] });
     }
     if (url.pathname === '/api/public-invoice' && url.searchParams.get('co')) {
       return json({ changeOrder: { seq: 1, label: 'INV1300-CO1', status: coState, items: [{ name: 'Add shutoff valve', desc: '3/4 inch', qty: 1, price: 150 }], note: 'Found during repair', totals: { subtotal: 150, tax: 7.07, total: 157.07 }, approved_at: coState === 'approved' ? new Date().toISOString() : null, approved_name: 'Pat Customer' },
@@ -137,14 +148,51 @@ if (SCENARIO === 'page') {
     const nums = page.locator('input[type=number]');
     await nums.last().fill('150');
     log('phone prefilled:', (await page.getByPlaceholder('(808) 555-1234').inputValue()) === '8085551234' ? 'PASS' : 'FAIL');
+    // Text only: the client has an email too, so switch email off and text on.
+    await page.getByLabel('Email', { exact: true }).uncheck();
+    await page.getByLabel('Text (they can reply YES)').check();
     if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
     await page.getByRole('button', { name: 'Send to customer by text' }).click();
     await page.waitForTimeout(2000);
     const co = db.change_orders[0];
     log('saved:', co && co.seq === 1 && co.items[0].name === 'Add shutoff valve' && co.items[0].price === 150 && co.view_token.length >= 16 ? 'PASS' : 'FAIL ' + JSON.stringify(co));
     const sendCall = apiCalls.find(c => c.body?.op === 'send_change_order');
-    log('texted:', sendCall && sendCall.body.to === '8085551234' && sendCall.body.change_order_id === co.id ? 'PASS' : 'FAIL');
-    log('confirmation shown:', (await page.getByText(/Sent to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
+    log('texted only:', sendCall && sendCall.body.to === '8085551234' && !sendCall.body.email && sendCall.body.change_order_id === co.id ? 'PASS' : 'FAIL');
+    log('confirmation shown:', (await page.getByText(/texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
+  }
+  if (SCENARIO === 'email') {
+    await page.getByRole('button', { name: '+ Change order' }).click();
+    await page.waitForTimeout(600);
+    await page.getByPlaceholder(/Work to add/).fill('Add shutoff valve');
+    await page.locator('input[type=number]').last().fill('150');
+    log('email prefilled and chosen, text off:', (await page.getByPlaceholder('customer@email.com').inputValue()) === 'pat@example.com' && (await page.getByRole('button', { name: 'Send to customer by email' }).count()) === 1 ? 'PASS' : 'FAIL');
+    await page.getByRole('button', { name: 'Send to customer by email' }).click();
+    await page.waitForTimeout(2000);
+    const call = apiCalls.find(c => c.body?.op === 'send_change_order');
+    log('sent by email only:', call && call.body.email === 'pat@example.com' && !call.body.to ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
+    log('result shown:', (await page.getByText(/emailed to pat@example.com/).count()) > 0 ? 'PASS' : 'FAIL');
+  }
+  if (SCENARIO === 'ai' || SCENARIO === 'aiplain') {
+    await page.getByRole('button', { name: 'AI', exact: true }).first().click();
+    await page.waitForTimeout(800);
+    const box = page.locator('[aria-label="Job description"]');
+    await box.click();
+    await page.keyboard.type(SCENARIO === 'ai' ? 'Change order for two angle stops at 95 each, send it to them' : 'What is on this invoice?');
+    await box.locator('xpath=following-sibling::button').last().click().catch(async () => { await page.keyboard.press('Enter'); });
+    await page.waitForTimeout(3500);
+    if (SCENARIO === 'aiplain') {
+      log('plain answer shown, no error:', (await page.getByText('INV1300 has one line').count()) > 0 && (await page.getByText(/is not a function/).count()) === 0 ? 'PASS' : 'FAIL');
+    } else {
+      const sys = aiPrompts[0]?.systemPrompt || '';
+      log('prompt has change order block + contact:', /CHANGE ORDERS on INV1300/.test(sys) && /email pat@example.com \| mobile 8085551234/.test(sys) ? 'PASS' : 'FAIL');
+      const co = db.change_orders[0];
+      log('change order saved from chat:', co && co.items[0].name === 'Replace angle stop' && co.items[0].qty === 2 && co.note === 'Found behind the vanity' ? 'PASS' : 'FAIL ' + JSON.stringify(co));
+      const call = apiCalls.find(c => c.body?.op === 'send_change_order');
+      log('auto = email + text:', call && call.body.email === 'pat@example.com' && call.body.to === '8085551234' ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
+      log('chat reports the real result:', (await page.getByText(/INV1300-CO1 \(\$198\.95\) emailed to pat@example\.com and texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
+      log('invoice lines untouched:', !saves.some(x => x.items.some(i => /angle stop/i.test(i))) ? 'PASS' : 'FAIL');
+      log('card refreshed:', (await page.getByText(/INV1300-CO1 · \$198\.95/).count()) > 0 ? 'PASS' : 'FAIL');
+    }
   }
   if (SCENARIO === 'landed') {
     await page.waitForTimeout(2500);

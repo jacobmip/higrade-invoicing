@@ -61,6 +61,73 @@ function newToken() {
   return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+const cleanItems = (items) => (items || [])
+  .map(i => ({ name: String(i.name || '').trim(), desc: String(i.desc || '').trim(), qty: Number(i.qty) || 1, price: Number(i.price) || 0, taxable: i.taxable !== false }))
+  .filter(i => i.name || i.price);
+
+// Tell any open ChangeOrdersCard for this invoice to reload (the AI chat
+// creates and sends change orders without going through the card).
+export const announceChangeOrders = (invoiceId) => {
+  try { window.dispatchEvent(new CustomEvent('higrade:change-orders', { detail: { invoiceId } })); } catch { /* old browsers */ }
+};
+
+const tableMsg = (m) => (/does not exist|relation|schema cache/i.test(m || '') ? 'Change orders need database update 111.' : m);
+
+export async function listChangeOrders(invoiceId) {
+  const { data, error } = await supabase.from('change_orders').select('*').eq('invoice_id', invoiceId).order('seq');
+  if (error) throw new Error(tableMsg(error.message));
+  return data || [];
+}
+
+// Create (no row) or edit (row) a change order. Only draft or sent ones can
+// change; once the customer answers it is final.
+export async function saveChangeOrder({ row, invoiceId, items, note }) {
+  const clean = cleanItems(items);
+  if (!clean.length) throw new Error('Add at least one line.');
+  if (row) {
+    const { data, error } = await supabase.from('change_orders').update({ items: clean, note: (note || '').trim() || null, updated_at: new Date().toISOString() })
+      .eq('id', row.id).in('status', ['draft', 'sent']).select().maybeSingle();
+    if (error) throw new Error(tableMsg(error.message));
+    if (!data) throw new Error('This change order was already answered by the customer.');
+    announceChangeOrders(invoiceId);
+    return data;
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: last, error: e0 } = await supabase.from('change_orders').select('seq').eq('invoice_id', invoiceId).order('seq', { ascending: false }).limit(1);
+    if (e0) throw new Error(tableMsg(e0.message));
+    const seq = (last?.[0]?.seq || 0) + 1;
+    const { data, error } = await supabase.from('change_orders')
+      .insert({ invoice_id: invoiceId, seq, items: clean, note: (note || '').trim() || null, status: 'draft', view_token: newToken() })
+      .select().single();
+    if (!error) { announceChangeOrders(invoiceId); return data; }
+    if (!/duplicate|unique/i.test(error.message)) throw new Error(tableMsg(error.message));
+  }
+  throw new Error('Could not number the change order. Try again.');
+}
+
+// Email and/or text it (server: api/_lib/change-order.js sendChangeOrder).
+// Returns the server's answer: { ok, sent: { email?, text? }, errors }.
+export async function sendChangeOrderTo({ id, invoiceId, phone, email }) {
+  const { data: s } = await supabase.auth.getSession();
+  const r = await fetch(api('/api/sms-inbound'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s?.session?.access_token || ''}` },
+    body: JSON.stringify({ op: 'send_change_order', change_order_id: id, ...(phone ? { to: phone } : {}), ...(email ? { email } : {}) }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || `Send failed (${r.status})`);
+  announceChangeOrders(invoiceId);
+  return j;
+}
+
+export const sentSummary = (j) => {
+  const parts = [];
+  if (j?.sent?.email) parts.push(`emailed to ${j.sent.email}`);
+  if (j?.sent?.text) parts.push(`texted to ${j.sent.text}`);
+  const fail = (j?.errors || []).length ? ` (not sent: ${j.errors.join('; ')})` : '';
+  return (parts.join(' and ') || 'not sent') + fail;
+};
+
 const STATUS = {
   draft: { label: 'Draft', bg: '#eef1f7', fg: '#667' },
   sent: { label: 'Waiting on customer', bg: '#e8f1fb', fg: '#2471b5' },
@@ -77,7 +144,7 @@ const btnS = (kind) => ({
 
 // ─── In the app ─────────────────────────────────────────────────────────────
 
-export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, loadedUpdatedAt, onApprovedLines }) {
+export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines }) {
   const [list, setList] = useState([]);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState('');
@@ -85,8 +152,8 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, loadedUpdated
 
   const load = async () => {
     if (!invoiceId) return;
-    const { data, error } = await supabase.from('change_orders').select('*').eq('invoice_id', invoiceId).order('seq');
-    if (error) { setErr(/does not exist|relation/i.test(error.message) ? 'Change orders need database update 111.' : error.message); return; }
+    let data;
+    try { data = await listChangeOrders(invoiceId); } catch (e) { setErr(e.message); return; }
     setErr('');
     setList(data || []);
     // An approval that landed after this screen loaded the invoice: put its
@@ -99,6 +166,12 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, loadedUpdated
     }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [invoiceId]);
+  useEffect(() => {
+    const on = (e) => { if (!e.detail?.invoiceId || e.detail.invoiceId === invoiceId) load(); };
+    window.addEventListener('higrade:change-orders', on);
+    return () => window.removeEventListener('higrade:change-orders', on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceId]);
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVis);
@@ -119,7 +192,7 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, loadedUpdated
       </div>
       {err && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 8 }}>{err}</div>}
       {!err && list.length === 0 && (
-        <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Extra work mid-job: text the customer a change order. When they approve (sign or reply YES) it is added to this invoice.</div>
+        <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Extra work mid-job: email or text the customer a change order. When they approve (sign, or reply YES to the text) it is added to this invoice.</div>
       )}
       {list.map(c => {
         const st = STATUS[c.status] || STATUS.draft;
@@ -131,7 +204,7 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, loadedUpdated
               <div style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {(c.items || []).map(i => i.name).filter(Boolean).join(', ') || 'No lines yet'}
                 {c.status === 'approved' && c.approved_at ? ` · ${c.approved_via === 'sms' ? 'texted YES' : 'signed'} ${fmtDate(c.approved_at)}` : ''}
-                {c.status === 'sent' && c.sent_at ? ` · sent ${fmtDate(c.sent_at)}` : ''}
+                {c.status === 'sent' && c.sent_at ? ` · ${[c.sent_email && 'emailed', c.sent_to && 'texted'].filter(Boolean).join(' + ') || 'sent'} ${fmtDate(c.sent_at)}` : ''}
               </div>
             </div>
             <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: st.bg, color: st.fg, whiteSpace: 'nowrap' }}>{st.label}</span>
@@ -140,45 +213,30 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, loadedUpdated
       })}
       {editing && createPortal(
         <ChangeOrderEditor
-          co={editing} invoiceId={invoiceId} taxPct={taxPct} clientPhone={clientPhone}
+          co={editing} invoiceId={invoiceId} taxPct={taxPct} clientPhone={clientPhone} clientEmail={clientEmail}
           onClose={() => { setEditing(null); load(); }}
         />, document.body)}
     </div>
   );
 }
 
-function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, onClose }) {
+function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, clientEmail, onClose }) {
   const locked = co.status === 'approved' || co.status === 'declined';
   const [items, setItems] = useState(co.items?.length ? co.items : [{ name: '', desc: '', qty: 1, price: 0, taxable: true }]);
   const [note, setNote] = useState(co.note || '');
   const [phone, setPhone] = useState(co.sent_to || clientPhone || '');
+  const [email, setEmail] = useState(co.sent_email || clientEmail || '');
+  const [viaEmail, setViaEmail] = useState(!!(co.sent_email || clientEmail));
+  const [viaText, setViaText] = useState(co.sent_to ? true : !(co.sent_email || clientEmail) && !!clientPhone);
   const [row, setRow] = useState(co.id ? co : null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const t = coTotals(items, taxPct);
-  const clean = items.map(i => ({ name: String(i.name || '').trim(), desc: String(i.desc || '').trim(), qty: Number(i.qty) || 1, price: Number(i.price) || 0, taxable: i.taxable !== false }))
-    .filter(i => i.name || i.price);
   const link = row ? `${window.location.origin}/co/${row.view_token}` : '';
 
   const save = async () => {
-    if (!clean.length) throw new Error('Add at least one line.');
-    if (row) {
-      const { data, error } = await supabase.from('change_orders').update({ items: clean, note: note.trim() || null, updated_at: new Date().toISOString() })
-        .eq('id', row.id).in('status', ['draft', 'sent']).select().maybeSingle();
-      if (error) throw error;
-      if (!data) throw new Error('This change order was already answered by the customer.');
-      setRow(data); return data;
-    }
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { data: last } = await supabase.from('change_orders').select('seq').eq('invoice_id', invoiceId).order('seq', { ascending: false }).limit(1);
-      const seq = (last?.[0]?.seq || 0) + 1;
-      const { data, error } = await supabase.from('change_orders')
-        .insert({ invoice_id: invoiceId, seq, items: clean, note: note.trim() || null, status: 'draft', view_token: newToken() })
-        .select().single();
-      if (!error) { setRow(data); return data; }
-      if (!/duplicate|unique/i.test(error.message)) throw error;
-    }
-    throw new Error('Could not number the change order. Try again.');
+    const data = await saveChangeOrder({ row, invoiceId, items, note });
+    setRow(data); return data;
   };
 
   const run = (label, fn) => async () => {
@@ -187,18 +245,13 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, onClose }) {
   };
 
   const send = run('send', async () => {
+    if (!viaEmail && !viaText) throw new Error('Pick email, text or both.');
+    if (viaText && !String(phone).replace(/\D/g, '').match(/\d{10}$/)) throw new Error('Enter the customer’s mobile number.');
+    if (viaEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new Error('Enter the customer’s email address.');
     const saved = await save();
-    if (!String(phone).replace(/\D/g, '').match(/\d{10}$/)) throw new Error('Enter the customer’s mobile number.');
-    const { data: s } = await supabase.auth.getSession();
-    const r = await fetch(api('/api/sms-inbound'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s?.session?.access_token || ''}` },
-      body: JSON.stringify({ op: 'send_change_order', change_order_id: saved.id, to: phone }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.ok) throw new Error(j.error || `Send failed (${r.status})`);
-    setMsg(`Sent to ${phone}. When they sign or reply YES, it is added to the invoice.`);
-    setRow(x => ({ ...(x || saved), status: 'sent', sent_to: phone }));
+    const j = await sendChangeOrderTo({ id: saved.id, invoiceId, phone: viaText ? phone : null, email: viaEmail ? email.trim() : null });
+    setMsg(`Sent: ${sentSummary(j)}. When they approve, it is added to the invoice.`);
+    setRow(x => ({ ...(x || saved), status: 'sent', ...(j.sent?.text ? { sent_to: j.sent.text } : {}), ...(j.sent?.email ? { sent_email: j.sent.email } : {}) }));
   });
 
   const remove = run('delete', async () => {
@@ -257,10 +310,16 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, onClose }) {
           </div>
           {!locked && (
             <>
-              <label style={{ display: 'block', fontSize: 12, color: '#777', margin: '14px 0 4px' }}>Customer's mobile</label>
-              <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel" placeholder="(808) 555-1234" style={inputS} />
-              <button onClick={send} disabled={!!busy} style={{ ...btnS('primary'), width: '100%', marginTop: 10, opacity: busy ? 0.6 : 1 }}>
-                {busy === 'send' ? 'Sending…' : (row?.status === 'sent' ? 'Save and resend text' : 'Send to customer by text')}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#333', margin: '14px 0 4px' }}>
+                <input type="checkbox" checked={viaEmail} onChange={e => setViaEmail(e.target.checked)} /> Email
+              </label>
+              <input value={email} onChange={e => setEmail(e.target.value)} inputMode="email" autoCapitalize="none" placeholder="customer@email.com" style={{ ...inputS, opacity: viaEmail ? 1 : 0.5 }} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#333', margin: '12px 0 4px' }}>
+                <input type="checkbox" checked={viaText} onChange={e => setViaText(e.target.checked)} /> Text (they can reply YES)
+              </label>
+              <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel" placeholder="(808) 555-1234" style={{ ...inputS, opacity: viaText ? 1 : 0.5 }} />
+              <button onClick={send} disabled={!!busy} style={{ ...btnS('primary'), width: '100%', marginTop: 12, opacity: busy ? 0.6 : 1 }}>
+                {busy === 'send' ? 'Sending…' : `${row?.status === 'sent' ? 'Save and resend' : 'Send to customer'}${viaEmail && viaText ? ' (email + text)' : viaEmail ? ' by email' : viaText ? ' by text' : ''}`}
               </button>
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <button onClick={run('save', async () => { await save(); setMsg('Saved.'); })} disabled={!!busy} style={{ ...btnS('ghost'), flex: 1 }}>{busy === 'save' ? 'Saving…' : 'Save draft'}</button>
@@ -269,7 +328,7 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, onClose }) {
               {row && <button onClick={remove} disabled={!!busy} style={{ ...btnS('danger'), width: '100%', marginTop: 8 }}>Delete change order</button>}
             </>
           )}
-          {msg && <div style={{ fontSize: 13, color: /fail|error|enter|add at least|already|could not/i.test(msg) ? '#c0392b' : '#1e8449', marginTop: 10 }}>{msg}</div>}
+          {msg && <div style={{ fontSize: 13, color: /fail|error|enter|add at least|already|could not|pick |not sent/i.test(msg) ? '#c0392b' : '#1e8449', marginTop: 10 }}>{msg}</div>}
         </div>
       </div>
     </div>
@@ -389,7 +448,7 @@ export function ChangeOrderPage({ token }) {
             <button onClick={() => submit(false)} disabled={busy || !signed || !name.trim()}
               style={{ ...btnS('primary'), flex: 2, opacity: busy || !signed || !name.trim() ? 0.5 : 1 }}>{busy ? 'Saving…' : 'Approve & Sign'}</button>
           </div>
-          <div style={{ fontSize: 12, color: '#888', marginTop: 10 }}>You can also approve by replying YES to our text.</div>
+          <div style={{ fontSize: 12, color: '#888', marginTop: 10 }}>If we texted you this change order, you can also approve by replying YES.</div>
           <button onClick={() => { if (window.confirm('Decline this change order? Nothing will be added to your invoice.')) submit(true); }} disabled={busy}
             style={{ background: 'none', border: 'none', color: '#c0392b', fontSize: 13, marginTop: 10, cursor: 'pointer', padding: 0 }}>Decline</button>
           {error && <div style={{ color: '#c0392b', fontSize: 13, marginTop: 8 }}>{error}</div>}
@@ -397,4 +456,64 @@ export function ChangeOrderPage({ token }) {
       )}
     </>
   );
+}
+
+// ─── For the invoice's AI chat (App.jsx AIChatPanel) ────────────────────────
+
+// What the model is told about this invoice's change orders.
+export function changeOrdersPromptBlock(invoiceId, list, taxPct, contact) {
+  const rows = (list || []).map(c => {
+    const t = coTotals(c.items, taxPct);
+    const how = c.status === 'sent' ? ` (${[c.sent_email && 'emailed ' + c.sent_email, c.sent_to && 'texted ' + c.sent_to].filter(Boolean).join(', ')})` : '';
+    return `  CO${c.seq} | ${STATUS[c.status]?.label || c.status}${how} | ${money(t.total)} | ${(c.items || []).map(i => `${i.name} ${money(Number(i.qty ?? 1) * Number(i.price ?? 0))}`).join('; ')}`;
+  }).join('\n');
+  return `
+
+CHANGE ORDERS on ${invoiceId} (extra work the CUSTOMER must approve before it is added; approved ones are added to the invoice automatically):
+${rows || '  (none yet)'}
+Customer contact on file: email ${contact.email || '(none)'} | mobile ${contact.phone || '(none)'}
+
+Change order actions (use these, NOT add_items, whenever Jake says "change order", "needs the customer's approval", "send them the extra work to approve", or similar):
+{"action":"create_change_order","items":[{"name":"Short title","desc":"details","qty":1,"price":000,"taxable":true}],"note":"optional note to the customer","send":"none","summary":"one sentence"}
+{"action":"update_change_order","seq":1,"items":[...the full new list of lines...],"note":"","summary":"one sentence"}
+{"action":"send_change_order","seq":1,"send":"auto","summary":"one sentence"}
+Rules:
+- "send" is one of "none" (save as a draft), "email", "text", "both", or "auto" (every channel on file: email and text). Only send when Jake says send / email / text it / get it to the customer; "make", "write up" or "draft" a change order means "none".
+- Optional "email" and "phone" fields override the contact on file; include them when Jake gives a different address or number.
+- Prices follow the same pricing rules as line items. Never add change order lines to the invoice yourself: the customer's approval does that.
+- Only draft or sent change orders can be updated or resent; approved and declined ones are final.
+- Plain add_items is still right when Jake just wants a line on the invoice with no customer approval.`;
+}
+
+// Runs one change order action from the AI chat. Returns the text the chat
+// shows: what really happened, never the model's own claim.
+export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, email }) {
+  if (!isInvoice) return 'Change orders go on the invoice. Convert this estimate to an invoice first.';
+  if (!invoiceId) return 'Save this invoice first (add a client), then I can make the change order.';
+  try {
+    const list = await listChangeOrders(invoiceId);
+    let row;
+    if (a.action === 'create_change_order') {
+      row = await saveChangeOrder({ invoiceId, items: a.items, note: a.note });
+    } else {
+      const seq = Number(a.seq) || (list.length ? list[list.length - 1].seq : null);
+      row = list.find(c => c.seq === seq);
+      if (!row) return `There is no change order ${seq ? `CO${seq} ` : ''}on ${invoiceId}.`;
+      if (a.action === 'update_change_order') {
+        row = await saveChangeOrder({ row, invoiceId, items: a.items?.length ? a.items : row.items, note: a.note ?? row.note });
+      }
+    }
+    const label = `${invoiceId}-CO${row.seq}`;
+    const total = money(coTotals(row.items, a.taxPct).total);
+    const mode = a.action === 'update_change_order' && !a.send ? 'none' : (a.send || (a.action === 'send_change_order' ? 'auto' : 'none'));
+    if (mode === 'none') return `${label} ${a.action === 'update_change_order' ? 'updated' : 'saved as a draft'} (${total}). Not sent yet.`;
+    const toEmail = (mode === 'email' || mode === 'both' || mode === 'auto') ? (a.email || email || null) : null;
+    const toPhone = (mode === 'text' || mode === 'both' || mode === 'auto') ? (a.phone || phone || null) : null;
+    if (!toEmail && !toPhone) return `${label} saved (${total}) but not sent: no ${mode === 'text' ? 'mobile number' : mode === 'email' ? 'email address' : 'email or mobile'} on file. Tell me where to send it.`;
+    const j = await sendChangeOrderTo({ id: row.id, invoiceId, phone: toPhone, email: toEmail });
+    const missing = mode === 'both' && (!toEmail || !toPhone) ? ` No ${!toEmail ? 'email' : 'mobile'} on file, so that part was skipped.` : '';
+    return `${label} (${total}) ${sentSummary(j)}.${missing} It is added to the invoice when the customer approves.`;
+  } catch (e) {
+    return `Change order not done: ${e.message || e}`;
+  }
 }

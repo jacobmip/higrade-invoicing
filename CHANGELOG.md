@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.54.0 — 2026-11-08
+
+- **Change orders by email.** The change order screen now has Email and Text choices; the customer's email and mobile fill in from the client, and email is picked by default when there is one. The email matches your invoice emails: the lines, the total and a "Review & Approve" button to the same sign page, and it says nothing is due now. Approving still adds the lines to the invoice automatically. Texting YES only works when it was texted. If one channel fails (say texting is switched off) the other still goes, and the screen says which went out.
+- **The invoice AI chat does change orders.** Ask it things like "change order for two angle stops at 95 each, send it to them" and it writes the change order and emails and/or texts it, using the contact on file. It can also save one as a draft, change one, or resend one. The chat reports what actually happened (for example "INV1300-CO1 ($198.95) emailed to ... and texted to ..."), and the Change orders card updates right away. It never adds those lines to the invoice itself; the customer's approval does that. On an estimate it tells you to convert first.
+- **Fix: the invoice AI chat showed "Error: userMsg.trim is not a function" whenever it answered in plain words** instead of making a change. Broken since v1.43.1 (Nov 2).
+- Migration 111 (not applied yet) gains a `sent_email` column. Tests: `test/change-order.test.mjs` (email only, email plus a failing text, bad address), `test/e2e/change-order.mjs` scenarios `email`, `ai`, `aiplain`.
+
 ## v1.53.0 — 2026-11-08
 
 - **Change orders.** On an invoice, the new Change orders card lets you write extra work mid-job and text it to the customer. The text lists the lines and the total and says "Reply YES to approve," with a link to a page where they can review it and sign, or decline. It never says payment is due. The moment they approve, by signing or by replying YES, the lines are added to the invoice automatically. They are marked "Change order #1, approved Nov 8," so the customer sees where they came from, and you get a Telegram message. A paid invoice goes back to partially paid. Declined: nothing changes on the invoice. Each one shows on the card as Draft, Waiting on customer, Approved or Declined, and in the invoice's History. A YES text only counts when it is a short, plain yes and exactly one change order is waiting for that phone number; anything else goes to Lisa as usual. Needs database update 111 (Hermes) before the card works.

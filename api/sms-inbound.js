@@ -186,12 +186,13 @@ async function appSend(req, res) {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
       return await appPlaceCall(res, user, params);
     }
-    // Text a change order's link to the customer (migration 111). Session only.
+    // Email and/or text a change order's link to the customer (migration 111). Session only.
     if (params.op === 'send_change_order') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
-      const to = toE164(params.to) || String(params.to || '').trim();
-      if (!to || !params.change_order_id) return jsonOut(res, 400, { error: 'change_order_id and to are required' });
-      const r = await sendChangeOrder({ id: String(params.change_order_id), to });
+      const to = params.to ? (toE164(params.to) || String(params.to).trim()) : null;
+      const email = params.email ? String(params.email).trim() : null;
+      if (!params.change_order_id || (!to && !email)) return jsonOut(res, 400, { error: 'change_order_id and a phone or email are required' });
+      const r = await sendChangeOrder({ id: String(params.change_order_id), to, email });
       return jsonOut(res, r.ok ? 200 : 409, r);
     }
     // The AI chat sends a bare 10-digit number; Twilio needs E.164. A value

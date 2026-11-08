@@ -3,7 +3,7 @@
 //   GET  /api/public-invoice?co=<token>          the customer's page reads it
 //   POST /api/submit-signature {coToken, ...}    approve (signed) or decline
 //   POST /api/sms-inbound (Twilio)               a YES text approves it
-//   POST /api/sms-inbound {op:'send_change_order'} (admin) texts the link
+//   POST /api/sms-inbound {op:'send_change_order'} (admin) emails and/or texts the link
 //
 // Approval is automatic and final: the lines are added to the invoice right
 // away with the service role. The status flip is a conditional PATCH
@@ -171,26 +171,112 @@ export function changeOrderText(co, inv) {
   ].filter(Boolean).join('\n');
 }
 
-// Admin op from the app. Texts the link and marks the change order sent.
-export async function sendChangeOrder({ id, to }) {
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+function salutation(name) {
+  if (!name) return '';
+  if (/\b(LLC|Inc|Corp|Construction|Contracting|Services|Co\.|Company)\b/i.test(name)) return name;
+  return String(name).trim().split(/\s+/)[0];
+}
+
+// The email: same frame as the invoice emails (api/send-email.js), one
+// "Review & Approve" button to the /co/<token> page. Says plainly that
+// nothing is due now.
+export function changeOrderEmail(co, inv) {
+  const t = coTotals(co.items, inv.tax);
+  const link = `${APP_URL}/co/${co.view_token}`;
+  const site = siteLine(inv.job_address);
+  const rows = (co.items || []).map(it => `
+      <tr>
+        <td style="padding:8px 0;border-top:1px solid #eef1f7;color:#1a1a1a;font-size:14px;">
+          <strong>${esc(it.name || 'Additional work')}</strong>${it.desc ? `<br><span style="color:#777;font-size:13px;">${esc(it.desc)}</span>` : ''}
+          ${Number(it.qty ?? 1) !== 1 ? `<br><span style="color:#999;font-size:12px;">${esc(it.qty)} x ${money(it.price)}</span>` : ''}
+        </td>
+        <td style="padding:8px 0;border-top:1px solid #eef1f7;text-align:right;white-space:nowrap;font-size:14px;color:#1a1a1a;">${money(Number(it.qty ?? 1) * Number(it.price ?? 0))}</td>
+      </tr>`).join('');
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: #0a1628; padding: 24px; text-align: center;">
+        <h1 style="color: #E8622A; margin: 0; font-size: 24px; letter-spacing: 2px;">HI GRADE PLUMBING LLC</h1>
+        <p style="color: #8899bb; margin: 4px 0 0; font-size: 12px; letter-spacing: 1px;">HONOLULU, HAWAII · LIC PJ-13579</p>
+      </div>
+      <div style="padding: 28px 24px; background: #f4f6fa;">
+        <p style="color:#444;font-size:15px;line-height:1.6;margin:0 0 16px;">Aloha ${esc(salutation(inv.client_name))},<br><br>
+          While working on your job${site ? ` at ${esc(site)}` : ''} we found additional work that needs your approval before we do it. Here is change order ${co.seq}.</p>
+        <div style="background:#fff;border-radius:10px;padding:18px 20px;box-shadow:0 1px 6px rgba(0,0,0,0.06);">
+          <div style="color:#888;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">Change order ${co.seq} · ${esc(coLabel(co))}</div>
+          <table style="width:100%;border-collapse:collapse;margin-top:10px;">${rows}
+            <tr><td style="padding:8px 0 0;border-top:2px solid #eef1f7;color:#555;font-size:13px;">Subtotal</td><td style="padding:8px 0 0;border-top:2px solid #eef1f7;text-align:right;color:#555;font-size:13px;">${money(t.subtotal)}</td></tr>
+            ${t.tax ? `<tr><td style="color:#777;font-size:13px;">Tax</td><td style="text-align:right;color:#777;font-size:13px;">${money(t.tax)}</td></tr>` : ''}
+            <tr><td style="padding-top:4px;font-size:17px;font-weight:bold;color:#0a1628;">Total</td><td style="padding-top:4px;text-align:right;font-size:17px;font-weight:bold;color:#0a1628;">${money(t.total)}</td></tr>
+          </table>
+          ${co.note ? `<p style="color:#555;font-size:13px;margin:12px 0 0;white-space:pre-wrap;">${esc(co.note)}</p>` : ''}
+          <div style="text-align:center;margin:22px 0 6px;">
+            <a href="${esc(link)}" target="_blank" style="display:inline-block;background:#E8622A;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold;padding:14px 36px;border-radius:6px;">Review &amp; Approve</a>
+            <p style="color:#999;font-size:12px;margin:10px 0 0;">Nothing is due now. Approving adds this work to your invoice.</p>
+          </div>
+        </div>
+        <p style="color:#666;margin-top:20px;font-size:13px;">Questions? Call or text us at <strong>808-393-0015</strong><br>Email: higradeplumbing@gmail.com</p>
+        <p style="color:#888;font-size:12px;margin:14px 0 0;text-align:center;">Trouble with the button? Copy/paste this URL:<br><span style="color:#3070b8;word-break:break-all;">${esc(link)}</span></p>
+      </div>
+      <div style="background: #0a1628; padding: 16px; text-align: center;">
+        <p style="color: #8899bb; font-size: 11px; margin: 0;">HI Grade Plumbing LLC · Honolulu, HI · higradeplumbing.com</p>
+      </div>
+    </div>`;
+  const subject = `Change order ${co.seq} for your job${site ? ` at ${site}` : ''}: please review`;
+  return { subject, html };
+}
+
+async function sendEmail({ to, subject, html }) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('Email not configured (RESEND_API_KEY)');
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: 'HI Grade Plumbing <invoices@higradeplumbing.com>', to: [to], bcc: ['higradeplumbing@gmail.com'], subject, html }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Email failed ${r.status}: ${j.message || JSON.stringify(j).slice(0, 160)}`);
+  return j;
+}
+
+const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
+
+// Admin op from the app. Emails and/or texts the link (to = phone, email =
+// address; at least one) and marks the change order sent. Each channel is
+// tried on its own: one failing does not stop the other, and the result says
+// what went out.
+export async function sendChangeOrder({ id, to, email }) {
   const co = (await rest(`change_orders?id=eq.${encodeURIComponent(id)}&select=*&limit=1`))?.[0];
   if (!co) return { ok: false, error: 'not_found' };
   if (co.status === 'approved' || co.status === 'declined') return { ok: false, error: `already ${co.status}` };
   if (!(co.items || []).length) return { ok: false, error: 'no lines' };
+  if (!to && !email) return { ok: false, error: 'no phone or email to send to' };
+  if (email && !validEmail(email)) return { ok: false, error: `not a valid email: ${email}` };
   const inv = await invoiceFor(co.invoice_id);
   if (!inv || inv.deleted_at) return { ok: false, error: 'invoice not found' };
-  if (String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() !== 'true') {
-    return { ok: false, error: 'Outbound texting is switched off (sms_outbound_enabled).' };
+
+  const sent = {}, errors = [];
+  if (email) {
+    try { await sendEmail({ to: String(email).trim(), ...changeOrderEmail(co, inv) }); sent.email = String(email).trim(); }
+    catch (e) { errors.push(`email: ${e.message || e}`); }
   }
-  const body = changeOrderText(co, inv);
-  const sent = await sendTwilioSms({ to, body });
+  if (to) {
+    try {
+      if (String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() !== 'true') throw new Error('outbound texting is switched off (sms_outbound_enabled)');
+      const body = changeOrderText(co, inv);
+      const r = await sendTwilioSms({ to, body });
+      sent.text = to;
+      try {
+        await rpc('log_client_message', { p_secret: await webhookSecret(), p_phone: to, p_direction: 'outbound', p_body: body, p_call_id: r?.sid || null, p_media: null });
+      } catch (e) { console.warn('[change-order] log failed:', e.message || e); }
+    } catch (e) { errors.push(`text: ${e.message || e}`); }
+  }
+  if (!sent.email && !sent.text) return { ok: false, error: errors.join('; ') };
   const now = new Date().toISOString();
   await rest(`change_orders?id=eq.${co.id}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ status: 'sent', sent_at: now, sent_to: to, updated_at: now }) });
-  try {
-    await rpc('log_client_message', { p_secret: await webhookSecret(), p_phone: to, p_direction: 'outbound', p_body: body, p_call_id: sent?.sid || null, p_media: null });
-  } catch (e) { console.warn('[change-order] log failed:', e.message || e); }
-  return { ok: true, label: coLabel(co), link: `${APP_URL}/co/${co.view_token}` };
+    body: JSON.stringify({ status: 'sent', sent_at: now, updated_at: now,
+      ...(sent.text ? { sent_to: sent.text } : {}), ...(sent.email ? { sent_email: sent.email } : {}) }) });
+  return { ok: true, label: coLabel(co), link: `${APP_URL}/co/${co.view_token}`, sent, errors };
 }
 
 const YES = new Set(['yes', 'yep', 'yeah', 'ya', 'yup', 'y', 'ok', 'okay', 'k', 'approve', 'approved', 'sure', 'confirmed', 'confirm', 'agreed']);
