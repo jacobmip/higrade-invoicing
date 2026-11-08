@@ -15,7 +15,8 @@ import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
-import { linkedDocIds, syncPartner, sharedPatch, sharedEqual } from './docLinks.js';
+import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
+import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines } from './ChangeOrders.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
@@ -4017,6 +4018,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // render so we don't write the unchanged initial state back to the DB.
   const formRef = useRef(form);
   formRef.current = form;
+  // When this screen's copy of the invoice was loaded. A change order approved
+  // after this is put into the open form (ChangeOrdersCard).
+  const loadedUpdatedAtRef = useRef(invoice?.updatedAt || null);
   const autoSaveTimerRef = useRef(null);
   const skipFirstRef = useRef(true);
   const lastNewSeqRef = useRef(newDocSeq);
@@ -4208,6 +4212,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // Applying any of it now would drag the new document back onto the old
       // one's id, so keep the save (it landed) and drop the bookkeeping.
       if (formEpochRef.current !== epoch) return saved;
+      // The save found change-order lines on the server this copy did not have
+      // (approved while the screen was open) and kept them: show them too, so
+      // the next save does not drop them again.
+      if (saved?.mergedChangeOrderLines) setForm(ff => ({ ...ff, items: mergeChangeOrderLines(ff.items, saved.items), ...(saved.status ? { status: saved.status } : {}) }));
       if (saved?.id && saved.id !== autoSavedId) setAutoSavedId(saved.id);
       if (saved?.updatedAt) updatedAtRef.current = saved.updatedAt;
       if (saved) clearInvoiceDraft();
@@ -4791,6 +4799,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           sortKey: new Date(when).getTime(),
         };
       }
+      if (ev.kind === 'change_order_approved') {
+        const m = ev.meta || {};
+        return {
+          date: when,
+          label: `${m.label || 'Change order'} approved ${m.via === 'sms' ? 'by text' : 'by signature'}${m.name ? ` (${m.name})` : ''}, added to invoice`,
+          type: 'sent',
+          amount: m.total ?? null,
+          sortKey: new Date(when).getTime(),
+        };
+      }
       if (ev.kind === 'items_edited') {
         const m = ev.meta || {};
         const who = m.editor_name || 'Team member';
@@ -5289,6 +5307,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   form.billingAddress ||
                   (effectiveClientInfo?.address1 ? { line1: effectiveClientInfo.address1, line2: effectiveClientInfo.address2 || "", line3: effectiveClientInfo.address3 || "" } : null)
                 }
+              />
+            </div>
+          )}
+
+          {/* Change orders (migration 111): extra work the customer approves
+              mid-job. Approved ones land on this invoice automatically. */}
+          {isAdmin && !isEstimate && !lockedView && (form.id || autoSavedId) && (
+            <div style={{ padding: "0 16px" }}>
+              <ChangeOrdersCard
+                invoiceId={form.id || autoSavedId}
+                taxPct={form.tax}
+                clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
+                loadedUpdatedAt={loadedUpdatedAtRef.current}
+                onApprovedLines={(lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
               />
             </div>
           )}
@@ -13667,8 +13699,10 @@ export default function App() {
         // the signature modal save raced the autosave triggered by the
         // status flip.
         try {
-          const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(selected.id);
-          const retried = { ...withMeta, updatedAt: freshUpdatedAt };
+          // Keep change-order lines the server gained meanwhile (see autoSaveInvoice).
+          const server = await db.loadInvoiceWithItems(selected.id).catch(() => null);
+          const freshUpdatedAt = server?.updatedAt ?? await db.fetchInvoiceUpdatedAt(selected.id);
+          const retried = { ...withMeta, items: server && Array.isArray(withMeta.items) ? mergeChangeOrderLines(withMeta.items, server.items) : withMeta.items, updatedAt: freshUpdatedAt };
           const res2 = await db.upsertInvoice(retried, false);
           const stamped = { ...retried, updatedAt: res2?.updatedAt || freshUpdatedAt };
           setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === selected.id ? stamped : inv) }));
@@ -13695,12 +13729,12 @@ export default function App() {
   const syncLinkedDoc = async (saved) => {
     try {
       const partner = syncPartner(saved, dataRef.current?.invoices || []);
-      if (!partner || sharedEqual(saved, partner)) return;
+      if (!partner || syncEqual(saved, partner)) return;
       const write = async () => {
         const fresh = await db.loadInvoiceWithItems(partner.id);
         if (!fresh || fresh.deletedAt) return null;
-        if (sharedEqual(saved, fresh)) return fresh;
-        const next = { ...fresh, ...sharedPatch(saved) };
+        if (syncEqual(saved, fresh)) return fresh;
+        const next = { ...fresh, ...syncPatch(saved) };
         const res = await db.upsertInvoice(next, false);
         return { ...next, updatedAt: res?.updatedAt || next.updatedAt };
       };
@@ -13744,10 +13778,16 @@ export default function App() {
           // surface the alert if the second attempt also fails — then it's
           // almost certainly a real concurrent edit.
           try {
-            const freshUpdatedAt = await db.fetchInvoiceUpdatedAt(id);
-            const retried = { ...updated, updatedAt: freshUpdatedAt };
+            // Re-read the row we lost to. A change order approved while this
+            // screen was open added lines on the server; replaying our copy
+            // as-is would delete them, so keep them (marked lines only).
+            const server = await db.loadInvoiceWithItems(id).catch(() => null);
+            const freshUpdatedAt = server?.updatedAt ?? await db.fetchInvoiceUpdatedAt(id);
+            const mergedItems = server && Array.isArray(updated.items) ? mergeChangeOrderLines(updated.items, server.items) : updated.items;
+            const coMerged = mergedItems !== updated.items;
+            const retried = { ...updated, items: mergedItems, ...(coMerged && server?.status ? { status: server.status } : {}), updatedAt: freshUpdatedAt };
             const res2 = await db.upsertInvoice(retried, false);
-            stamped = { ...retried, updatedAt: res2?.updatedAt || freshUpdatedAt };
+            stamped = { ...retried, updatedAt: res2?.updatedAt || freshUpdatedAt, ...(coMerged ? { mergedChangeOrderLines: true } : {}) };
             setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === id ? stamped : inv) }));
           } catch (e2) {
             if (e2?.code === 'CONCURRENT_EDIT') {
@@ -13761,8 +13801,8 @@ export default function App() {
         }
       }
       if (!selected || selected.id !== id) setSelected(stamped);
-      // Same items, notes, internal notes, tax and discount on the job's other
-      // document (src/docLinks.js). Awaited, so opening the other document
+      // Same internal notes on the job's other document (src/docLinks.js; the
+      // estimate's customer-facing contents are frozen at conversion). Awaited, so opening the other document
       // through the cross-link (which flushes first) shows the copy.
       await syncLinkedDoc(stamped);
       return stamped;
@@ -13829,6 +13869,7 @@ export default function App() {
   // Public routes — must come before the auth + dbLoading gates so customers
   // can view/sign/pay invoices without an owner account.
   if (window.location.pathname === "/sign") return <SignaturePage />;
+  if (window.location.pathname.startsWith("/co/")) return <ChangeOrderPage token={window.location.pathname.slice(4)} />;
   if (window.location.pathname === "/welcome") return <WelcomePage />;
   if (window.location.pathname === "/approve-call") return <ApproveCallPage />;
   if (window.location.pathname.startsWith("/v/")) {
