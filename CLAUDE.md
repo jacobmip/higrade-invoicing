@@ -217,7 +217,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 111, 111 not yet applied; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 111; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -420,7 +420,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **110** — **applied and verified 2026-11-03.** `clients.lisa_autoreply` boolean not null default true (all 308 existing clients read on). `autoReply()` in `api/_lib/sms-agent.js` returns early when it is false. Admin-only "Lisa" pill toggle (`LisaToggle` in `src/Messages.jsx`, shown in the Messages tab thread header and atop `ClientThread`), written by `db.setClientLisaAutoreply()`. Dry-run first, then column and default confirmed.
 
-- **111** — **written and tested on a local Postgres 16 2026-11-08, NOT applied** (phone session, no credentials; Hermes prompt given). `change_orders` table, see the schema entry (`sent_email` and `photos` added to the file 2026-11-08 before it was ever applied). Exercised as the test journeyman: insert on his own job allowed, insert on another job and setting `approved` refused, delete affects 0 rows; duplicate seq and short token refused; re-running is harmless. Until applied, the invoice's Change orders card says it needs database update 111.
+- **111** — **applied and verified 2026-11-08.** `change_orders` table with RLS: admin full access; assigned/commission tech can read, insert (draft/sent only), and update (draft/sent only) on their own jobs — approval only comes through the service role. `sent_email` and `photos` columns present. Dry-run clean; verified: journeyman insert on unassigned job blocked, Jake insert+read-back succeeded (view_token 30 chars, seq 1, status draft), all rolled back. Next migration is 112.
 
 Next migration is `112_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
