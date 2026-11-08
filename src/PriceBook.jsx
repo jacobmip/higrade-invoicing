@@ -22,12 +22,20 @@ export default function PriceBook({ items, onSelect, onClose }) {
   // (visualViewport), so the search box and the list stay above the keyboard.
   const [vp, setVp] = useState(() => readViewport());
   useEffect(() => {
+    // Phones report the keyboard late or not at all (and the app's webview may
+    // shrink instead), so re-measure on every viewport event and on a few
+    // timers after the search box takes focus.
     const vv = window.visualViewport;
-    if (!vv) return;
     const update = () => setVp(readViewport());
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+    const timers = [];
+    const onFocus = () => { timers.forEach(clearTimeout); timers.length = 0; [0, 120, 300, 600, 1000, 1500].forEach(ms => timers.push(setTimeout(update, ms))); };
+    vv?.addEventListener("resize", update);
+    vv?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("focusout", onFocus);
+    onFocus(); // the search box takes focus as the sheet opens, before this runs
+    return () => { vv?.removeEventListener("resize", update); vv?.removeEventListener("scroll", update); window.removeEventListener("resize", update); document.removeEventListener("focusin", onFocus); document.removeEventListener("focusout", onFocus); timers.forEach(clearTimeout); };
   }, []);
 
   const q = query.trim().toLowerCase();
@@ -38,7 +46,7 @@ export default function PriceBook({ items, onSelect, onClose }) {
 
   const sheetStyle = isDesktop
     ? { background: "#fff", borderRadius: 14, width: "100%", maxWidth: 460, maxHeight: Math.round(vp.height * 0.78), display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 12px 48px rgba(0,0,0,0.22)" }
-    : { background: "#fff", borderRadius: "18px 18px 0 0", width: "100%", maxHeight: Math.round(vp.height * 0.86), display: "flex", flexDirection: "column", overflow: "hidden" };
+    : { background: "#fff", borderRadius: "18px 18px 0 0", width: "100%", height: Math.round(vp.height * 0.86), display: "flex", flexDirection: "column", overflow: "hidden" };
 
   // Portaled to <body>: inside the invoice form, a position:fixed element is
   // placed relative to the form's transformed, scrolled panel, so on a long
@@ -119,5 +127,8 @@ export default function PriceBook({ items, onSelect, onClose }) {
 
 function readViewport() {
   const vv = window.visualViewport;
+  // Undo Safari panning the page to the search box: the sheet is placed on
+  // the visible area itself.
+  if ((vv && vv.offsetTop > 0) || window.scrollY > 0) window.scrollTo(0, 0);
   return vv ? { top: Math.round(vv.offsetTop), height: Math.round(vv.height) } : { top: 0, height: window.innerHeight };
 }

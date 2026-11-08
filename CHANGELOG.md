@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.57.5 — 2026-11-08
+
+**Fix: AI chat and Price Book placement with the keyboard was hit and miss.** Phones report the keyboard in several ways, and v1.57.4 only handled one. Tested each way from the top, middle and bottom of a long invoice: the old build failed 21 of 50 checks, the new one passes all 50, three runs in a row.
+
+- **The invoice AI chat** only moved into place when the phone announced the keyboard straight away. It now re-measures on every screen change and on a few timers after you tap in, so it also lands right when the keyboard is reported late or not at all, when the app's own screen shrinks for the keyboard, and when Safari shifts the page to the cursor (that shift is undone, so the invoice header stays visible). It jumps into place instead of a smooth scroll, which iOS can cut off while the keyboard slides in.
+- **The Price Book** shrank to fit its results, so with only a few results or none its top dropped to the bottom of the screen. It now keeps a fixed height, so the search box stays near the top whatever the search finds, and it re-measures for the keyboard the same way as the chat.
+- Test: `test/e2e/keyboard.mjs`.
+
 ## v1.57.4 — 2026-11-08
 
 **Fix: Price Book and the invoice AI chat scrolling and position.** Tested at phone size on a long, scrolled invoice, with the keyboard simulated. The old app failed 5 of 8 checks; the new one passes all 8.
