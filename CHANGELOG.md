@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.51.2 — 2026-11-08
+
+- **Fix: every new estimate or invoice was saved twice.** Reproduced in a browser test against a fake database: one new estimate became EST1200 and EST1201 with the same contents. Since v1.38.5 (2026-10-28) the document screen is rebuilt whenever its document changes, and a new document "changes" the moment its first save gives it a number. The screen being replaced then ran its save-on-close, still without a number, and asked for a second one. On poor signal it could be three: a save that started before the first number came back asked for its own. Now the open screen keeps itself when its own new document gets its number, and a save that starts while the number is still on its way waits for it and updates that same document. Nothing typed in the meantime is lost. The extra copies already made are not removed automatically; delete them by hand (the higher number of each pair, same client and contents). Test: `test/e2e/new-doc.mjs` (one document per create, on normal and slow signal).
+
 ## v1.51.1 — 2026-11-06
 
 - **"→ Estimate" on an invoice no longer deletes the invoice.** It now creates an estimate from the invoice and keeps the invoice exactly as it was, with its payments and schedule. The two are linked: the invoice shows "← EST####" and the estimate shows "→ INV####" (status Converted). The estimate reuses the job number when it is free (INV1174 makes EST1174); if that number is taken, for example by a deleted estimate, it gets a fresh number and is still linked. This had deleted the invoice since the button was added on 2026-04-30. The button only appears on an invoice with no live estimate linked or paired by number, which is what happened on INV1174: either it was made as an invoice directly, or EST1174 was deleted. Test: `test/e2e/convert-reverse.mjs`.
