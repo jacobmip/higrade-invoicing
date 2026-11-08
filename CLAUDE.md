@@ -217,7 +217,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 112, which is written but NOT yet applied; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 112; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -423,7 +423,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **111** — **applied and verified 2026-11-08.** `change_orders` table with RLS: admin full access; assigned/commission tech can read, insert (draft/sent only), and update (draft/sent only) on their own jobs — approval only comes through the service role. `sent_email` and `photos` columns present. Dry-run clean; verified: journeyman insert on unassigned job blocked, Jake insert+read-back succeeded (view_token 30 chars, seq 1, status draft), all rolled back. Next migration was 112.
 
-- **112** — **written 2026-11-08, NOT applied.** `invoices.job_started_on` / `job_completed_on` (date, nullable), see the schema entry. No RLS change. Hermes prompt: `docs/hermes-migration-112.md`. Until it is applied the job date fields show "Job dates need database update 112" and `api/public-invoice.js` reads without the two columns.
+- **112** — **applied and verified 2026-11-08.** `invoices.job_started_on` / `job_completed_on` (date, nullable). No RLS change. Dry-run clean; both columns confirmed as type `date` in `information_schema`; Jake update on INV1200 returned `job_completed_on: 2026-11-08`, rolled back. Next migration is 113.
 
 Next migration is `113_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
