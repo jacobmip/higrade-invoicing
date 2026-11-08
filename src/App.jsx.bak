@@ -4010,13 +4010,30 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // would re-point the form at the document we just left and hand the new
   // one a stale lock token. Compare the epoch to know the answer is stale.
   const formEpochRef = useRef(0);
+  // The first save of a new document mints its number. creatingRef holds that
+  // save while it is in flight and createdIdRef the id it got, so a second save
+  // that starts before the first answers (a slow connection, or leaving the
+  // screen) updates the same document instead of minting another number.
+  const creatingRef = useRef(null);
+  const createdIdRef = useRef(null);
   // When the parent swaps in a different invoice/estimate (e.g. after Convert
   // or after the AI creates a new doc), reset the form to the new record so we
   // don't keep editing the previous doc's data — which would otherwise get
   // auto-saved back into the new record's row and clobber its type/fields.
   useEffect(() => {
     if (invoice?.id) {
+      // This form's own new document just received its number (the parent
+      // keeps the form mounted for it). Keep everything typed since, and just
+      // learn the id.
+      if (!autoSavedId && !formRef.current.id && (creatingRef.current || createdIdRef.current === invoice.id)) {
+        createdIdRef.current = invoice.id;
+        setForm(f => (f.id ? f : { ...f, id: invoice.id }));
+        setAutoSavedId(invoice.id);
+        lastNewSeqRef.current = newDocSeq;
+        return;
+      }
       if (invoice.id !== autoSavedId) {
+        createdIdRef.current = null;
         formEpochRef.current += 1;
         setForm({ discountType: "$", ...invoice });
         setAutoSavedId(invoice.id);
@@ -4054,6 +4071,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     formEpochRef.current += 1;
     setForm({ type: defaultType || "invoice", client: "", date: today(), dueDate: defaultType === "estimate" ? "" : today(), status: (defaultType || "invoice") === "estimate" ? "draft" : "outstanding", items: [{ ...blankItem }], tax: TAX_RATE, discount: 0, discountType: "$", notes: "", payments: [], lateFeeWaived: false, showBillingAddress: true, assignedTechId: myId || undefined });
     setAutoSavedId(null);
+    createdIdRef.current = null;
+    creatingRef.current = null;
     updatedAtRef.current = null;
     skipFirstRef.current = true;
     setEditingClient(false);
@@ -4124,7 +4143,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // rewrites what an existing document *is*. Refuse rather than corrupt.
       // A row that is already mismatched (EST0767 and anything else the old
       // bug produced) stays editable, otherwise it could never be repaired.
-      const targetId = autoSavedId || f.id;
+      let targetId = autoSavedId || f.id || createdIdRef.current;
+      if (!targetId && creatingRef.current) {
+        const first = await creatingRef.current.catch(() => null);
+        if (formEpochRef.current !== epoch) return null;
+        targetId = first?.id || createdIdRef.current || null;
+      }
 
       // Invariant: the form's own id must match the row we are about to write.
       //
@@ -4152,13 +4176,18 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           return null;
         }
       }
-      const saved = await onAutoSave({
+      const pending = onAutoSave({
         ...f,
         jobAddress: pickedJob,
         billingAddress: billing,
         id: targetId,
         updatedAt: updatedAtRef.current,
       });
+      if (!targetId) creatingRef.current = pending;
+      let saved;
+      try { saved = await pending; }
+      finally { if (creatingRef.current === pending) creatingRef.current = null; }
+      if (!targetId && saved?.id && formEpochRef.current === epoch) createdIdRef.current = saved.id;
       // The form moved to a different document while this save was in flight.
       // Applying any of it now would drag the new document back onto the old
       // one's id, so keep the save (it landed) and drop the bookkeeping.
@@ -11887,6 +11916,13 @@ export default function App() {
   const [view, setView] = useState("list");
   const [openingDoc, setOpeningDoc] = useState(false);
   const [selected, setSelected] = useState(null);
+  // A new document's first save gives it an id. The form is keyed on the
+  // document id (FormBoundary, v1.38.5), so without this the id arriving
+  // remounted the form, and the old form's save-on-close ran with no id and
+  // minted a second number: every new estimate or invoice was saved twice
+  // (EST1200 and EST1201). autoSaveInvoice records here which id the open
+  // "new" form just received, and the key stays the same for it.
+  const adoptedFormKeyRef = useRef(null);
   const FORM_SLIDE_MS = 300;
   const [formMounted, setFormMounted] = useState(false);
   const [formVisible, setFormVisible] = useState(false);
@@ -13669,6 +13705,8 @@ export default function App() {
     const isEst = form.type === "estimate";
     const { num, id } = await mintDocId(form.type);
     const created = { ...form, id, year };
+    // Keep the open form mounted as this document (see adoptedFormKeyRef).
+    adoptedFormKeyRef.current = { id, key: `new${newDocSeq}` };
     setData(d => ({
       ...d,
       invoices: [created, ...d.invoices],
@@ -13979,7 +14017,14 @@ export default function App() {
 
       {formMounted && (
         <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
-          <FormBoundary key={selected?.id || `new${newDocSeq}`} onClose={() => { setView("list"); setSelected(null); }}>
+          <FormBoundary key={(() => {
+            const id = selected?.id;
+            if (!id) return `new${newDocSeq}`;
+            const a = adoptedFormKeyRef.current;
+            if (a && a.id === id) return a.key;
+            adoptedFormKeyRef.current = null; // a different document: normal key
+            return id;
+          })()} onClose={() => { setView("list"); setSelected(null); }}>
           <InvoiceForm
             invoice={selected}
             defaultType={newDocType}
