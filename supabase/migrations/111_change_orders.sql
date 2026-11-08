@@ -29,6 +29,7 @@ create table if not exists public.change_orders (
   seq            integer not null check (seq > 0),
   items          jsonb not null default '[]'::jsonb,   -- [{name, desc, qty, price, taxable}]
   note           text,                                 -- shown to the customer
+  photos         jsonb not null default '[]'::jsonb,   -- [{url, job_photo_id}]: shown on the page and in the email
   status         text not null default 'draft'
                  check (status in ('draft', 'sent', 'approved', 'declined')),
   view_token     text not null unique check (length(view_token) >= 16),

@@ -30,6 +30,9 @@ async function rest(path, opts = {}) {
 }
 
 export const coLabel = (co) => `${co.invoice_id}-CO${co.seq}`;
+// Only the photo URLs reach the customer: they are public bucket URLs already.
+const photoUrls = (co) => (Array.isArray(co.photos) ? co.photos : [])
+  .filter(p => p && /^https:\/\//.test(p.url || '')).map(p => ({ url: p.url }));
 const money = (n) => '$' + (Math.round(Number(n || 0) * 100) / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 export function coTotals(items, taxPct) {
@@ -55,13 +58,13 @@ async function invoiceFor(id) {
 // ─── The customer's page ────────────────────────────────────────────────────
 
 export async function loadPublicChangeOrder(token) {
-  const rows = await rest(`change_orders?view_token=eq.${encodeURIComponent(token)}&select=id,invoice_id,seq,items,note,status,approved_at,approved_via,approved_name,declined_at&limit=1`);
+  const rows = await rest(`change_orders?view_token=eq.${encodeURIComponent(token)}&select=id,invoice_id,seq,items,note,photos,status,approved_at,approved_via,approved_name,declined_at&limit=1`);
   const co = rows?.[0];
   if (!co || co.status === 'draft') return null;
   const inv = await invoiceFor(co.invoice_id);
   if (!inv || inv.deleted_at) return null;
   return {
-    changeOrder: { ...co, id: undefined, label: coLabel(co), totals: coTotals(co.items, inv.tax) },
+    changeOrder: { ...co, id: undefined, photos: photoUrls(co), label: coLabel(co), totals: coTotals(co.items, inv.tax) },
     job: { invoice_id: inv.id, client_name: inv.client_name, job_address: inv.job_address, tax: inv.tax },
   };
 }
@@ -167,6 +170,7 @@ export function changeOrderText(co, inv) {
     ...lines,
     `Total: ${money(t.total)}${t.tax ? ' incl. tax' : ''}.`,
     co.note ? co.note : null,
+    photoUrls(co).length ? `Photos are on the link below.` : null,
     `Reply YES to approve, or review and sign: ${APP_URL}/co/${co.view_token}`,
   ].filter(Boolean).join('\n');
 }
@@ -210,6 +214,7 @@ export function changeOrderEmail(co, inv) {
             <tr><td style="padding-top:4px;font-size:17px;font-weight:bold;color:#0a1628;">Total</td><td style="padding-top:4px;text-align:right;font-size:17px;font-weight:bold;color:#0a1628;">${money(t.total)}</td></tr>
           </table>
           ${co.note ? `<p style="color:#555;font-size:13px;margin:12px 0 0;white-space:pre-wrap;">${esc(co.note)}</p>` : ''}
+          ${photoUrls(co).length ? `<div style="margin-top:14px;font-size:0;">${photoUrls(co).slice(0, 6).map(p => `<a href="${esc(link)}" target="_blank" style="display:inline-block;width:31%;margin:0 1% 2% 1%;"><img src="${esc(p.url)}" alt="Photo of the work" width="170" style="width:100%;height:auto;border-radius:6px;display:block;"></a>`).join('')}${photoUrls(co).length > 6 ? `<p style="color:#888;font-size:12px;margin:4px 0 0;">${photoUrls(co).length - 6} more on the approval page.</p>` : ''}</div>` : ''}
           <div style="text-align:center;margin:22px 0 6px;">
             <a href="${esc(link)}" target="_blank" style="display:inline-block;background:#E8622A;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold;padding:14px 36px;border-radius:6px;">Review &amp; Approve</a>
             <p style="color:#999;font-size:12px;margin:10px 0 0;">Nothing is due now. Approving adds this work to your invoice.</p>

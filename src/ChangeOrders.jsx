@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
+import { fetchInvoicePhotos, isVideo } from './JobPhotos.jsx';
 
 const NAVY = '#0a1628';
 const ORANGE = '#E8622A';
@@ -65,6 +66,54 @@ const cleanItems = (items) => (items || [])
   .map(i => ({ name: String(i.name || '').trim(), desc: String(i.desc || '').trim(), qty: Number(i.qty) || 1, price: Number(i.price) || 0, taxable: i.taxable !== false }))
   .filter(i => i.name || i.price);
 
+// ─── Photos ─────────────────────────────────────────────────────────────────
+// A change order's photos are [{ url, job_photo_id }]. New ones are uploaded
+// to the job-photos bucket and also filed as a job_photos row on the invoice,
+// so they show in the job's Photos tab too. Picking an existing job photo just
+// references it. Removing one from a change order never deletes the photo.
+const PHOTO_BUCKET = 'job-photos';
+const MAX_CO_PHOTOS = 12;
+
+function resizeToJpegBlob(src, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error('Could not read that image.'));
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const k = maxDim / Math.max(width, height);
+        width = Math.round(width * k); height = Math.round(height * k);
+      }
+      const c = document.createElement('canvas');
+      c.width = width; c.height = height;
+      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      c.toBlob(b => (b ? resolve(b) : reject(new Error('Could not process that image.'))), 'image/jpeg', quality);
+    };
+    if (typeof src === 'string') img.src = src;
+    else { const r = new FileReader(); r.onerror = reject; r.onload = () => { img.src = r.result; }; r.readAsDataURL(src); }
+  });
+}
+
+// file: a File from an input, or a data: URL (the AI chat's photos).
+export async function uploadChangeOrderPhoto(invoiceId, file, seq) {
+  const blob = await resizeToJpegBlob(file);
+  const path = `${invoiceId}/co${seq || ''}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.jpg`;
+  const { error: upErr } = await supabase.storage.from(PHOTO_BUCKET).upload(path, blob, { upsert: false, contentType: 'image/jpeg' });
+  if (upErr) throw new Error('Photo upload failed: ' + upErr.message);
+  const { data: { publicUrl } } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+  const { data: row, error } = await supabase.from('job_photos')
+    .insert({ invoice_id: invoiceId, url: publicUrl, caption: seq ? `Change order ${seq}` : 'Change order', type: 'other' })
+    .select('id').maybeSingle();
+  if (error) console.warn('[change order] job photo row not saved:', error.message);
+  return { url: publicUrl, job_photo_id: row?.id || null };
+}
+
+const cleanPhotos = (photos) => {
+  const seen = new Set();
+  return (photos || []).filter(p => p && p.url && !seen.has(p.url) && seen.add(p.url))
+    .slice(0, MAX_CO_PHOTOS).map(p => ({ url: p.url, job_photo_id: p.job_photo_id || p.id || null }));
+};
+
 // Tell any open ChangeOrdersCard for this invoice to reload (the AI chat
 // creates and sends change orders without going through the card).
 export const announceChangeOrders = (invoiceId) => {
@@ -81,11 +130,12 @@ export async function listChangeOrders(invoiceId) {
 
 // Create (no row) or edit (row) a change order. Only draft or sent ones can
 // change; once the customer answers it is final.
-export async function saveChangeOrder({ row, invoiceId, items, note }) {
+export async function saveChangeOrder({ row, invoiceId, items, note, photos }) {
   const clean = cleanItems(items);
+  const pics = photos === undefined ? undefined : cleanPhotos(photos);
   if (!clean.length) throw new Error('Add at least one line.');
   if (row) {
-    const { data, error } = await supabase.from('change_orders').update({ items: clean, note: (note || '').trim() || null, updated_at: new Date().toISOString() })
+    const { data, error } = await supabase.from('change_orders').update({ items: clean, note: (note || '').trim() || null, ...(pics !== undefined ? { photos: pics } : {}), updated_at: new Date().toISOString() })
       .eq('id', row.id).in('status', ['draft', 'sent']).select().maybeSingle();
     if (error) throw new Error(tableMsg(error.message));
     if (!data) throw new Error('This change order was already answered by the customer.');
@@ -97,7 +147,7 @@ export async function saveChangeOrder({ row, invoiceId, items, note }) {
     if (e0) throw new Error(tableMsg(e0.message));
     const seq = (last?.[0]?.seq || 0) + 1;
     const { data, error } = await supabase.from('change_orders')
-      .insert({ invoice_id: invoiceId, seq, items: clean, note: (note || '').trim() || null, status: 'draft', view_token: newToken() })
+      .insert({ invoice_id: invoiceId, seq, items: clean, note: (note || '').trim() || null, photos: pics || [], status: 'draft', view_token: newToken() })
       .select().single();
     if (!error) { announceChangeOrders(invoiceId); return data; }
     if (!/duplicate|unique/i.test(error.message)) throw new Error(tableMsg(error.message));
@@ -144,7 +194,7 @@ const btnS = (kind) => ({
 
 // ─── In the app ─────────────────────────────────────────────────────────────
 
-export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines }) {
+export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines }) {
   const [list, setList] = useState([]);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState('');
@@ -203,6 +253,7 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, clientEmail, 
               <div style={{ fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>{invoiceId}-CO{c.seq} · {money(t.total)}</div>
               <div style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {(c.items || []).map(i => i.name).filter(Boolean).join(', ') || 'No lines yet'}
+                {(c.photos || []).length ? ` · ${c.photos.length} photo${c.photos.length === 1 ? '' : 's'}` : ''}
                 {c.status === 'approved' && c.approved_at ? ` · ${c.approved_via === 'sms' ? 'texted YES' : 'signed'} ${fmtDate(c.approved_at)}` : ''}
                 {c.status === 'sent' && c.sent_at ? ` · ${[c.sent_email && 'emailed', c.sent_to && 'texted'].filter(Boolean).join(' + ') || 'sent'} ${fmtDate(c.sent_at)}` : ''}
               </div>
@@ -213,17 +264,20 @@ export function ChangeOrdersCard({ invoiceId, taxPct, clientPhone, clientEmail, 
       })}
       {editing && createPortal(
         <ChangeOrderEditor
-          co={editing} invoiceId={invoiceId} taxPct={taxPct} clientPhone={clientPhone} clientEmail={clientEmail}
+          co={editing} invoiceId={invoiceId} linkedIds={linkedIds} taxPct={taxPct} clientPhone={clientPhone} clientEmail={clientEmail}
           onClose={() => { setEditing(null); load(); }}
         />, document.body)}
     </div>
   );
 }
 
-function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, clientEmail, onClose }) {
+function ChangeOrderEditor({ co, invoiceId, linkedIds, taxPct, clientPhone, clientEmail, onClose }) {
   const locked = co.status === 'approved' || co.status === 'declined';
   const [items, setItems] = useState(co.items?.length ? co.items : [{ name: '', desc: '', qty: 1, price: 0, taxable: true }]);
   const [note, setNote] = useState(co.note || '');
+  const [photos, setPhotos] = useState(co.photos || []);
+  const [picking, setPicking] = useState(false);
+  const fileRef = useRef(null);
   const [phone, setPhone] = useState(co.sent_to || clientPhone || '');
   const [email, setEmail] = useState(co.sent_email || clientEmail || '');
   const [viaEmail, setViaEmail] = useState(!!(co.sent_email || clientEmail));
@@ -235,7 +289,7 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, clientEmail, on
   const link = row ? `${window.location.origin}/co/${row.view_token}` : '';
 
   const save = async () => {
-    const data = await saveChangeOrder({ row, invoiceId, items, note });
+    const data = await saveChangeOrder({ row, invoiceId, items, note, photos });
     setRow(data); return data;
   };
 
@@ -260,6 +314,18 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, clientEmail, on
     const { error } = await supabase.from('change_orders').delete().eq('id', row.id).in('status', ['draft', 'sent']);
     if (error) throw error;
     onClose();
+  });
+
+  const addFiles = run('photos', async () => {
+    const files = Array.from(fileRef.current?.files || []).filter(f => /^image\//.test(f.type));
+    if (fileRef.current) fileRef.current.value = '';
+    if (!files.length) return;
+    const room = MAX_CO_PHOTOS - photos.length;
+    if (room <= 0) throw new Error(`Up to ${MAX_CO_PHOTOS} photos per change order.`);
+    const added = [];
+    for (const f of files.slice(0, room)) added.push(await uploadChangeOrderPhoto(invoiceId, f, row?.seq || co.seq));
+    setPhotos(ps => [...ps, ...added]);
+    setMsg(`${added.length} photo${added.length === 1 ? '' : 's'} added. They are also in the job's Photos tab.`);
   });
 
   const setItem = (i, patch) => setItems(xs => xs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -302,6 +368,32 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, clientEmail, on
             </div>
           ))}
           {!locked && <button onClick={() => setItems(xs => [...xs, { name: '', desc: '', qty: 1, price: 0, taxable: true }])} style={{ ...btnS('ghost'), width: '100%' }}>+ Add line</button>}
+          <div style={{ background: '#fff', borderRadius: 10, padding: 12, marginTop: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#6677aa', letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>Photos{photos.length ? ` (${photos.length})` : ''}</div>
+            {photos.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginTop: 8 }}>
+                {photos.map(ph => (
+                  <div key={ph.url} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', background: '#e4e8f0' }}>
+                    <img src={ph.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    {!locked && <button onClick={() => setPhotos(ps => ps.filter(x => x.url !== ph.url))} aria-label="Remove photo from change order"
+                      style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 14, lineHeight: '22px', padding: 0, cursor: 'pointer' }}>×</button>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!locked && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input ref={fileRef} type="file" accept="image/*" multiple onChange={addFiles} style={{ display: 'none' }} />
+                <button onClick={() => fileRef.current?.click()} disabled={!!busy} style={{ ...btnS('ghost'), flex: 1, padding: '9px 8px', fontSize: 13 }}>{busy === 'photos' ? 'Uploading…' : 'Add photos'}</button>
+                <button onClick={() => setPicking(true)} disabled={!!busy} style={{ ...btnS('ghost'), flex: 1, padding: '9px 8px', fontSize: 13 }}>From job photos</button>
+              </div>
+            )}
+            {locked && photos.length === 0 && <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>No photos.</div>}
+          </div>
+          {picking && (
+            <JobPhotoPicker ids={[invoiceId, ...(linkedIds || [])]} chosen={photos} onClose={() => setPicking(false)}
+              onDone={(picked) => { setPhotos(ps => cleanPhotos([...ps, ...picked])); setPicking(false); }} />
+          )}
           <textarea disabled={locked} value={note} onChange={e => setNote(e.target.value)} placeholder="Note to the customer (optional)" rows={2} style={{ ...inputS, marginTop: 10, resize: 'vertical' }} />
           <div style={{ background: '#fff', borderRadius: 10, padding: 12, marginTop: 10, fontSize: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><span>{money(t.subtotal)}</span></div>
@@ -329,6 +421,47 @@ function ChangeOrderEditor({ co, invoiceId, taxPct, clientPhone, clientEmail, on
             </>
           )}
           {msg && <div style={{ fontSize: 13, color: /fail|error|enter|add at least|already|could not|pick |not sent/i.test(msg) ? '#c0392b' : '#1e8449', marginTop: 10 }}>{msg}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Pick photos already on the job (this invoice and its estimate).
+function JobPhotoPicker({ ids, chosen, onClose, onDone }) {
+  const [all, setAll] = useState(null);
+  const [sel, setSel] = useState(() => new Set());
+  const have = new Set((chosen || []).map(p => p.url));
+  useEffect(() => {
+    fetchInvoicePhotos(ids).then(ps => setAll((ps || []).filter(p => !isVideo(p)))).catch(() => setAll([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join(',')]);
+  const toggle = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 3100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', width: '100%', maxWidth: 520, maxHeight: '80vh', borderRadius: '14px 14px 0 0', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '14px 16px', fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Job photos</span>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', fontSize: 24, color: '#888', cursor: 'pointer' }}>×</button>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '0 16px 12px' }}>
+          {all === null && <div style={{ color: '#888', fontSize: 13 }}>Loading…</div>}
+          {all && all.length === 0 && <div style={{ color: '#888', fontSize: 13 }}>No photos on this job yet. Use Add photos instead.</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {(all || []).map(p => {
+              const on = sel.has(p.id), already = have.has(p.url);
+              return (
+                <div key={p.id} onClick={() => !already && toggle(p.id)} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', background: '#e4e8f0', outline: on ? `3px solid ${ORANGE}` : 'none', outlineOffset: -3, opacity: already ? 0.4 : 1, cursor: already ? 'default' : 'pointer' }}>
+                  <img src={p.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  {already && <div style={{ position: 'absolute', bottom: 3, left: 3, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3 }}>ADDED</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ padding: 12, borderTop: '1px solid #eef1f7' }}>
+          <button disabled={!sel.size} onClick={() => onDone((all || []).filter(p => sel.has(p.id)).map(p => ({ url: p.url, job_photo_id: p.id })))}
+            style={{ ...btnS('primary'), width: '100%', opacity: sel.size ? 1 : 0.5 }}>{sel.size ? `Add ${sel.size} photo${sel.size === 1 ? '' : 's'}` : 'Tap photos to add'}</button>
         </div>
       </div>
     </div>
@@ -423,6 +556,19 @@ export function ChangeOrderPage({ token }) {
         </div>
         {co.note && <div style={{ fontSize: 13, color: '#555', marginTop: 10, whiteSpace: 'pre-wrap' }}>{co.note}</div>}
       </div>
+      {(co.photos || []).length > 0 && (
+        <div style={{ background: '#fff', borderRadius: 10, padding: 16, marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Photos</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {co.photos.map(ph => (
+              <a key={ph.url} href={ph.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', background: '#e4e8f0' }}>
+                <img src={ph.url} alt="Photo of the work" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              </a>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: '#888', marginTop: 6 }}>Tap a photo to see it full size.</div>
+        </div>
+      )}
 
       {co.status === 'approved' && (
         <div style={{ background: '#e6f6ec', color: '#1e8449', borderRadius: 10, padding: 16, fontWeight: 600 }}>
@@ -465,7 +611,7 @@ export function changeOrdersPromptBlock(invoiceId, list, taxPct, contact) {
   const rows = (list || []).map(c => {
     const t = coTotals(c.items, taxPct);
     const how = c.status === 'sent' ? ` (${[c.sent_email && 'emailed ' + c.sent_email, c.sent_to && 'texted ' + c.sent_to].filter(Boolean).join(', ')})` : '';
-    return `  CO${c.seq} | ${STATUS[c.status]?.label || c.status}${how} | ${money(t.total)} | ${(c.items || []).map(i => `${i.name} ${money(Number(i.qty ?? 1) * Number(i.price ?? 0))}`).join('; ')}`;
+    return `  CO${c.seq} | ${STATUS[c.status]?.label || c.status}${how} | ${money(t.total)} | ${(c.items || []).map(i => `${i.name} ${money(Number(i.qty ?? 1) * Number(i.price ?? 0))}`).join('; ')}${(c.photos || []).length ? ` | ${c.photos.length} photo(s)` : ''}`;
   }).join('\n');
   return `
 
@@ -482,37 +628,50 @@ Rules:
 - Optional "email" and "phone" fields override the contact on file; include them when Jake gives a different address or number.
 - Prices follow the same pricing rules as line items. Never add change order lines to the invoice yourself: the customer's approval does that.
 - Only draft or sent change orders can be updated or resent; approved and declined ones are final.
+- PHOTOS: any photos Jake attaches to his message are put on the change order automatically (the new one, or the one named by seq). Do not describe them as line items; mention them in the summary only.
 - Plain add_items is still right when Jake just wants a line on the invoice with no customer approval.`;
 }
 
 // Runs one change order action from the AI chat. Returns the text the chat
 // shows: what really happened, never the model's own claim.
-export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, email }) {
+export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, email, photos: chatPhotos }) {
   if (!isInvoice) return 'Change orders go on the invoice. Convert this estimate to an invoice first.';
   if (!invoiceId) return 'Save this invoice first (add a client), then I can make the change order.';
   try {
     const list = await listChangeOrders(invoiceId);
     let row;
+    // Photos Jake attached to this chat message go on the change order.
+    const uploadChat = async (seq) => {
+      const out = [];
+      for (const d of (chatPhotos || []).slice(0, MAX_CO_PHOTOS)) out.push(await uploadChangeOrderPhoto(invoiceId, d, seq));
+      return out;
+    };
+    let photoNote = '';
     if (a.action === 'create_change_order') {
-      row = await saveChangeOrder({ invoiceId, items: a.items, note: a.note });
+      const nextSeq = (list.reduce((m, c) => Math.max(m, c.seq), 0)) + 1;
+      const pics = await uploadChat(nextSeq);
+      row = await saveChangeOrder({ invoiceId, items: a.items, note: a.note, photos: pics });
+      if (pics.length) photoNote = ` with ${pics.length} photo${pics.length === 1 ? '' : 's'}`;
     } else {
       const seq = Number(a.seq) || (list.length ? list[list.length - 1].seq : null);
       row = list.find(c => c.seq === seq);
       if (!row) return `There is no change order ${seq ? `CO${seq} ` : ''}on ${invoiceId}.`;
-      if (a.action === 'update_change_order') {
-        row = await saveChangeOrder({ row, invoiceId, items: a.items?.length ? a.items : row.items, note: a.note ?? row.note });
+      const pics = (chatPhotos || []).length && row.status !== 'approved' && row.status !== 'declined' ? await uploadChat(row.seq) : [];
+      if (a.action === 'update_change_order' || pics.length) {
+        row = await saveChangeOrder({ row, invoiceId, items: a.action === 'update_change_order' && a.items?.length ? a.items : row.items, note: a.action === 'update_change_order' ? (a.note ?? row.note) : row.note, photos: [...(row.photos || []), ...pics] });
       }
+      if (pics.length) photoNote = ` (${pics.length} photo${pics.length === 1 ? '' : 's'} added)`;
     }
     const label = `${invoiceId}-CO${row.seq}`;
     const total = money(coTotals(row.items, a.taxPct).total);
     const mode = a.action === 'update_change_order' && !a.send ? 'none' : (a.send || (a.action === 'send_change_order' ? 'auto' : 'none'));
-    if (mode === 'none') return `${label} ${a.action === 'update_change_order' ? 'updated' : 'saved as a draft'} (${total}). Not sent yet.`;
+    if (mode === 'none') return `${label} ${a.action === 'update_change_order' ? 'updated' : 'saved as a draft'} (${total})${photoNote}. Not sent yet.`;
     const toEmail = (mode === 'email' || mode === 'both' || mode === 'auto') ? (a.email || email || null) : null;
     const toPhone = (mode === 'text' || mode === 'both' || mode === 'auto') ? (a.phone || phone || null) : null;
     if (!toEmail && !toPhone) return `${label} saved (${total}) but not sent: no ${mode === 'text' ? 'mobile number' : mode === 'email' ? 'email address' : 'email or mobile'} on file. Tell me where to send it.`;
     const j = await sendChangeOrderTo({ id: row.id, invoiceId, phone: toPhone, email: toEmail });
     const missing = mode === 'both' && (!toEmail || !toPhone) ? ` No ${!toEmail ? 'email' : 'mobile'} on file, so that part was skipped.` : '';
-    return `${label} (${total}) ${sentSummary(j)}.${missing} It is added to the invoice when the customer approves.`;
+    return `${label} (${total})${photoNote} ${sentSummary(j)}.${missing} It is added to the invoice when the customer approves.`;
   } catch (e) {
     return `Change order not done: ${e.message || e}`;
   }

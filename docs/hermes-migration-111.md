@@ -11,7 +11,7 @@ It creates one new table, public.change_orders, with RLS. It changes nothing tha
      '{"sub":"fbf88c7c-ae9c-4601-af22-d0959d59a040","role":"authenticated"}'):
      inserting a change order on a job NOT assigned to him must be refused with an RLS error,
      and `update change_orders set status = 'approved'` must affect 0 rows or be refused.
-   - Confirm the table has a `sent_email` column (information_schema.columns).
+   - Confirm the table has `sent_email` and `photos` columns (information_schema.columns).
    - As Jake ("sub":"0a3bcefd-6faf-4bae-b43b-cd4492dd9938"): insert a change order on any
      invoice (seq 1, a view_token of 20+ characters) and read it back. Then roll back.
 4. Update higrade-invoicing/CLAUDE.md: change the **111** line from "NOT applied" to

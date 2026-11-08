@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.55.0 — 2026-11-08
+
+- **Photos on change orders.** In the change order screen, "Add photos" takes new pictures (camera or library) and "From job photos" picks ones already on the job, from the invoice or its estimate. New ones also land in the job's Photos tab, labelled with the change order. The customer sees them on the approval page (tap for full size) and in the email (up to 6, the rest on the page); the text says the photos are on the link. In the invoice AI chat, attach photos to your message ("change order for this, send it to them") and they go on the change order it makes. Removing a photo from a change order never deletes it from the job.
+- Migration 111 (still not applied) gains a `photos` column. Tests: server (page gets https URLs only, email shows them, text mentions them), browser scenarios `photos`, `aiphoto`, and `page` now checks the photo shows.
+
 ## v1.54.0 — 2026-11-08
 
 - **Change orders by email.** The change order screen now has Email and Text choices; the customer's email and mobile fill in from the client, and email is picked by default when there is one. The email matches your invoice emails: the lines, the total and a "Review & Approve" button to the same sign page, and it says nothing is due now. Approving still adds the lines to the invoice automatically. Texting YES only works when it was texted. If one channel fails (say texting is switched off) the other still goes, and the screen says which went out.

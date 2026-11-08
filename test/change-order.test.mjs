@@ -115,5 +115,16 @@ failText = false;
 check('both, text fails: email sent, error reported', b.ok && b.sent.email && !b.sent.text && /text:/.test(b.errors.join()));
 check('bad email refused', !(await co.sendChangeOrder({ id: 'co7', email: 'not-an-email' })).ok);
 
+// Photos: page gets URLs only, email shows them, text points to the link.
+const pc = { invoice_id: 'INV1300', seq: 8, status: 'sent', view_token: 'tok_hhhhhhhhhhhhhhhh', items: [{ name: 'W', qty: 1, price: 10 }],
+  photos: [{ url: 'https://fake.supabase.co/storage/v1/object/public/job-photos/INV1300/a.jpg', job_photo_id: 'jp1' }, { url: 'javascript:alert(1)' }] };
+db.change_orders.push({ id: 'co8', ...pc });
+const pub2 = await co.loadPublicChangeOrder('tok_hhhhhhhhhhhhhhhh');
+check('page photos: https only, url only', pub2.changeOrder.photos.length === 1 && Object.keys(pub2.changeOrder.photos[0]).join() === 'url');
+const em2 = co.changeOrderEmail(pc, db.invoices[0]);
+check('email shows the photo', em2.html.includes('job-photos/INV1300/a.jpg') && !em2.html.includes('javascript:'));
+check('text mentions photos', /Photos are on the link/.test(co.changeOrderText(pc, db.invoices[0])));
+check('no photos: text does not mention them', !/Photos are on/.test(co.changeOrderText({ ...pc, photos: [] }, db.invoices[0])));
+
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);

@@ -4,6 +4,8 @@
 //   SCENARIO=page     the customer's /co/<token> page: sign and approve
 //   SCENARIO=email    the editor sends by email (client's email prefilled)
 //   SCENARIO=ai       the invoice AI chat writes a change order and emails + texts it
+//   SCENARIO=photos   add a new photo and pick a job photo on a change order
+//   SCENARIO=aiphoto  the AI chat makes a change order from a message with a photo attached
 //   SCENARIO=aiplain  a plain answer in the invoice AI chat shows (was a crash before v1.54.0)
 // Run: npm run build && npx vite preview --port 4173, then SCENARIO=... node test/e2e/change-order.mjs
 import { createRequire } from 'node:module'; const { chromium } = createRequire(import.meta.url)('playwright');
@@ -33,6 +35,10 @@ db.invoices = [{ id:'INV1300', type:'invoice', client_name:'Test Client', date:'
 db.invoice_items = [{ id:'a2', invoice_id:'INV1300', name:'Water heater', description:'', qty:1, price:1800, unit:'ea', taxable:true, sort_order:0 }];
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
+db.job_photos = [{ id: 'jp1', invoice_id: 'INV1300', url: 'https://cwhgcxxszyvevjpbnnkc.supabase.co/storage/v1/object/public/job-photos/INV1300/old.jpg', type: 'before', created_at: now }];
+const uploads = [];
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFTEMZQkAmb8/wbgYdQcAAAAASUVORK5CYII=', 'base64');
+const fs = await import('node:fs'); fs.writeFileSync('/tmp/claude-0/test-photo.png', PNG);
 db.change_orders = [];
 const apiCalls = [];
 let coState = 'sent';
@@ -68,18 +74,19 @@ await page.route('**/*', async route => {
     }
     if (url.pathname === '/api/ai') {
       aiPrompts.push(b);
-      const text = SCENARIO === 'ai'
+      const text = SCENARIO === 'ai' || SCENARIO === 'aiphoto'
         ? JSON.stringify({ action: 'create_change_order', items: [{ name: 'Replace angle stop', desc: 'Corroded, leaking', qty: 2, price: 95, taxable: true }], note: 'Found behind the vanity', send: 'auto', summary: 'Created and sent CO1' })
         : 'INV1300 has one line: the water heater at $1,800.';
       return json({ content: [{ type: 'text', text }] });
     }
     if (url.pathname === '/api/public-invoice' && url.searchParams.get('co')) {
-      return json({ changeOrder: { seq: 1, label: 'INV1300-CO1', status: coState, items: [{ name: 'Add shutoff valve', desc: '3/4 inch', qty: 1, price: 150 }], note: 'Found during repair', totals: { subtotal: 150, tax: 7.07, total: 157.07 }, approved_at: coState === 'approved' ? new Date().toISOString() : null, approved_name: 'Pat Customer' },
+      return json({ changeOrder: { seq: 1, label: 'INV1300-CO1', status: coState, photos: [{ url: 'https://cwhgcxxszyvevjpbnnkc.supabase.co/storage/v1/object/public/job-photos/INV1300/old.jpg' }], items: [{ name: 'Add shutoff valve', desc: '3/4 inch', qty: 1, price: 150 }], note: 'Found during repair', totals: { subtotal: 150, tax: 7.07, total: 157.07 }, approved_at: coState === 'approved' ? new Date().toISOString() : null, approved_name: 'Pat Customer' },
         job: { invoice_id: 'INV1300', client_name: 'Test Client', job_address: { line1: '1 Main St', city: 'Honolulu' }, tax: 4.712 } });
     }
     if (url.pathname === '/api/submit-signature' && b?.coToken) { coState = 'approved'; return json({ ok: true, label: 'INV1300-CO1' }); }
     return json({});
   }
+  if (url.pathname.startsWith('/storage/v1/object/job-photos/')) { uploads.push(url.pathname); return json({ Key: url.pathname }); }
   if (url.pathname.startsWith('/auth/v1/user')) return json(user);
   if (url.pathname.startsWith('/auth/v1/')) return json(session);
   if (url.pathname.startsWith('/realtime')) return route.abort();
@@ -103,10 +110,12 @@ await page.route('**/*', async route => {
     if (idEq && idEq.startsWith('eq.')) rows = rows.filter(r => r.id === idEq.slice(3));
     const invEq = url.searchParams.get('invoice_id');
     if (invEq && invEq.startsWith('eq.')) rows = rows.filter(r => r.invoice_id === invEq.slice(3));
+    if (invEq && invEq.startsWith('in.(')) { const ids = invEq.slice(4, -1).split(','); rows = rows.filter(r => ids.includes(r.invoice_id)); }
     if (table === 'invoices' && /invoice_items/.test(url.searchParams.get('select') || '')) rows = rows.map(r => ({ ...r, invoice_items: db.invoice_items.filter(i => i.invoice_id === r.id), payments: [] }));
     if (single) return rows[0] ? json(rows[0]) : json({ code:'PGRST116', message:'none' }, 406);
     return route.fulfill({ status:200, contentType:'application/json', headers:{ 'content-range': `0-${Math.max(rows.length-1,0)}/${rows.length}` }, body: JSON.stringify(rows) });
   }
+  if (table === 'job_photos' && m === 'POST') { const b = JSON.parse(req.postData()); const row = { id: 'jp' + (db.job_photos.length + 1), created_at: new Date().toISOString(), ...b }; db.job_photos.push(row); return json(single ? row : [row], 201); }
   if (table === 'change_orders') {
     const b = req.postData() ? JSON.parse(req.postData()) : {};
     if (m === 'POST') { const row = { id: 'co' + (db.change_orders.length + 1), created_at: new Date().toISOString(), ...b }; db.change_orders.push(row); return json(single ? row : [row], 201); }
@@ -120,6 +129,7 @@ if (SCENARIO === 'page') {
   await page.goto(BASE + '/co/tok_aaaaaaaaaaaaaaaaaaaa');
   await page.waitForTimeout(2000);
   log('page shows total:', (await page.getByText('$157.07').count()) > 0 ? 'PASS' : 'FAIL');
+  log('page shows the photo:', (await page.locator('img[alt="Photo of the work"]').count()) === 1 ? 'PASS' : 'FAIL');
   await page.getByPlaceholder('Your full name').fill('Pat Customer');
   const box = await page.locator('canvas').boundingBox();
   await page.mouse.move(box.x + 30, box.y + 40); await page.mouse.down(); await page.mouse.move(box.x + 160, box.y + 90, { steps: 8 }); await page.mouse.up();
@@ -172,10 +182,33 @@ if (SCENARIO === 'page') {
     log('sent by email only:', call && call.body.email === 'pat@example.com' && !call.body.to ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
     log('result shown:', (await page.getByText(/emailed to pat@example.com/).count()) > 0 ? 'PASS' : 'FAIL');
   }
-  if (SCENARIO === 'ai' || SCENARIO === 'aiplain') {
+  if (SCENARIO === 'photos') {
+    await page.getByRole('button', { name: '+ Change order' }).click();
+    await page.waitForTimeout(600);
+    await page.getByPlaceholder(/Work to add/).fill('Add shutoff valve');
+    await page.locator('input[type=number]').last().fill('150');
+    await page.locator('input[type=file][accept="image/*"]').last().setInputFiles('/tmp/claude-0/test-photo.png');
+    await page.waitForTimeout(2000);
+    log('new photo uploaded and filed as a job photo:', uploads.length === 1 && db.job_photos.some(p => /Change order 1/.test(p.caption || '')) ? 'PASS' : 'FAIL ' + JSON.stringify(uploads));
+    await page.getByRole('button', { name: 'From job photos' }).click();
+    await page.waitForTimeout(1200);
+    await page.locator('img[src*="old.jpg"]').last().click();
+    await page.getByRole('button', { name: 'Add 1 photo' }).click();
+    await page.waitForTimeout(400);
+    if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
+    await page.getByRole('button', { name: 'Save draft' }).click();
+    await page.waitForTimeout(1500);
+    const co = db.change_orders[0];
+    log('change order saved with both photos:', co && co.photos.length === 2 && co.photos.some(p => /old\.jpg$/.test(p.url) && p.job_photo_id === 'jp1') && co.photos.some(p => /\/co1_/.test(p.url)) ? 'PASS' : 'FAIL ' + JSON.stringify(co?.photos));
+  }
+  if (SCENARIO === 'ai' || SCENARIO === 'aiplain' || SCENARIO === 'aiphoto') {
     await page.getByRole('button', { name: 'AI', exact: true }).first().click();
     await page.waitForTimeout(800);
     const box = page.locator('[aria-label="Job description"]');
+    if (SCENARIO === 'aiphoto') {
+      const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('[aria-label="Attach photos"]').last().click()]);
+      await chooser.setFiles('/tmp/claude-0/test-photo.png'); await page.waitForTimeout(1000);
+    }
     await box.click();
     await page.keyboard.type(SCENARIO === 'ai' ? 'Change order for two angle stops at 95 each, send it to them' : 'What is on this invoice?');
     await box.locator('xpath=following-sibling::button').last().click().catch(async () => { await page.keyboard.press('Enter'); });
@@ -189,9 +222,13 @@ if (SCENARIO === 'page') {
       log('change order saved from chat:', co && co.items[0].name === 'Replace angle stop' && co.items[0].qty === 2 && co.note === 'Found behind the vanity' ? 'PASS' : 'FAIL ' + JSON.stringify(co));
       const call = apiCalls.find(c => c.body?.op === 'send_change_order');
       log('auto = email + text:', call && call.body.email === 'pat@example.com' && call.body.to === '8085551234' ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
-      log('chat reports the real result:', (await page.getByText(/INV1300-CO1 \(\$198\.95\) emailed to pat@example\.com and texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
+      log('chat reports the real result:', (await page.getByText(/INV1300-CO1 \(\$198\.95\)(?: with \d+ photos?)? emailed to pat@example\.com and texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
       log('invoice lines untouched:', !saves.some(x => x.items.some(i => /angle stop/i.test(i))) ? 'PASS' : 'FAIL');
       log('card refreshed:', (await page.getByText(/INV1300-CO1 · \$198\.95/).count()) > 0 ? 'PASS' : 'FAIL');
+      if (SCENARIO === 'aiphoto') {
+        log('chat photo put on the change order:', co.photos?.length === 1 && uploads.length === 1 ? 'PASS' : 'FAIL ' + JSON.stringify(co.photos));
+        log('chat says so:', (await page.getByText(/with 1 photo/).count()) > 0 ? 'PASS' : 'FAIL');
+      }
     }
   }
   if (SCENARIO === 'landed') {
