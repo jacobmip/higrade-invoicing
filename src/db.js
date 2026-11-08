@@ -77,6 +77,9 @@ function toInvoice(row, items = [], payments = []) {
     // from settings.default_apprentice_id. Never written back by a save.
     apprenticeId: row.apprentice_id || null,
     deletedAt: row.deleted_at || null,
+    // When the row was made. src/docLinks.js syncs a linked estimate/invoice
+    // pair only when it was made on or after its cutoff.
+    createdAt: row.created_at || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)

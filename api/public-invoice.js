@@ -98,10 +98,21 @@ export default async function handler(req, res) {
     const inv = invRows && invRows[0];
     if (!inv) return send(res, 404, { error: 'not_found' });
 
+    // A job's estimate and invoice share their photos (src/docLinks.js): the
+    // conversion link in either direction. Ids are EST/INV numbers, so they
+    // are safe inside the in.() list.
+    const photoIds = new Set([inv.id]);
+    if (inv.converted_to_id) photoIds.add(inv.converted_to_id);
+    try {
+      const lr = await fetch(`${base}/rest/v1/invoices?converted_to_id=eq.${encodeURIComponent(inv.id)}&deleted_at=is.null&select=id`, { headers });
+      if (lr.ok) for (const r of await lr.json()) if (r?.id) photoIds.add(r.id);
+    } catch { /* photos of this document alone */ }
+    const inList = [...photoIds].filter(id => /^[A-Za-z0-9_-]+$/.test(id)).join(',');
+
     const [itemsRes, paymentsRes, photosRes] = await Promise.all([
       fetch(`${base}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(inv.id)}&order=sort_order`, { headers }),
       fetch(`${base}/rest/v1/payments?invoice_id=eq.${encodeURIComponent(inv.id)}&order=date`, { headers }),
-      fetch(`${base}/rest/v1/job_photos?invoice_id=eq.${encodeURIComponent(inv.id)}&order=created_at`, { headers }),
+      fetch(`${base}/rest/v1/job_photos?invoice_id=in.(${inList})&order=created_at`, { headers }),
     ]);
     const items = itemsRes.ok ? await itemsRes.json() : [];
     const payments = paymentsRes.ok ? await paymentsRes.json() : [];

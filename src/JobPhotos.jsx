@@ -21,18 +21,25 @@ const TYPE_COLORS = {
 // covers a video someone filed under before/after/other.
 export const isVideo = (p) => p?.type === 'video' || /\.(mov|mp4|m4v|3gp|3g2|webm)(\?|$)/i.test(p?.url || '');
 
+// Accepts one document id or several: a job's estimate and invoice share
+// their photos (src/docLinks.js), so callers pass both ids.
 export async function fetchInvoicePhotos(invoiceId) {
-  if (!invoiceId) return [];
+  const ids = (Array.isArray(invoiceId) ? invoiceId : [invoiceId]).filter(Boolean);
+  if (!ids.length) return [];
   const { data, error } = await supabase
     .from('job_photos')
     .select('*')
-    .eq('invoice_id', invoiceId)
+    .in('invoice_id', ids)
     .order('created_at', { ascending: true });
   if (error) console.warn('[fetchInvoicePhotos]', error.message);
   return data || [];
 }
 
-export default function JobPhotos({ invoiceId }) {
+// linkedIds: the job's other documents (estimate <-> invoice). Their photos
+// show here too, tagged with the document they were added to; new uploads go
+// on this document.
+export default function JobPhotos({ invoiceId, linkedIds = [] }) {
+  const linkedKey = (linkedIds || []).join(',');
   const [photos, setPhotos]                 = useState([]);
   const [loading, setLoading]               = useState(true);
   const [uploading, setUploading]           = useState(false);
@@ -53,7 +60,8 @@ export default function JobPhotos({ invoiceId }) {
   useEffect(() => {
     if (!invoiceId) return;
     fetchPhotos();
-  }, [invoiceId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceId, linkedKey]);
 
   async function fetchPhotos() {
     setLoading(true);
@@ -61,7 +69,7 @@ export default function JobPhotos({ invoiceId }) {
     const { data, error: err } = await supabase
       .from('job_photos')
       .select('*')
-      .eq('invoice_id', invoiceId)
+      .in('invoice_id', [invoiceId, ...(linkedIds || [])].filter(Boolean))
       .order('created_at', { ascending: true });
     if (err) {
       setError(err.message);
@@ -353,6 +361,18 @@ export default function JobPhotos({ invoiceId }) {
                     textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif",
                   }}>
                     {photo.type}
+                  </div>
+                )}
+
+                {/* Added on the job's other document (estimate or invoice). */}
+                {!selectMode && photo.invoice_id && photo.invoice_id !== invoiceId && (
+                  <div style={{
+                    position: 'absolute', left: 5, bottom: 5,
+                    background: 'rgba(10,22,40,0.75)', color: '#fff', fontSize: 9, fontWeight: 700,
+                    letterSpacing: 0.5, padding: '2px 5px', borderRadius: 4,
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                  }}>
+                    {photo.invoice_id}
                   </div>
                 )}
 

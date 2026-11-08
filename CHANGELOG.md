@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.52.0 — 2026-11-08
+
+- **A job's estimate and invoice are now linked.**
+  - **Photos:** each document shows the photos from both. A photo added on the other document carries a small tag with that document's number (for example EST1300). New photos go on the document you are in. The PDF and the customer link include the photos from both documents.
+  - **History:** each document's History tab shows the other document's activity and saved versions, marked with its number. Restoring a version from the other document brings back only its line items, notes, tax and discount; this document keeps its own number and type.
+  - **Line items, customer notes, internal notes, tax and discount** stay the same on both. Every save of one document copies them to the other, read fresh from the database first, so the other document's payments, status, dates, signature, schedule and customer link are left as they are. This applies to estimate and invoice pairs made from this release on: an older pair whose invoice has change orders is never overwritten by its original estimate. A down-payment invoice keeps its own deposit line and is not synced.
+  - The copy happens when you save in the app. A change made by Lani, Lisa or a script on one document is copied the next time either document is saved in the app.
+- Test: `test/e2e/link-sync.mjs` (photo shown on both, note copied on a new pair, older pair untouched).
+
 ## v1.51.2 — 2026-11-08
 
 - **Fix: every new estimate or invoice was saved twice.** Reproduced in a browser test against a fake database: one new estimate became EST1200 and EST1201 with the same contents. Since v1.38.5 (2026-10-28) the document screen is rebuilt whenever its document changes, and a new document "changes" the moment its first save gives it a number. The screen being replaced then ran its save-on-close, still without a number, and asked for a second one. On poor signal it could be three: a save that started before the first number came back asked for its own. Now the open screen keeps itself when its own new document gets its number, and a save that starts while the number is still on its way waits for it and updates that same document. Nothing typed in the meantime is lost. The extra copies already made are not removed automatically; delete them by hand (the higher number of each pair, same client and contents). Test: `test/e2e/new-doc.mjs` (one document per create, on normal and slow signal).
