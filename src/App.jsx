@@ -16,8 +16,8 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
-import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction } from './ChangeOrders.jsx';
-import SendDraftCard from './SendDraftCard.jsx';
+import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals } from './ChangeOrders.jsx';
+import SendDraftCard, { ChangeOrderSendSheet } from './SendDraftCard.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
@@ -1033,6 +1033,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         if (coList) invoiceContext += changeOrdersPromptBlock(coInvoiceId, coList, currentInvoice.tax, coContact);
       } else if (currentInvoice?.type === "estimate" && !readOnly) {
         invoiceContext += "\n\nThis is an ESTIMATE. Change orders only exist on invoices: if Jake asks for one, tell him to convert the estimate first (do not emit a change order action).";
+      }
+      if (currentInvoice?.coModeSeq && !readOnly) {
+        invoiceContext += `\n\nCHANGE ORDER MODE IS ON: Jake is building change order ${currentInvoice.coModeSeq} on this invoice. The "Line items" listed above are THAT CHANGE ORDER's lines, not the invoice's. Use add_items / update_item / remove_item to build it (they change the change order, never the invoice). Do NOT use create_change_order now. When Jake says to send it, use send_change_order with seq ${currentInvoice.coModeSeq}.`;
       }
       if (readOnly) invoiceContext += "\n\nREAD-ONLY MODE: the person asking is an apprentice who cannot change anything. Answer questions about this job and how to do the work. Do NOT emit action JSON and do not offer to edit, create or schedule anything.";
       const systemPrompt = systemBase ? systemBase + invoiceContext : null;
@@ -2960,6 +2963,9 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
               {m.card?.type === "batch_created" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", border: "1.5px solid #b8f0d0" }}>{m.card.invoices.map((inv, j) => <div key={j} onClick={() => onOpenDoc?.(inv)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", cursor: "pointer", borderBottom: j < m.card.invoices.length - 1 ? "1px solid #d4f5e4" : "none" }}><Icon name="check" size={13} color="#27ae60" /><span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#27ae60", flex: 1 }}>{inv.id} · {inv.type === "estimate" ? "Estimate" : "Invoice"}</span><span style={{ fontSize: 12, color: "#27ae60", fontWeight: 700 }}>{fmt(calcTotals(inv).total)}</span><span style={{ fontSize: 10, color: "#27ae60" }}>Open →</span></div>)}</div>}
               {m.card?.type === "added" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}><Icon name="check" size={16} color="#27ae60" /><div style={{ fontSize: 13, fontWeight: 600, color: "#27ae60" }}>{m.card.count} item{m.card.count !== 1 ? "s" : ""} added to {m.card.invoiceId}</div></div>}
               {m.card?.type === "saved_item" && <div style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff" }}><Icon name="items" size={15} color="#2980b9" /><div><div style={{ fontSize: 13, fontWeight: 700, color: "#2980b9" }}>{m.card.item?.name}</div><div style={{ fontSize: 12, color: "#555" }}>{fmt(m.card.item?.price)} saved to My Items</div></div></div>}
+              {m.card?.type === "co_draft" && <SendDraftCard draft={m.card.draft}
+                onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, draft: { ...x.card.draft, ...patch } } } : x))}
+                sendSms={async () => { throw new Error('not used'); }} />}
               {m.card?.type === "confirm_sms" && <SendDraftCard draft={{ kind: "sms", phone: m.card.phone, message: m.card.message, invoiceId: m.card.invoiceId, status: m.card.status || "draft", result: m.card.result }}
                 onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, ...patch } } : x))}
                 sendSms={({ phone, message, invoiceId }) => sendLisaText({ phone, message, invoice: invoiceId ? data.invoices.find(x => x.id === invoiceId) : null })} />}
@@ -3865,6 +3871,21 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const [showPayment, setShowPayment] = useState(false);
   const [editingPayment, setEditingPayment] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
+  // ── Change-order mode (v1.57.0) ──────────────────────────────────────────
+  // While on, the Line Items section shows the change order's lines instead
+  // of the invoice's, and +, Price Book, the line editor and the AI chat all
+  // add to and edit those. The change order row is saved as a draft as you go
+  // (nothing reaches the customer until Review & send -> Send).
+  const [coMode, setCoMode] = useState(null); // { seq, items, note, photos, status }
+  const [coEditing, setCoEditing] = useState(null);
+  const [coSheet, setCoSheet] = useState(false);
+  const [coSaveState, setCoSaveState] = useState('');
+  const coModeRef = useRef(null);
+  coModeRef.current = coMode;
+  const coRowRef = useRef(null);
+  const coChainRef = useRef(Promise.resolve());
+  const coTimerRef = useRef(null);
+  const coSentRef = useRef(false);
   const [reordering, setReordering] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
   const [emailStatus, setEmailStatus] = useState("");
@@ -4364,7 +4385,56 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   };
   const moveItem = (from, to) => setForm(f => { const items = [...f.items]; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...f, items }; });
 
+  const coMeaningful = (it) => !!(String(it.name || '').trim() || String(it.desc || '').trim() || Number(it.price));
+  const coSetItems = (fn) => setCoMode(m => (m ? { ...m, items: fn(m.items) } : m));
+  // Saves run one after another so the first save's new row is the one every
+  // later save updates (two rows for one change order otherwise).
+  const coSaveNow = () => {
+    if (coTimerRef.current) { clearTimeout(coTimerRef.current); coTimerRef.current = null; }
+    coChainRef.current = coChainRef.current.then(async () => {
+      const m = coModeRef.current;
+      const invId = formRef.current.id || autoSavedId;
+      if (!m || !invId || !m.items.some(coMeaningful)) return;
+      setCoSaveState('saving');
+      try {
+        const r = await saveChangeOrder({ row: coRowRef.current, invoiceId: invId, items: m.items.filter(coMeaningful), note: m.note, photos: m.photos });
+        coRowRef.current = r;
+        setCoMode(x => (x ? { ...x, seq: r.seq, status: r.status } : x));
+        setCoSaveState('saved');
+      } catch (e) { setCoSaveState('error: ' + (e.message || e)); }
+    });
+    return coChainRef.current;
+  };
+  useEffect(() => {
+    if (!coMode) return;
+    if (coTimerRef.current) clearTimeout(coTimerRef.current);
+    coTimerRef.current = setTimeout(() => { coTimerRef.current = null; coSaveNow(); }, 900);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(coMode?.items || null)]);
+  // Leaving the screen mid-edit still saves the change order.
+  useEffect(() => () => { if (coTimerRef.current) coSaveNow(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const startChangeOrder = async (row) => {
+    const invId = form.id || autoSavedId;
+    if (!invId) return;
+    let seq = row?.seq;
+    if (!row) {
+      try { const list = await listChangeOrders(invId); seq = list.reduce((mx, c) => Math.max(mx, c.seq), 0) + 1; }
+      catch (e) { alert(e.message || String(e)); return; }
+    }
+    coRowRef.current = row || null;
+    setCoSaveState(row ? 'saved' : '');
+    setShowPriceBook(false); setReordering(false); setEditingItem(null);
+    setCoMode({ seq, status: row?.status || 'draft', items: row ? (row.items || []).map(it => ({ ...blankItem, ...it })) : [], note: row?.note || '', photos: row?.photos || [] });
+    setTimeout(() => aiSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+  const finishChangeOrder = async () => { await coSaveNow(); setCoMode(null); setCoEditing(null); };
+
   const handleAddFromAI = (items, notes) => {
+    if (coModeRef.current) {
+      coSetItems(xs => [...xs.filter(coMeaningful), ...items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty ?? 1, price: it.price ?? 0, ...(typeof it.taxable === "boolean" ? { taxable: it.taxable } : {}) }))]);
+      setShowAI(false);
+      return;
+    }
     const build = (f) => ({ ...f, items: [...f.items.filter(it => it.name || it.desc || it.price), ...items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty, price: it.price }))], notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes });
     setForm(build);
     if (items.length) snapshotEvent('line_item_added', "Line item added", build(formRef.current));
@@ -4376,6 +4446,22 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const handleLocalAIAction = async (action) => {
     const a = action || {};
     const validStatus = (s) => ["outstanding", "paid", "partial", "net30"].includes(s);
+    // In change-order mode the AI's line edits go to the change order.
+    if (coModeRef.current && (a.action === "remove_item" || a.action === "update_item")) {
+      const idx = (a.itemIndex || 0) - 1;
+      if (idx < 0) return false;
+      if (a.action === "remove_item") { coSetItems(xs => xs.filter((_, i) => i !== idx)); return true; }
+      const c = a.changes || {};
+      coSetItems(xs => xs.map((it, i) => i === idx ? {
+        ...it,
+        ...(typeof c.name === "string" ? { name: c.name } : {}),
+        ...(typeof c.desc === "string" ? { desc: c.desc } : {}),
+        ...(typeof c.qty === "number" ? { qty: c.qty } : {}),
+        ...(typeof c.price === "number" ? { price: c.price } : {}),
+        ...(typeof c.taxable === "boolean" ? { taxable: c.taxable } : {}),
+      } : it));
+      return true;
+    }
     switch (a.action) {
       // Email this document: open the normal send screen, which shows the
       // email and recipients and sends only on Jake's tap (v1.56.0).
@@ -5010,6 +5096,33 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} defaultMinutes={parseInt(data?.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { const updated = { ...form, signatureData: sigData, signedAt: new Date().toISOString(), status: "approved" }; setForm(updated); setShowSignature(false); onPartialSave?.(updated); }} />}
+      {coMode && coEditing !== null && coMode.items[coEditing] && (
+        <ItemModal
+          item={coMode.items[coEditing]}
+          onSave={(updated) => coSetItems(xs => xs.map((it, j) => j === coEditing ? updated : it))}
+          onClose={() => setCoEditing(null)}
+          onDelete={() => { coSetItems(xs => xs.filter((_, j) => j !== coEditing)); setCoEditing(null); }}
+          onSaveToLibrary={onSaveItem}
+        />
+      )}
+      {coSheet && coMode && (
+        <ChangeOrderSendSheet
+          invoiceId={form.id || autoSavedId}
+          linkedIds={linkedIds}
+          row={coRowRef.current}
+          items={coMode.items.filter(coMeaningful)}
+          taxPct={form.tax}
+          phone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
+          email={selectedClient?.email || effectiveClientInfo?.email || ""}
+          onSaved={(r) => { coRowRef.current = r; setCoMode(m => (m ? { ...m, seq: r.seq, note: r.note || '', photos: r.photos || [] } : m)); }}
+          onSent={() => { coSentRef.current = true; }}
+          onClose={() => {
+            setCoSheet(false);
+            // Sent: the change order is done, back to the invoice's own lines.
+            if (coSentRef.current) { coSentRef.current = false; setCoMode(null); setCoEditing(null); }
+          }}
+        />
+      )}
       {editingItem !== null && (
         <ItemModal
           item={form.items[editingItem]}
@@ -5023,6 +5136,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         <PriceBook
           items={savedItems}
           onSelect={item => {
+            if (coModeRef.current) {
+              coSetItems(xs => [...xs.filter(coMeaningful), { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }]);
+              setShowPriceBook(false);
+              return;
+            }
             const add = (f) => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] });
             setForm(add);
             snapshotEvent('line_item_added', "Line item added", add(formRef.current));
@@ -5380,6 +5498,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
                 clientEmail={selectedClient?.email || effectiveClientInfo?.email || ""}
                 loadedUpdatedAt={loadedUpdatedAtRef.current}
+                onBuild={startChangeOrder}
+                building={!!coMode}
                 onApprovedLines={(lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
               />
             </div>
@@ -5523,7 +5643,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {/* Line Items */}
           <div ref={aiSectionRef} style={{ padding: "16px 16px 0" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>Line Items</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: coMode ? ORANGE : "#6677aa", letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 }}>{coMode ? `Change order ${coMode.seq}` : "Line Items"}</span>
               <div style={{ display: "flex", gap: 6, overflowX: "auto", flexShrink: 1, minWidth: 0 }}>
                 <button onClick={() => { setReordering(!reordering); setShowAI(false); setShowPriceBook(false); }} style={{ ...S.btn(reordering ? "primary" : "ghost"), fontSize: 11, padding: "5px 9px", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
                   <Icon name="grip" size={12} color={reordering ? "#fff" : "#444"} />{reordering ? "Done" : "Reorder"}
@@ -5541,15 +5661,52 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     aiInputRef.current?.focus();
                   }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
                   <button onClick={() => { setShowPriceBook(!showPriceBook); setShowAI(false); }} style={{ ...S.btn(showPriceBook ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Price Book</button>
-                  <button onClick={() => addItem()} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
+                  <button onClick={() => (coMode ? coSetItems(xs => [...xs, { ...blankItem }]) : addItem())} aria-label={coMode ? "Add change order line" : "Add line item"} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
                 </>}
               </div>
             </div>
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} /></div>}
+            {coMode && (
+              <div style={{ background: "#fff4ec", border: `1.5px solid ${ORANGE}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Building change order {coMode.seq}{coMode.status === "sent" ? " (already sent: changes show on the customer's link)" : ""}</div>
+                <div style={{ fontSize: 12, color: "#555", marginTop: 3, lineHeight: 1.45 }}>
+                  Lines you add now with +, Price Book or AI go on the change order, not the invoice. The customer approves them first, then they are added to this invoice.
+                  {" "}{(() => { const n = form.items.filter(it => it.name || it.desc || it.price).length; return n === 1 ? "The invoice's own line is hidden until you tap Done for now." : `The invoice's own ${n} lines are hidden until you tap Done for now.`; })()}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{fmt(coTotals(coMode.items.filter(coMeaningful), form.tax).total)}</span>
+                  <span style={{ fontSize: 11, color: /^error/.test(coSaveState) ? "#c0392b" : "#888", flex: 1, textAlign: "right" }}>{coSaveState === "saving" ? "Saving draft…" : coSaveState === "saved" ? "Draft saved" : /^error/.test(coSaveState) ? coSaveState.replace(/^error: /, "Not saved: ") : ""}</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button onClick={finishChangeOrder} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13, padding: "8px 0" }}>Done for now</button>
+                  <button onClick={async () => { await coSaveNow(); setCoSheet(true); }} disabled={!coMode.items.some(coMeaningful)} style={{ ...S.btn("primary"), flex: 2, fontSize: 13, padding: "8px 0", opacity: coMode.items.some(coMeaningful) ? 1 : 0.5 }}>Review &amp; send</button>
+                </div>
+              </div>
+            )}
+
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq } : form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} /></div>}
+
+            {coMode && coMode.items.length === 0 && (
+              <div style={{ fontSize: 13, color: "#999", padding: "8px 2px 12px" }}>No change order lines yet. Tap +, Price Book or AI.</div>
+            )}
+            {coMode && coMode.items.map((item, i) => (
+              <LineItemRow
+                key={"co" + i}
+                item={item}
+                i={i}
+                reordering={reordering}
+                dragIdx={dragIdx}
+                setDragIdx={setDragIdx}
+                setEditingItem={setCoEditing}
+                moveItem={(from, to) => coSetItems(xs => { const ys = [...xs]; const [m] = ys.splice(from, 1); ys.splice(to, 0, m); return ys; })}
+                removeItem={(idx) => coSetItems(xs => xs.filter((_, j) => j !== idx))}
+                descPreview={item.desc?.replace(/\n/g, " · ") || ""}
+                itemsLength={coMode.items.length}
+              />
+            ))}
 
             {/* Item rows */}
-            {form.items.map((item, i) => {
+            {!coMode && form.items.map((item, i) => {
               const descPreview = item.desc?.replace(/\n/g, " · ") || "";
               return (
                 <LineItemRow

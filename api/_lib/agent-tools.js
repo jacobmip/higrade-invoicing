@@ -461,6 +461,26 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'draft_change_order',
+    description:
+      "Make a change order on an INVOICE: extra work the customer must approve before it is added to the invoice. Saves it as a draft (it appears on the invoice's Change orders card). " +
+      "With send set to email, text, both or auto, Jake is shown the exact email and text as a draft card and it goes out only when he taps Send; never say it was sent. " +
+      "Use this, not add_line_items, when Jake says change order, needs the customer's approval, or send them the extra work to approve. Estimates cannot have change orders. " +
+      "Price lines the same way as any line item.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        document_id: { type: 'string', description: 'The invoice, e.g. INV1300.' },
+        items: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, desc: { type: 'string' }, qty: { type: 'number' }, price: { type: 'number' }, taxable: { type: 'boolean' } }, required: ['name', 'price'] } },
+        note: { type: 'string', description: 'Optional note to the customer.' },
+        send: { type: 'string', enum: ['none', 'email', 'text', 'both', 'auto'], description: "'none' saves a draft only. Otherwise a send draft is shown for Jake to approve." },
+        email: { type: 'string', description: 'Optional: send to this email instead of the one on file.' },
+        phone: { type: 'string', description: 'Optional: text this number instead of the one on file.' },
+      },
+      required: ['document_id', 'items'],
+    },
+  },
+  {
     name: 'send_sms',
     description:
       "Draft a text message to a customer from Lisa's Twilio number. Jake sees the draft, can edit it, and it is sent only when he taps Send; then it is logged in that client's Messages thread. " +

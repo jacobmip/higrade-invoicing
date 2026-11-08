@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.57.0 — 2026-11-08
+
+- **Change orders are now built right on the invoice, with the same tools as the invoice.** Tap "+ Change order" on the invoice (or tap a draft or sent one on the card). The Line Items section turns orange and shows "Change order 1". The usual +, Price Book, line editor and AI chat now add to and edit the change order instead of the invoice. The invoice's own lines are hidden until you tap "Done for now". The change order is saved as a draft as you go. "Review & send" shows the lines, lets you add photos and a note, then shows the exact email and text; it goes out only when you tap Send, and the screen then shows what was sent. Approved and declined change orders still open read-only from the card.
+- **Fix: the AI said it "drafted" a change order and nothing was there.** Two causes. The invoice AI chat's check for "claimed to do something without doing it" did not recognise the word "drafted", so the empty claim went through; it now catches it and makes the AI actually do it. The header AI had no way to make a change order at all; it now can (`draft_change_order`), with the same draft-before-send card.
+- Tests: `test/e2e/change-order.mjs` scenarios `mode` (Price Book line goes on the change order, invoice untouched, review, send), `modeai` (the AI adds to the change order, not the invoice), `ghost` (a "drafted" claim is caught and redone), `globalco` (header AI).
+
 ## v1.56.0 — 2026-11-08
 
 - **The AI chats always show a draft before sending anything to a customer.** In the invoice's AI chat and the header AI, asking for a text now puts a draft in the chat: the number and the message, which you can edit, with Send and Cancel. Nothing goes out until you tap Send. Cancel sends nothing. A change order the chat makes is saved first, then shown as a draft with the exact email (as the customer will see it) and the exact text, with Email/Text choices; it goes out only on Send. Before this, the AI chats texted the moment the model asked to.

@@ -194,7 +194,10 @@ const btnS = (kind) => ({
 
 // ─── In the app ─────────────────────────────────────────────────────────────
 
-export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines }) {
+// onBuild(row | null): start (null) or resume (a draft/sent row) change-order
+// mode on the invoice itself, where the invoice's own +, Price Book and AI add
+// lines to the change order (v1.57.0). building: that mode is on now.
+export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines, onBuild, building }) {
   const [list, setList] = useState([]);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState('');
@@ -237,8 +240,8 @@ export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, cl
     <div style={{ background: '#fff', borderRadius: 10, padding: '12px 14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginTop: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#6677aa', letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>Change orders</span>
-        <button onClick={() => setEditing({ seq: nextSeq, items: [{ name: '', desc: '', qty: 1, price: 0, taxable: true }], note: '', status: 'draft' })}
-          style={{ ...btnS('ghost'), padding: '6px 12px', fontSize: 13 }}>+ Change order</button>
+        <button disabled={!!building} onClick={() => (onBuild ? onBuild(null) : setEditing({ seq: nextSeq, items: [{ name: '', desc: '', qty: 1, price: 0, taxable: true }], note: '', status: 'draft' }))}
+          style={{ ...btnS('ghost'), padding: '6px 12px', fontSize: 13, opacity: building ? 0.5 : 1 }}>+ Change order</button>
       </div>
       {err && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 8 }}>{err}</div>}
       {!err && list.length === 0 && (
@@ -248,7 +251,7 @@ export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, cl
         const st = STATUS[c.status] || STATUS.draft;
         const t = coTotals(c.items, taxPct);
         return (
-          <div key={c.id} onClick={() => setEditing(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid #eef1f7', marginTop: 8, cursor: 'pointer' }}>
+          <div key={c.id} onClick={() => (onBuild && !building && (c.status === 'draft' || c.status === 'sent') ? onBuild(c) : setEditing(c))} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid #eef1f7', marginTop: 8, cursor: 'pointer' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#1a1a1a' }}>{invoiceId}-CO{c.seq} · {money(t.total)}</div>
               <div style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -427,6 +430,56 @@ function ChangeOrderEditor({ co, invoiceId, linkedIds, taxPct, clientPhone, clie
   );
 }
 
+// A change order's photo strip: add new ones, pick job photos, remove.
+export function ChangeOrderPhotos({ invoiceId, linkedIds, seq, photos, setPhotos, locked }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [picking, setPicking] = useState(false);
+  const fileRef = useRef(null);
+  const addFiles = async () => {
+    const files = Array.from(fileRef.current?.files || []).filter(f => /^image\//.test(f.type));
+    if (fileRef.current) fileRef.current.value = '';
+    if (!files.length) return;
+    setBusy(true); setMsg('');
+    try {
+      const room = MAX_CO_PHOTOS - (photos || []).length;
+      if (room <= 0) throw new Error(`Up to ${MAX_CO_PHOTOS} photos per change order.`);
+      const added = [];
+      for (const f of files.slice(0, room)) added.push(await uploadChangeOrderPhoto(invoiceId, f, seq));
+      setPhotos(ps => cleanPhotos([...(ps || []), ...added]));
+      setMsg(`${added.length} photo${added.length === 1 ? '' : 's'} added. They are also in the job's Photos tab.`);
+    } catch (e) { setMsg(e.message || String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ background: '#fff', borderRadius: 10, padding: 12, marginTop: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#6677aa', letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" }}>Photos{(photos || []).length ? ` (${photos.length})` : ''}</div>
+      {(photos || []).length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginTop: 8 }}>
+          {photos.map(ph => (
+            <div key={ph.url} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', background: '#e4e8f0' }}>
+              <img src={ph.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              {!locked && <button onClick={() => setPhotos(ps => (ps || []).filter(x => x.url !== ph.url))} aria-label="Remove photo from change order"
+                style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 14, lineHeight: '22px', padding: 0, cursor: 'pointer' }}>×</button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {!locked && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <input ref={fileRef} type="file" accept="image/*" multiple onChange={addFiles} style={{ display: 'none' }} />
+          <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btnS('ghost'), flex: 1, padding: '9px 8px', fontSize: 13 }}>{busy ? 'Uploading…' : 'Add photos'}</button>
+          <button onClick={() => setPicking(true)} disabled={busy} style={{ ...btnS('ghost'), flex: 1, padding: '9px 8px', fontSize: 13 }}>From job photos</button>
+        </div>
+      )}
+      {msg && <div style={{ fontSize: 12, color: /fail|up to|could not/i.test(msg) ? '#c0392b' : '#1e8449', marginTop: 6 }}>{msg}</div>}
+      {picking && (
+        <JobPhotoPicker ids={[invoiceId, ...(linkedIds || [])]} chosen={photos} onClose={() => setPicking(false)}
+          onDone={(picked) => { setPhotos(ps => cleanPhotos([...(ps || []), ...picked])); setPicking(false); }} />
+      )}
+    </div>
+  );
+}
+
 // Pick photos already on the job (this invoice and its estimate).
 function JobPhotoPicker({ ids, chosen, onClose, onDone }) {
   const [all, setAll] = useState(null);
@@ -451,7 +504,7 @@ function JobPhotoPicker({ ids, chosen, onClose, onDone }) {
             {(all || []).map(p => {
               const on = sel.has(p.id), already = have.has(p.url);
               return (
-                <div key={p.id} onClick={() => !already && toggle(p.id)} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', background: '#e4e8f0', outline: on ? `3px solid ${ORANGE}` : 'none', outlineOffset: -3, opacity: already ? 0.4 : 1, cursor: already ? 'default' : 'pointer' }}>
+                <div key={p.id} role="button" aria-label={already ? 'Job photo, already added' : 'Pick job photo'} onClick={() => !already && toggle(p.id)} style={{ position: 'relative', aspectRatio: '1', borderRadius: 6, overflow: 'hidden', background: '#e4e8f0', outline: on ? `3px solid ${ORANGE}` : 'none', outlineOffset: -3, opacity: already ? 0.4 : 1, cursor: already ? 'default' : 'pointer' }}>
                   <img src={p.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                   {already && <div style={{ position: 'absolute', bottom: 3, left: 3, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3 }}>ADDED</div>}
                 </div>

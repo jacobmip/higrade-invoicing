@@ -10,6 +10,10 @@
 //   SCENARIO=aicancel invoice chat text: Cancel sends nothing
 //   SCENARIO=aiemail  invoice chat "email the invoice" opens the send screen, sends nothing
 //   SCENARIO=globalsms header AI text: a draft first, sent on Send
+//   SCENARIO=mode     change-order mode on the invoice: Price Book line goes on the change order, Review & send, Send
+//   SCENARIO=modeai   change-order mode: the invoice AI's add_items lands on the change order, not the invoice
+//   SCENARIO=ghost    the invoice AI says it "drafted up" a change order with no action: caught and retried
+//   SCENARIO=globalco header AI draft_change_order: draft card, sent only on Send
 //   SCENARIO=aiplain  a plain answer in the invoice AI chat shows (was a crash before v1.54.0)
 // Run: npm run build && npx vite preview --port 4173, then SCENARIO=... node test/e2e/change-order.mjs
 import { createRequire } from 'node:module'; const { chromium } = createRequire(import.meta.url)('playwright');
@@ -39,6 +43,7 @@ db.invoices = [{ id:'INV1300', type:'invoice', client_name:'Test Client', date:'
 db.invoice_items = [{ id:'a2', invoice_id:'INV1300', name:'Water heater', description:'', qty:1, price:1800, unit:'ea', taxable:true, sort_order:0 }];
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
+db.saved_items = [{ id: 's1', name: 'Angle stop replacement', price: 95, category: 'Valves', owner_id: JAKE, taxable: true }];
 db.job_photos = [{ id: 'jp1', invoice_id: 'INV1300', url: 'https://cwhgcxxszyvevjpbnnkc.supabase.co/storage/v1/object/public/job-photos/INV1300/old.jpg', type: 'before', created_at: now }];
 const uploads = [];
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFTEMZQkAmb8/wbgYdQcAAAAASUVORK5CYII=', 'base64');
@@ -80,10 +85,16 @@ await page.route('**/*', async route => {
       aiPrompts.push(b);
       if (b?.mode === 'agent') {
         const n = aiPrompts.filter(x => x.mode === 'agent').length;
+        if (n === 1 && SCENARIO === 'globalco') return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'draft_change_order', input: { document_id: 'INV1300', items: [{ name: 'Replace angle stop', qty: 1, price: 95 }], send: 'auto' } }] });
         if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'send_sms', input: { phone: '8085551234', message: 'Aloha Pat, just checking in on the water heater. Mahalo!' } }] });
         return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'The draft text is ready for you to check.' }] });
       }
       if (SCENARIO === 'aisms' || SCENARIO === 'aicancel') return json({ content: [{ type: 'text', text: JSON.stringify({ action: 'send_sms', phone: '8085551234', message: 'Aloha Pat, the valve is in. Mahalo!', summary: 'Texted Pat' }) }] });
+      if (SCENARIO === 'modeai') return json({ content: [{ type: 'text', text: JSON.stringify({ action: 'add_items', invoiceId: 'INV1300', items: [{ name: 'Pressure regulator', desc: 'PRV 3/4', qty: 1, price: 310 }], summary: 'Added a PRV' }) }] });
+      if (SCENARIO === 'ghost') {
+        const n = aiPrompts.filter(x => !x.mode).length;
+        return json({ content: [{ type: 'text', text: n === 1 ? "I've drafted up a change order for the two angle stops. Let me know when to send it." : JSON.stringify({ action: 'create_change_order', items: [{ name: 'Replace angle stop', qty: 2, price: 95 }], send: 'none', summary: 'Drafted CO' }) }] });
+      }
       if (SCENARIO === 'aiemail') return json({ content: [{ type: 'text', text: JSON.stringify({ action: 'send_email', invoiceId: 'INV1300', summary: 'Emailing the invoice' }) }] });
       const text = SCENARIO === 'ai' || SCENARIO === 'aiphoto'
         ? JSON.stringify({ action: 'create_change_order', items: [{ name: 'Replace angle stop', desc: 'Corroded, leaking', qty: 2, price: 95, taxable: true }], note: 'Found behind the vanity', send: 'auto', summary: 'Created and sent CO1' })
@@ -165,57 +176,115 @@ if (SCENARIO === 'page') {
   await page.getByText('INV1300').first().click({ force: true });
   await page.waitForTimeout(2500);
   log('card shown:', (await page.getByText('Change orders', { exact: true }).count()) > 0 ? 'PASS' : 'FAIL');
-  if (SCENARIO === 'send') {
+  const sends = () => apiCalls.filter(c => c.path === '/api/sms-inbound' && c.body && (c.body.op === 'send_change_order' || (!c.body.op && c.body.body)));
+  // Build a change order on the invoice from the Price Book, then open Review & send.
+  const buildAndReview = async () => {
     await page.getByRole('button', { name: '+ Change order' }).click();
+    await page.waitForTimeout(900);
+    await page.getByRole('button', { name: 'Price Book' }).click();
     await page.waitForTimeout(600);
-    await page.getByPlaceholder(/Work to add/).fill('Add shutoff valve');
-    const nums = page.locator('input[type=number]');
-    await nums.last().fill('150');
-    log('phone prefilled:', (await page.getByPlaceholder('(808) 555-1234').inputValue()) === '8085551234' ? 'PASS' : 'FAIL');
-    // Text only: the client has an email too, so switch email off and text on.
-    await page.getByLabel('Email', { exact: true }).uncheck();
-    await page.getByLabel('Text (they can reply YES)').check();
+    await page.getByText('Angle stop replacement').last().locator('xpath=ancestor::div[.//button][1]').locator('button').last().click();
+    await page.waitForTimeout(1800);
+    await page.getByRole('button', { name: 'Review & send' }).click();
+    await page.waitForTimeout(800);
+  };
+  if (SCENARIO === 'send' || SCENARIO === 'email') {
+    await buildAndReview();
+    await page.getByRole('button', { name: 'Preview email and text' }).click();
+    await page.waitForTimeout(1500);
+    log('contact prefilled:', (await page.getByPlaceholder('customer@email.com').last().inputValue()) === 'pat@example.com' && (await page.getByPlaceholder('(808) 555-1234').last().inputValue()) === '8085551234' ? 'PASS' : 'FAIL');
+    if (SCENARIO === 'send') await page.getByLabel('Email', { exact: true }).last().uncheck();
+    else await page.getByLabel('Text', { exact: true }).last().uncheck();
     if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
-    await page.getByRole('button', { name: 'Send to customer by text' }).click();
-    await page.waitForTimeout(2000);
-    const co = db.change_orders[0];
-    log('saved:', co && co.seq === 1 && co.items[0].name === 'Add shutoff valve' && co.items[0].price === 150 && co.view_token.length >= 16 ? 'PASS' : 'FAIL ' + JSON.stringify(co));
-    const sendCall = apiCalls.find(c => c.body?.op === 'send_change_order');
-    log('texted only:', sendCall && sendCall.body.to === '8085551234' && !sendCall.body.email && sendCall.body.change_order_id === co.id ? 'PASS' : 'FAIL');
-    log('confirmation shown:', (await page.getByText(/texted to 8085551234/).count()) > 0 ? 'PASS' : 'FAIL');
-  }
-  if (SCENARIO === 'email') {
-    await page.getByRole('button', { name: '+ Change order' }).click();
-    await page.waitForTimeout(600);
-    await page.getByPlaceholder(/Work to add/).fill('Add shutoff valve');
-    await page.locator('input[type=number]').last().fill('150');
-    log('email prefilled and chosen, text off:', (await page.getByPlaceholder('customer@email.com').inputValue()) === 'pat@example.com' && (await page.getByRole('button', { name: 'Send to customer by email' }).count()) === 1 ? 'PASS' : 'FAIL');
-    await page.getByRole('button', { name: 'Send to customer by email' }).click();
-    await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: 'Send', exact: true }).last().click();
+    await page.waitForTimeout(1500);
     const call = apiCalls.find(c => c.body?.op === 'send_change_order');
-    log('sent by email only:', call && call.body.email === 'pat@example.com' && !call.body.to ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
-    log('result shown:', (await page.getByText(/emailed to pat@example.com/).count()) > 0 ? 'PASS' : 'FAIL');
+    if (SCENARIO === 'send') log('texted only:', call && call.body.to === '8085551234' && !call.body.email ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
+    else log('emailed only:', call && call.body.email === 'pat@example.com' && !call.body.to ? 'PASS' : 'FAIL ' + JSON.stringify(call?.body));
+    log('result shown:', (await page.getByText(SCENARIO === 'send' ? /texted to 8085551234/ : /emailed to pat@example.com/).count()) > 0 ? 'PASS' : 'FAIL');
   }
   if (SCENARIO === 'photos') {
-    await page.getByRole('button', { name: '+ Change order' }).click();
-    await page.waitForTimeout(600);
-    await page.getByPlaceholder(/Work to add/).fill('Add shutoff valve');
-    await page.locator('input[type=number]').last().fill('150');
-    await page.locator('input[type=file][accept="image/*"]').last().setInputFiles('/tmp/claude-0/test-photo.png');
+    await buildAndReview();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'Add photos', exact: true }).first().click()]);
+    await chooser.setFiles('/tmp/claude-0/test-photo.png');
     await page.waitForTimeout(2000);
     log('new photo uploaded and filed as a job photo:', uploads.length === 1 && db.job_photos.some(p => /Change order 1/.test(p.caption || '')) ? 'PASS' : 'FAIL ' + JSON.stringify(uploads));
-    await page.getByRole('button', { name: 'From job photos' }).click();
+    await page.getByRole('button', { name: 'From job photos' }).first().click();
     await page.waitForTimeout(1200);
-    await page.locator('img[src*="old.jpg"]').last().click();
+    await page.getByRole('button', { name: 'Pick job photo' }).first().click();
     await page.getByRole('button', { name: 'Add 1 photo' }).click();
     await page.waitForTimeout(400);
     if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
-    await page.getByRole('button', { name: 'Save draft' }).click();
+    await page.getByRole('button', { name: 'Preview email and text' }).click();
     await page.waitForTimeout(1500);
     const co = db.change_orders[0];
     log('change order saved with both photos:', co && co.photos.length === 2 && co.photos.some(p => /old\.jpg$/.test(p.url) && p.job_photo_id === 'jp1') && co.photos.some(p => /\/co1_/.test(p.url)) ? 'PASS' : 'FAIL ' + JSON.stringify(co?.photos));
   }
-  const sends = () => apiCalls.filter(c => c.path === '/api/sms-inbound' && c.body && (c.body.op === 'send_change_order' || (!c.body.op && c.body.body)));
+  if (SCENARIO === 'mode' || SCENARIO === 'modeai') {
+    const whBefore = await page.getByText('Water heater', { exact: true }).count();
+    await page.getByRole('button', { name: '+ Change order' }).click();
+    await page.waitForTimeout(1000);
+    const whAfter = await page.getByText('Water heater', { exact: true }).count();
+    log('mode on, invoice lines hidden:', (await page.getByText('Building change order 1').count()) > 0 && whAfter === whBefore - 1 ? 'PASS' : 'FAIL ' + whBefore + '->' + whAfter);
+    if (SCENARIO === 'mode') {
+      await page.getByRole('button', { name: 'Price Book' }).click();
+      await page.waitForTimeout(600);
+      await page.getByText('Angle stop replacement').last().locator('xpath=ancestor::div[.//button][1]').locator('button').last().click();
+      await page.waitForTimeout(2000);
+      const co = db.change_orders[0];
+      log('price book line saved on the change order:', co && co.items.length === 1 && co.items[0].name === 'Angle stop replacement' && co.items[0].price === 95 ? 'PASS' : 'FAIL ' + JSON.stringify(co));
+      log('invoice untouched:', !saves.some(x => x.items.some(i => /Angle stop/.test(i))) ? 'PASS' : 'FAIL');
+      if (process.env.SHOT_MODE) { await page.getByText('Building change order 1').scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.SHOT_MODE }); }
+      await page.getByRole('button', { name: 'Review & send' }).click();
+      await page.waitForTimeout(800);
+      await page.getByRole('button', { name: 'Preview email and text' }).click();
+      await page.waitForTimeout(1500);
+      log('preview shown, nothing sent:', (await page.getByText('Draft, not sent yet').count()) > 0 && !apiCalls.some(c => c.body?.op === 'send_change_order') ? 'PASS' : 'FAIL');
+      await page.getByRole('button', { name: 'Send', exact: true }).last().click();
+      await page.waitForTimeout(1500);
+      log('sent on tap:', apiCalls.some(c => c.body?.op === 'send_change_order' && c.body.change_order_id === co.id) ? 'PASS' : 'FAIL');
+      log('sheet shows the result:', (await page.getByText(/emailed to|texted to/).count()) > 0 ? 'PASS' : 'FAIL');
+      await page.getByRole('button', { name: 'Back to the invoice' }).click();
+      await page.waitForTimeout(800);
+      const bc = await page.getByText('Building change order').count(), wh = await page.getByText('Water heater', { exact: true }).count();
+      if (process.env.SHOT_EDITOR) await page.screenshot({ path: process.env.SHOT_EDITOR });
+      log('mode off after send, invoice lines back:', bc === 0 && wh === whBefore ? 'PASS' : 'FAIL ' + bc + ' ' + wh + '/' + whBefore);
+    } else {
+      await page.getByRole('button', { name: 'AI', exact: true }).first().click();
+      await page.waitForTimeout(800);
+      const box = page.locator('[aria-label="Job description"]');
+      await box.click(); await page.keyboard.type('Add a pressure regulator for 310');
+      await box.locator('xpath=following-sibling::button').last().click();
+      await page.waitForTimeout(4000);
+      const sys = aiPrompts.find(x => !x.mode)?.systemPrompt || '';
+      log('AI told it is in change order mode:', /CHANGE ORDER MODE IS ON/.test(sys) ? 'PASS' : 'FAIL');
+      const co = db.change_orders[0];
+      log('AI line on the change order:', co && co.items.some(i => i.name === 'Pressure regulator' && i.price === 310) ? 'PASS' : 'FAIL ' + JSON.stringify(co));
+      log('invoice untouched:', !saves.some(x => x.items.some(i => /Pressure regulator/.test(i))) ? 'PASS' : 'FAIL');
+    }
+  }
+  if (SCENARIO === 'ghost') {
+    await page.getByRole('button', { name: 'AI', exact: true }).first().click();
+    await page.waitForTimeout(800);
+    const box = page.locator('[aria-label="Job description"]');
+    await box.click(); await page.keyboard.type('Make a change order for two angle stops');
+    await box.locator('xpath=following-sibling::button').last().click();
+    await page.waitForTimeout(5000);
+    log('claim caught and retried:', aiPrompts.filter(x => !x.mode).length === 2 ? 'PASS' : 'FAIL ' + aiPrompts.length);
+    log('change order really saved:', db.change_orders.length === 1 && db.change_orders[0].items[0].qty === 2 ? 'PASS' : 'FAIL ' + JSON.stringify(db.change_orders));
+  }
+  if (SCENARIO === 'globalco') {
+    await page.getByRole('button', { name: 'AI assistant' }).click();
+    await page.waitForTimeout(800);
+    await page.getByLabel('Chat message').fill('Change order on INV1300 for an angle stop, 95, send it');
+    await page.getByLabel('Chat message').press('Enter');
+    await page.waitForTimeout(4000);
+    log('header AI saved the change order:', db.change_orders.length === 1 && db.change_orders[0].items[0].name === 'Replace angle stop' ? 'PASS' : 'FAIL ' + JSON.stringify(db.change_orders));
+    log('header AI: draft shown, nothing sent:', (await page.getByText('Draft, not sent yet').count()) > 0 && !apiCalls.some(c => c.body?.op === 'send_change_order') ? 'PASS' : 'FAIL');
+    await page.getByRole('button', { name: 'Send', exact: true }).last().click();
+    await page.waitForTimeout(1500);
+    log('header AI: sent on tap:', apiCalls.some(c => c.body?.op === 'send_change_order') ? 'PASS' : 'FAIL');
+  }
   if (SCENARIO === 'globalsms') {
     await page.getByRole('button', { name: 'AI assistant' }).click();
     await page.waitForTimeout(800);

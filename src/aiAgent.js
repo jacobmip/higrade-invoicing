@@ -23,6 +23,7 @@ import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
 import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
+import { runChangeOrderAction } from './ChangeOrders.jsx';
 
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
@@ -629,6 +630,28 @@ async function deleteDocument(input, ctx) {
 // a saved document it also gets an sms_sent snapshot in that document's History.
 // Never sends (v1.56.0): returns a draft card. The chat shows the text, Jake
 // can edit it, and it goes out only when he taps Send (SendDraftCard).
+// A change order on an invoice (migration 111). Saves it as a draft; when a
+// send is asked for, returns a draft card with the exact email and text, sent
+// only when Jake taps Send. Never sends from here.
+async function draftChangeOrder(input, ctx) {
+  const id = String(input.document_id || '').trim().toUpperCase();
+  const inv = ctx.getData().invoices.find(i => i.id === id);
+  if (!inv) return { error: `No document ${id} in the app.` };
+  if (inv.type === 'estimate') return { error: `${id} is an estimate. Change orders go on the invoice: convert it first.` };
+  if (!Array.isArray(input.items) || !input.items.length) return { error: 'A change order needs at least one line.' };
+  const client = ctx.getData().clients.find(c => c.name === inv.client) || {};
+  const r = await runChangeOrderAction(
+    { action: 'create_change_order', items: input.items, note: input.note || '', send: input.send || 'none', taxPct: inv.tax, email: input.email, phone: input.phone },
+    { invoiceId: inv.id, isInvoice: true, phone: client.mobile || client.phone || inv.clientInfo?.phone || '', email: client.email || inv.clientInfo?.email || '', photos: [] },
+  );
+  if (/^Change order not done/.test(r.text)) return { error: r.text };
+  return {
+    ok: true, sent: false,
+    note: `${r.text} ${r.draft ? 'A draft card is shown to Jake; nothing is sent until he taps Send. Do not say it was sent.' : 'Saved as a draft; it is on the invoice\'s Change orders card.'}`,
+    card: r.draft ? { type: 'co_draft', draft: r.draft } : undefined,
+  };
+}
+
 async function sendSms(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
   const inv = id ? ctx.getData().invoices.find(i => i.id === id) : null;
@@ -707,6 +730,7 @@ const TOOLS = {
   save_price: savePrice,
   schedule_job: scheduleJob,
   send_document_email: sendDocumentEmail,
+  draft_change_order: draftChangeOrder,
   send_sms: sendSms,
   place_call: placeCall,
   delete_document: deleteDocument,
@@ -714,7 +738,7 @@ const TOOLS = {
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
   'remove_line_item', 'update_document', 'record_payment', 'save_price', 'schedule_job',
-  'send_document_email', 'send_sms', 'place_call', 'delete_document',
+  'send_document_email', 'send_sms', 'place_call', 'delete_document', 'draft_change_order',
 ]);
 
 // What the chat shows while a tool runs.
@@ -741,6 +765,7 @@ const PROGRESS = {
   schedule_job: (i) => `Booking ${i.client_name || 'job'}`,
   send_document_email: 'Preparing email',
   send_sms: (i) => `Drafting a text to ${i.phone || 'customer'}`,
+  draft_change_order: (i) => `Writing a change order on ${i.document_id || 'the invoice'}`,
   place_call: (i) => `Dialing ${i.name || i.phone || 'customer'}…`,
   delete_document: (i) => `Deleting ${i.document_id || 'document'}`,
 };
@@ -854,7 +879,9 @@ async function callModel(messages) {
  */
 // Ghost-action guard: phrases that say a change was made. If the reply says so
 // and nothing was actually written, the model is describing work it did not do.
-const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved)|done!|(add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|send_sms|place_call|delete_invoice|delete_document))/i;
+// "drafted" and friends added v1.57.0: the invoice chat said it had "drafted
+// up" a change order with no action behind it, and nothing caught it.
+const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set|drafted|prepared|written|put together)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set|drafted|prepared|wrote|put together)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved|drafted)|drafted\s+(up|a|the|your)|(here'?s|here is)\s+(the|your)\s+draft|done!|(create_change_order|update_change_order|send_change_order|draft_change_order|add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|send_sms|place_call|delete_invoice|delete_document))/i;
 export function claimsAction(text) { return CLAIM_RE.test(text || ''); }
 
 export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx, onProgress }) {
