@@ -5487,24 +5487,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             </div>
           )}
 
-          {/* Change orders (migration 111): extra work the customer approves
-              mid-job. Approved ones land on this invoice automatically. */}
-          {isAdmin && !isEstimate && !lockedView && (form.id || autoSavedId) && (
-            <div style={{ padding: "0 16px" }}>
-              <ChangeOrdersCard
-                invoiceId={form.id || autoSavedId}
-                linkedIds={linkedIds}
-                taxPct={form.tax}
-                clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
-                clientEmail={selectedClient?.email || effectiveClientInfo?.email || ""}
-                loadedUpdatedAt={loadedUpdatedAtRef.current}
-                onBuild={startChangeOrder}
-                building={!!coMode}
-                onApprovedLines={(lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
-              />
-            </div>
-          )}
-
           {/* Dates — estimates have no due date by default. Show a single full-width */}
           {/* date picker for estimates and the usual two-column grid for invoices. */}
           <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: isEstimate ? "1fr" : "1fr 1fr", gap: 10 }}>
@@ -5724,6 +5706,25 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 />
               );
             })}
+            {/* Change orders (migration 111): extra work the customer approves
+                mid-job, right under the invoice's own lines (v1.57.1). Hidden,
+                not unmounted, while one is being built: the orange banner
+                above takes its place. */}
+            {isAdmin && !isEstimate && !lockedView && (form.id || autoSavedId) && (
+              <div style={{ display: coMode ? "none" : "block", marginBottom: 12 }}>
+                <ChangeOrdersCard
+                  invoiceId={form.id || autoSavedId}
+                  linkedIds={linkedIds}
+                  taxPct={form.tax}
+                  clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
+                  clientEmail={selectedClient?.email || effectiveClientInfo?.email || ""}
+                  loadedUpdatedAt={loadedUpdatedAtRef.current}
+                  onBuild={startChangeOrder}
+                  building={!!coMode}
+                  onApprovedLines={(lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
+                />
+              </div>
+            )}
           </div>
 
           {/* Tax & Discount */}

@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.57.1 — 2026-11-08
+
+- **The Change orders card moved under the invoice's line items** (it sat up by the Call / On My Way buttons). It now reads Line Items, then Change orders, then tax and discount, which is where the extra work belongs. While you build a change order the card hides, since the orange banner at the top of Line Items takes its place.
+
 ## v1.57.0 — 2026-11-08
 
 - **Change orders are now built right on the invoice, with the same tools as the invoice.** Tap "+ Change order" on the invoice (or tap a draft or sent one on the card). The Line Items section turns orange and shows "Change order 1". The usual +, Price Book, line editor and AI chat now add to and edit the change order instead of the invoice. The invoice's own lines are hidden until you tap "Done for now". The change order is saved as a draft as you go. "Review & send" shows the lines, lets you add photos and a note, then shows the exact email and text; it goes out only when you tap Send, and the screen then shows what was sent. Approved and declined change orders still open read-only from the card.

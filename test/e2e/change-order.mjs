@@ -364,6 +364,7 @@ if (SCENARIO === 'page') {
     await page.waitForTimeout(2500);
     const last = saves.filter(x => x.id === 'INV1300').pop();
     log('save carries change order line:', last && last.items.some(i => /^Add shutoff valve\|Change order #1, approved .* - 3\/4 inch$/.test(i)) && last.items.length === 2 ? 'PASS' : 'FAIL ' + JSON.stringify(last));
+    if (process.env.SHOT_CARD) { await page.getByText('Change orders', { exact: true }).scrollIntoViewIfNeeded(); await page.evaluate(() => window.scrollBy(0, -260)); await page.screenshot({ path: process.env.SHOT_CARD }); }
     log('line visible in form:', (await page.getByText('Add shutoff valve').count()) > 0 ? 'PASS' : 'FAIL');
   }
 }
