@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.53.0 — 2026-11-08
+
+- **Change orders.** On an invoice, the new Change orders card lets you write extra work mid-job and text it to the customer. The text lists the lines and the total and says "Reply YES to approve," with a link to a page where they can review it and sign, or decline. It never says payment is due. The moment they approve, by signing or by replying YES, the lines are added to the invoice automatically. They are marked "Change order #1, approved Nov 8," so the customer sees where they came from, and you get a Telegram message. A paid invoice goes back to partially paid. Declined: nothing changes on the invoice. Each one shows on the card as Draft, Waiting on customer, Approved or Declined, and in the invoice's History. A YES text only counts when it is a short, plain yes and exactly one change order is waiting for that phone number; anything else goes to Lisa as usual. Needs database update 111 (Hermes) before the card works.
+- **The estimate is frozen once it becomes an invoice.** Its line items, customer notes, tax and discount stay as the customer approved them; change orders go on the invoice only. Internal notes, photos and history are still shared between the two. (v1.52.0 copied items and notes both ways, which let an invoice change rewrite a signed estimate.)
+- Tests: `test/change-order.test.mjs` (server: text and signature approval, double approval, decline, two open change orders), `test/e2e/change-order.mjs` (create and text one, an approval that lands while the invoice is open, the customer's page).
+
 ## v1.52.0 — 2026-11-08
 
 - **A job's estimate and invoice are now linked.**

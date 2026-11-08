@@ -43,6 +43,7 @@ import { telegramNotify } from './_lib/convert-estimate.js';
 import { requireAdmin } from './_lib/call-recording.js';
 import { autoReply, draftReply } from './_lib/sms-agent.js';
 import { handleInfoReply } from './_lib/sms-reply-capture.js';
+import { handleChangeOrderReply, sendChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -184,6 +185,14 @@ async function appSend(req, res) {
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
       return await appPlaceCall(res, user, params);
+    }
+    // Text a change order's link to the customer (migration 111). Session only.
+    if (params.op === 'send_change_order') {
+      if (!user) return jsonOut(res, 403, { error: 'admin only' });
+      const to = toE164(params.to) || String(params.to || '').trim();
+      if (!to || !params.change_order_id) return jsonOut(res, 400, { error: 'change_order_id and to are required' });
+      const r = await sendChangeOrder({ id: String(params.change_order_id), to });
+      return jsonOut(res, r.ok ? 200 : 409, r);
     }
     // The AI chat sends a bare 10-digit number; Twilio needs E.164. A value
     // already in E.164 (the reply box) passes through unchanged.
@@ -392,8 +401,16 @@ export default async function handler(req, res) {
     // A reply to our own "what's your service address / email?" text is handled
     // first; anything that does not match falls through to the agent.
     let captured = null;
+    // A YES to a change order we texted approves it (api/_lib/change-order.js).
+    // Only a short, plain yes from the number it was sent to; anything else
+    // falls through.
     try {
-      captured = await handleInfoReply({ phone: from, body: String(body), secret });
+      captured = await handleChangeOrderReply({ phone: from, body: String(body) });
+    } catch (e) {
+      console.error('[sms-inbound] change order reply failed:', e.message || e);
+    }
+    try {
+      if (!captured) captured = await handleInfoReply({ phone: from, body: String(body), secret });
     } catch (e) {
       console.error('[sms-inbound] info-reply capture failed:', e.message || e);
     }

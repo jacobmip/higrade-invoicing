@@ -15,6 +15,8 @@
 // version returned a Web Response, which causes Vercel's nodejs runtime
 // to hang until timeout instead of completing the request.
 
+import { loadPublicChangeOrder } from './_lib/change-order.js';
+
 export const config = { runtime: 'nodejs', maxDuration: 10 };
 
 const SUPABASE_URL_FALLBACK = 'https://cwhgcxxszyvevjpbnnkc.supabase.co';
@@ -69,6 +71,20 @@ const PUBLIC_FIELDS = [
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+
+  // A change order's page (/co/<token>, migration 111). Same idea as the
+  // invoice read below: only the fields the page shows.
+  const coToken = (req.query && req.query.co) || '';
+  if (coToken) {
+    if (typeof coToken !== 'string' || coToken.length < 16) return send(res, 400, { error: 'Missing or invalid token' });
+    try {
+      const out = await loadPublicChangeOrder(coToken);
+      return out ? send(res, 200, out) : send(res, 404, { error: 'not_found' });
+    } catch (e) {
+      console.error('[public-invoice] change order read failed:', e.message || e);
+      return send(res, 500, { error: 'Lookup failed' });
+    }
+  }
 
   const token = (req.query && req.query.token) || '';
   if (!token || typeof token !== 'string' || token.length < 8) {

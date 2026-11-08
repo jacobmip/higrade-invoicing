@@ -1,6 +1,6 @@
-// Linked estimate/invoice (v1.52.0). Pass = the invoice's Photos tab shows the
-// estimate's photo, an edit to the invoice's notes is copied to its estimate,
-// and an older pair (made before SYNC_SINCE) is not touched.
+// Linked estimate/invoice (v1.52.0, frozen estimate since v1.53.0). Pass = the
+// invoice's Photos tab shows the estimate's photo, and an edit to the invoice's
+// customer notes does not touch the estimate, for a new or an older pair.
 // Run: npm run build && npx vite preview --port 4173, then
 //   PAIR=new|old node test/e2e/link-sync.mjs
 import { createRequire } from 'node:module'; const { chromium } = createRequire(import.meta.url)('playwright');
@@ -110,7 +110,8 @@ await ta.fill('new note from the invoice');
 await page.waitForTimeout(4000);
 const estSave = saves.find(x => x.id === 'EST1300');
 log('estimate save:', JSON.stringify(estSave || null));
-if (PAIR === 'new') log('copied to estimate:', estSave && estSave.notes === 'new note from the invoice' && estSave.items === 1 && estSave.status === 'converted' ? 'PASS' : 'FAIL');
-else log('old pair untouched:', !estSave ? 'PASS' : 'FAIL');
+// v1.53.0: the estimate is frozen at conversion. Customer notes on the invoice
+// never reach it (only internal notes are copied).
+log('estimate left as approved:', !estSave ? 'PASS' : 'FAIL');
 await page.screenshot({ path: process.env.SHOT || 'link-sync.png' });
 await browser.close();

@@ -7,16 +7,18 @@
 //                   number (EST1170 / INV1170, 1000 and up). Used for READS
 //                   only: photos and history from all of them show on each.
 //
-//   syncPartner()   the one document whose line items, notes, internal notes,
-//                   tax and discount are copied on every save. Only the
-//                   conversion link (convertedToId), never a down-payment
-//                   invoice (its single deposit line is not the job's items),
-//                   and only for pairs made on or after SYNC_SINCE, so an
-//                   older pair whose invoice grew change orders is never
-//                   overwritten by its original estimate.
+//   syncPartner()   the one document whose INTERNAL NOTES are copied on every
+//                   save. Only the conversion link (convertedToId), never a
+//                   down-payment invoice, and only for pairs made on or after
+//                   SYNC_SINCE.
 //
-// Payments, status, dates, signature, schedule and the customer link stay
-// per document.
+// The estimate is frozen at conversion (v1.53.0): its line items, customer
+// notes, tax and discount are what the customer approved, so the invoice's
+// change orders never rewrite it. Conversion copies them to the invoice once;
+// after that only internal notes (never shown to the customer) stay in step.
+// v1.52.0 synced all of them, which let an invoice change rewrite a signed
+// estimate. Payments, status, dates, signature, schedule and the customer link
+// were always per document.
 
 export const SYNC_SINCE = Date.parse('2026-11-07T14:00:00-10:00');
 
@@ -76,4 +78,13 @@ export function sharedPatch(src) {
 
 export function sharedEqual(a, b) {
   return JSON.stringify(sharedPatch(a)) === JSON.stringify(sharedPatch(b));
+}
+
+// What syncLinkedDoc copies after a save: internal notes only.
+export function syncPatch(src) {
+  return { internalNotes: typeof src.internalNotes === 'string' ? src.internalNotes : '' };
+}
+
+export function syncEqual(a, b) {
+  return syncPatch(a).internalNotes === syncPatch(b).internalNotes;
 }

@@ -16,6 +16,7 @@
 
 import { notifyAll } from './_lib/notify.js';
 import { convertEstimateToInvoice, reconcileInvoiceStatus, telegramNotify } from './_lib/convert-estimate.js';
+import { approveChangeOrder, declineChangeOrder } from './_lib/change-order.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
@@ -61,6 +62,28 @@ export default async function handler(req, res) {
   let body;
   try { body = await readJson(req); }
   catch (e) { return send(res, 400, { error: 'Invalid JSON: ' + (e.message || e) }); }
+
+  // A change order (migration 111): approve with a signature, or decline.
+  // The lines go straight onto the invoice; see api/_lib/change-order.js.
+  if (body && body.coToken) {
+    const coToken = String(body.coToken);
+    if (coToken.length < 16) return send(res, 400, { error: 'Invalid token' });
+    try {
+      if (body.decline) {
+        const r = await declineChangeOrder({ token: coToken });
+        return send(res, r.ok ? 200 : 409, r);
+      }
+      if (!body.signatureData || !String(body.name || '').trim()) {
+        return send(res, 400, { error: 'Missing signature or name' });
+      }
+      if (String(body.signatureData).length > 400000) return send(res, 413, { error: 'Signature too large' });
+      const r = await approveChangeOrder({ token: coToken, via: 'signature', signatureData: body.signatureData, name: body.name });
+      return send(res, r.ok ? 200 : 409, r);
+    } catch (e) {
+      console.error('[submit-signature] change order failed:', e.message || e);
+      return send(res, 500, { error: 'Could not record the approval' });
+    }
+  }
 
   const { estimateId, clientName, total, job, signatureData, signedAt } = body || {};
 
