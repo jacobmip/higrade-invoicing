@@ -3886,6 +3886,31 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const coChainRef = useRef(Promise.resolve());
   const coTimerRef = useRef(null);
   const coSentRef = useRef(false);
+  const coListRef = useRef(null);
+  const coCardRef = useRef(null);
+  // The form scrolls inside its own fixed panel (not the window) under a
+  // sticky header, so scrollIntoView parks things behind that header. This
+  // scrolls the panel so `el` sits just below it. onlyIfHidden: leave the
+  // screen alone when el is already fully visible, else bring it just into
+  // view (the way a native list follows a new row).
+  const scrollUnderHeader = (el, { onlyIfHidden = false, gap = 10, bottomInset = 0 } = {}) => {
+    if (!el) return;
+    let sc = el.parentElement;
+    while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
+    if (!sc) return;
+    const r = el.getBoundingClientRect();
+    const top = formHeaderRef.current?.getBoundingClientRect().bottom ?? sc.getBoundingClientRect().top;
+    // bottomInset: a bar pinned over the bottom of the panel (change-order mode).
+    const bottom = sc.getBoundingClientRect().bottom - bottomInset;
+    let delta = r.top - top - gap;
+    if (onlyIfHidden) {
+      if (r.top >= top && r.bottom <= bottom - gap) return;
+      if (r.top >= top) delta = Math.min(r.bottom - bottom + gap * 2, r.top - top - gap);
+    }
+    sc.scrollBy({ top: delta, behavior: 'smooth' });
+  };
+  // After React has painted (two frames), so the measurements are final.
+  const afterPaint = (fn) => requestAnimationFrame(() => requestAnimationFrame(fn));
   const [reordering, setReordering] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
   const [emailStatus, setEmailStatus] = useState("");
@@ -4425,9 +4450,34 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     setCoSaveState(row ? 'saved' : '');
     setShowPriceBook(false); setReordering(false); setEditingItem(null);
     setCoMode({ seq, status: row?.status || 'draft', items: row ? (row.items || []).map(it => ({ ...blankItem, ...it })) : [], note: row?.note || '', photos: row?.photos || [] });
-    setTimeout(() => aiSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    afterPaint(() => scrollUnderHeader(aiSectionRef.current));
   };
-  const finishChangeOrder = async () => { await coSaveNow(); setCoMode(null); setCoEditing(null); };
+  // Back to the invoice: land on the Change orders card, where the one just
+  // built now shows, instead of wherever the shorter page left the scroll.
+  const leaveChangeOrderMode = () => {
+    setCoMode(null); setCoEditing(null);
+    afterPaint(() => scrollUnderHeader(coCardRef.current));
+  };
+  const finishChangeOrder = async () => { await coSaveNow(); leaveChangeOrderMode(); };
+  // A new change order line comes into view, as a list would; edits to an
+  // existing line never move the screen.
+  const coCountRef = useRef(0);
+  useEffect(() => {
+    const n = coMode?.items.length || 0;
+    if (coMode && n > coCountRef.current) afterPaint(() => scrollUnderHeader(coListRef.current?.lastElementChild, { onlyIfHidden: true, bottomInset: 84 }));
+    coCountRef.current = n;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coMode?.items.length]);
+  // The page behind the Review & send sheet must not scroll with it.
+  useEffect(() => {
+    if (!coSheet) return;
+    let sc = aiSectionRef.current?.parentElement;
+    while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
+    if (!sc) return;
+    const prev = sc.style.overflowY;
+    sc.style.overflowY = 'hidden';
+    return () => { sc.style.overflowY = prev; };
+  }, [coSheet]);
 
   const handleAddFromAI = (items, notes) => {
     if (coModeRef.current) {
@@ -5105,7 +5155,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           onSaveToLibrary={onSaveItem}
         />
       )}
-      {coSheet && coMode && (
+      {/* Portaled to <body>: inside the form, position:fixed would be relative
+          to the tab carousel's transform and open off-screen once you have
+          scrolled (v1.57.2). */}
+      {coSheet && coMode && createPortal(
         <ChangeOrderSendSheet
           invoiceId={form.id || autoSavedId}
           linkedIds={linkedIds}
@@ -5119,9 +5172,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           onClose={() => {
             setCoSheet(false);
             // Sent: the change order is done, back to the invoice's own lines.
-            if (coSentRef.current) { coSentRef.current = false; setCoMode(null); setCoEditing(null); }
+            if (coSentRef.current) { coSentRef.current = false; leaveChangeOrderMode(); }
           }}
-        />
+        />,
+        document.body
       )}
       {editingItem !== null && (
         <ItemModal
@@ -5176,7 +5230,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       {invoice && !isReadOnly && <JobClockButton invoice={invoice} openShift={openShift} onShiftChange={onShiftChange} />}
       </div>
 
-      <div ref={trackRef} style={{ overflow: "hidden", touchAction: "pan-y" }}>
+      {/* The tabs slide by transform, never by scrolling, so this frame's
+          scrollLeft must stay 0. A browser bringing a focused field or a
+          tapped button into view can nudge it sideways anyway, which left
+          the whole form cut off on the left (seen in testing, v1.57.2). */}
+      <div ref={trackRef} onScroll={e => { if (e.currentTarget.scrollLeft) e.currentTarget.scrollLeft = 0; }} style={{ overflow: "hidden", touchAction: "pan-y" }}>
       <div style={{ display: "flex", width: viewportW ? viewportW * TABS.length : "300%", transform: trackTransform, transition: trackTransition, willChange: "transform", alignItems: "flex-start" }}>
       {/* Non-active tabs collapse to maxHeight 0 at rest so the track only
           grows to fit the active panel's natural height (eliminates the dead
@@ -5649,21 +5707,30 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             </div>
 
             {coMode && (
-              <div style={{ background: "#fff4ec", border: `1.5px solid ${ORANGE}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Building change order {coMode.seq}{coMode.status === "sent" ? " (already sent: changes show on the customer's link)" : ""}</div>
-                <div style={{ fontSize: 12, color: "#555", marginTop: 3, lineHeight: 1.45 }}>
-                  Lines you add now with +, Price Book or AI go on the change order, not the invoice. The customer approves them first, then they are added to this invoice.
-                  {" "}{(() => { const n = form.items.filter(it => it.name || it.desc || it.price).length; return n === 1 ? "The invoice's own line is hidden until you tap Done for now." : `The invoice's own ${n} lines are hidden until you tap Done for now.`; })()}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>{fmt(coTotals(coMode.items.filter(coMeaningful), form.tax).total)}</span>
-                  <span style={{ fontSize: 11, color: /^error/.test(coSaveState) ? "#c0392b" : "#888", flex: 1, textAlign: "right" }}>{coSaveState === "saving" ? "Saving draft…" : coSaveState === "saved" ? "Draft saved" : /^error/.test(coSaveState) ? coSaveState.replace(/^error: /, "Not saved: ") : ""}</span>
-                </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <button onClick={finishChangeOrder} style={{ ...S.btn("ghost"), flex: 1, fontSize: 13, padding: "8px 0" }}>Done for now</button>
-                  <button onClick={async () => { await coSaveNow(); setCoSheet(true); }} disabled={!coMode.items.some(coMeaningful)} style={{ ...S.btn("primary"), flex: 2, fontSize: 13, padding: "8px 0", opacity: coMode.items.some(coMeaningful) ? 1 : 0.5 }}>Review &amp; send</button>
+              <div style={{ background: "#fff4ec", border: `1.5px solid ${ORANGE}`, borderRadius: 10, padding: "9px 12px", marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Building change order {coMode.seq}{coMode.status === "sent" ? " · already sent" : ""}</div>
+                <div style={{ fontSize: 12, color: "#555", marginTop: 2, lineHeight: 1.4 }}>
+                  Lines added here go to the customer for approval, then join the invoice.
+                  {(() => { const n = form.items.filter(it => it.name || it.desc || it.price).length; return n ? ` Invoice lines (${n}) are hidden for now.` : ""; })()}
                 </div>
               </div>
+            )}
+            {/* Pinned to the bottom while building, so the total and Review &
+                send stay in reach however long the list gets. Portaled: the
+                form's tab carousel uses a transform, which would otherwise
+                make position:fixed relative to it. Hidden while a sheet, the
+                line editor or the AI chat is in front. */}
+            {coMode && !coSheet && coEditing === null && !showPriceBook && !showAI && createPortal(
+              <div role="region" aria-label="Change order actions" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 0, width: "100%", maxWidth: 480, zIndex: 1250, background: "#fff", borderTop: "1px solid #e3e7f0", boxShadow: "0 -4px 16px rgba(10,22,40,0.10)", padding: "10px 16px calc(10px + env(safe-area-inset-bottom))", display: "flex", alignItems: "center", gap: 10, boxSizing: "border-box", fontFamily: "'Barlow', sans-serif" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: ORANGE, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Change order {coMode.seq}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a", lineHeight: 1.1 }}>{fmt(coTotals(coMode.items.filter(coMeaningful), form.tax).total)}</div>
+                  <div style={{ fontSize: 10.5, color: /^error/.test(coSaveState) ? "#c0392b" : "#999", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{coSaveState === "saving" ? "Saving draft…" : coSaveState === "saved" ? "Draft saved" : /^error/.test(coSaveState) ? coSaveState.replace(/^error: /, "Not saved: ") : "Not saved yet"}</div>
+                </div>
+                <button onClick={finishChangeOrder} style={{ ...S.btn("ghost"), fontSize: 13, padding: "10px 12px", flexShrink: 0 }}>Done for now</button>
+                <button onClick={async () => { await coSaveNow(); setCoSheet(true); }} disabled={!coMode.items.some(coMeaningful)} style={{ ...S.btn("primary"), fontSize: 13, padding: "10px 14px", flexShrink: 0, opacity: coMode.items.some(coMeaningful) ? 1 : 0.5 }}>Review &amp; send</button>
+              </div>,
+              document.body
             )}
 
             {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq } : form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} /></div>}
@@ -5671,7 +5738,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             {coMode && coMode.items.length === 0 && (
               <div style={{ fontSize: 13, color: "#999", padding: "8px 2px 12px" }}>No change order lines yet. Tap +, Price Book or AI.</div>
             )}
-            {coMode && coMode.items.map((item, i) => (
+            {coMode && <div ref={coListRef}>{coMode.items.map((item, i) => (
               <LineItemRow
                 key={"co" + i}
                 item={item}
@@ -5685,7 +5752,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 descPreview={item.desc?.replace(/\n/g, " · ") || ""}
                 itemsLength={coMode.items.length}
               />
-            ))}
+            ))}</div>}
+            {coMode && <div aria-hidden="true" style={{ height: 84 }} />}
 
             {/* Item rows */}
             {!coMode && form.items.map((item, i) => {
@@ -5711,7 +5779,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 not unmounted, while one is being built: the orange banner
                 above takes its place. */}
             {isAdmin && !isEstimate && !lockedView && (form.id || autoSavedId) && (
-              <div style={{ display: coMode ? "none" : "block", marginBottom: 12 }}>
+              <div ref={coCardRef} style={{ display: coMode ? "none" : "block", marginBottom: 12 }}>
                 <ChangeOrdersCard
                   invoiceId={form.id || autoSavedId}
                   linkedIds={linkedIds}
