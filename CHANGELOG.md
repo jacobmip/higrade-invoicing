@@ -1,5 +1,18 @@
 # HI Grade Invoicing — Changelog
 
+## v1.57.3 — 2026-11-08
+
+**Fix: screens ending up shifted left or right.** Tested by recreating each case at phone size. Three of them left the old app misaligned; the new one ends exactly on a tab every time.
+
+- **The Invoices and Estimates lists** (the All / Outstanding / Unsent / Paid swipe) relied on the phone to snap to a tab, and iPhones do not always finish that snap. Three ways the list was left stuck between tabs:
+  - a swipe that stopped slightly off the tab you were on;
+  - a change of screen width (rotation, split screen), which left the old app almost two tabs over;
+  - tapping a tab two or three over (All to Paid) landed on the wrong tab, because the old code mistook the glide on the way for a swipe.
+- Now, once a swipe or tap finishes and your finger is off the screen, the list squares itself to the nearest tab; a tapped tab is always where it ends up. It re-pins after a width change or when you come back to the app.
+- **The invoice's Edit / Preview / History / Photos tabs** now re-measure the screen width after the phone has finished laying out, not only when the window first reports a change; iPhones report it early. A stale width is what leaves those tabs offset.
+- **The invoice screen can no longer be dragged sideways** when something on it is wider than the screen.
+- Test: `test/e2e/sideways.mjs` (half swipe, slightly off a tab, width changes, tap to a far tab, Estimates, invoice tabs; the browser's own snapping is switched off for the swipe checks so only the app's fix can pass them).
+
 ## v1.57.2 — 2026-11-08
 
 Change orders now move like the rest of the app. Each of these was measured on a phone-sized screen before and after.

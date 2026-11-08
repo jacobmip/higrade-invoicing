@@ -5036,7 +5036,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     const measure = () => { if (trackRef.current) setViewportW(trackRef.current.offsetWidth); };
     measure();
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    // iOS fires resize / orientationchange before the new layout is final, so
+    // a width read there can be stale and leave the tabs offset. A
+    // ResizeObserver reports the size after layout (v1.57.3).
+    const ro = typeof ResizeObserver !== "undefined" && trackRef.current ? new ResizeObserver(measure) : null;
+    ro?.observe(trackRef.current);
+    return () => { window.removeEventListener("resize", measure); ro?.disconnect(); };
   }, []);
 
   const goToTab = (nextId) => {
@@ -6501,6 +6506,81 @@ function unsentIdsFor(allDocs) {
   ).map(d => d.id));
 }
 
+// Keeps a CSS scroll-snap carousel (the Invoices and Estimates list tabs)
+// exactly on a column (v1.57.3). Native snapping alone is not enough on iOS
+// Safari: a snap can be left unfinished when the list redraws mid-swipe, when
+// the width changes, or when a smooth scroll to a tapped tab is still running,
+// and the old 400ms "programmatic" window then read a half-way position as a
+// swipe and jumped to the wrong tab. That is the left/right misalignment.
+// Here: once scrolling stops (and no finger is down) the track is squared to
+// the nearest column and the tab follows; a width change or coming back to the
+// app re-pins it instantly. Returns the onScroll handler for the track.
+function useSnapCarousel(trackRef, index, count, setIndex) {
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const settleRef = useRef(null);
+  const touchingRef = useRef(false);
+  // A tapped tab is a firm destination: if the glide stops short (snap-stop
+  // halts it at each column on the way), keep going. A finger cancels it.
+  const targetRef = useRef(null);
+  const hopsRef = useRef(0);
+  const pin = (smooth) => {
+    const el = trackRef.current;
+    if (!el || !el.clientWidth) return;
+    const target = el.clientWidth * indexRef.current;
+    if (Math.abs(el.scrollLeft - target) < 1) return;
+    if (smooth) el.scrollTo({ left: target, behavior: "smooth" });
+    else el.scrollLeft = target;
+  };
+  const settle = () => {
+    clearTimeout(settleRef.current);
+    settleRef.current = setTimeout(() => {
+      const el = trackRef.current;
+      if (!el || !el.clientWidth) return;
+      if (touchingRef.current) return settle();
+      if (targetRef.current != null) {
+        const goal = targetRef.current * el.clientWidth;
+        if (Math.abs(el.scrollLeft - goal) < 1) { targetRef.current = null; hopsRef.current = 0; return; }
+        hopsRef.current += 1;
+        if (hopsRef.current > count) el.scrollLeft = goal;
+        else el.scrollTo({ left: goal, behavior: "smooth" });
+        return settle();
+      }
+      const idx = Math.max(0, Math.min(count - 1, Math.round(el.scrollLeft / el.clientWidth)));
+      if (idx !== indexRef.current) { indexRef.current = idx; targetRef.current = idx; setIndex(idx); }
+      const target = idx * el.clientWidth;
+      if (Math.abs(el.scrollLeft - target) >= 1) el.scrollTo({ left: target, behavior: "smooth" });
+    }, 160);
+  };
+  useLayoutEffect(() => { pin(false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // A tapped tab: glide there; settle() squares it if anything interrupts.
+  useEffect(() => { targetRef.current = index; hopsRef.current = 0; pin(true); settle(); }, [index]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const down = () => { touchingRef.current = true; targetRef.current = null; };
+    const up = () => { touchingRef.current = false; settle(); };
+    el.addEventListener("touchstart", down, { passive: true });
+    el.addEventListener("touchend", up, { passive: true });
+    el.addEventListener("touchcancel", up, { passive: true });
+    let w = el.clientWidth;
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      if (el.clientWidth && el.clientWidth !== w) { w = el.clientWidth; pin(false); }
+    }) : null;
+    ro?.observe(el);
+    const back = () => { if (document.visibilityState === "visible") pin(false); };
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("pageshow", back);
+    return () => {
+      el.removeEventListener("touchstart", down); el.removeEventListener("touchend", up); el.removeEventListener("touchcancel", up);
+      ro?.disconnect();
+      document.removeEventListener("visibilitychange", back); window.removeEventListener("pageshow", back);
+      clearTimeout(settleRef.current);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return settle;
+}
+
 function InvoiceList({ isAdmin, invoices, allDocs, onNew, onSelect, onDelete, onShare, onSend, onPrint, onGetLink, onTogglePaid, onRecordPayment, onDuplicate, setSubHeader }) {
   const TABS = ["all", "outstanding", "unsent", "paid"];
   const [tab, setTab] = useState("all");
@@ -6518,40 +6598,7 @@ function InvoiceList({ isAdmin, invoices, allDocs, onNew, onSelect, onDelete, on
   // translate math — the browser handles everything correctly regardless of
   // page scroll position or sticky-header state.
   const trackRef = useRef(null);
-  const programmaticScrollRef = useRef(false);
-  // After mount, do a layout-effect scroll to the active column without
-  // animation so column 0 always starts visible (avoids browsers restoring
-  // a stale scrollLeft on remount).
-  useLayoutEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    el.scrollLeft = el.clientWidth * tabIndex;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // When the active tab changes (e.g. user tapped a tab button), scroll the
-  // container to that column. Smooth scroll triggers the native snap.
-  useEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    const target = el.clientWidth * tabIndex;
-    if (Math.abs(el.scrollLeft - target) < 2) return;
-    programmaticScrollRef.current = true;
-    el.scrollTo({ left: target, behavior: "smooth" });
-    setTimeout(() => { programmaticScrollRef.current = false; }, 400);
-  }, [tabIndex]);
-
-  // When the user manually swipes, the container's scrollLeft changes. Detect
-  // which column is most-visible and update `tab` so the highlighted indicator
-  // tracks the swipe.
-  const onScroll = () => {
-    if (programmaticScrollRef.current) return;
-    const el = trackRef.current;
-    if (!el) return;
-    const idx = Math.round(el.scrollLeft / el.clientWidth);
-    const clamped = Math.max(0, Math.min(TABS.length - 1, idx));
-    if (TABS[clamped] !== tab) setTab(TABS[clamped]);
-  };
+  const onScroll = useSnapCarousel(trackRef, tabIndex, TABS.length, (i) => setTab(TABS[i]));
 
   const goToTab = (next) => {
     if (next === tab) return;
@@ -6716,35 +6763,9 @@ function EstimatesTab({ isAdmin, invoices, allDocs, onNew, onSelect, onDelete, o
     return [...ys].sort((a, b) => b - a);
   }, [invoices]);
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
-  // Native scroll-snap carousel — same pattern as InvoiceList.
+  // Native scroll-snap carousel, kept on a column by useSnapCarousel.
   const trackRef = useRef(null);
-  const programmaticScrollRef = useRef(false);
-
-  useLayoutEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    el.scrollLeft = el.clientWidth * tabIndex;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    const target = el.clientWidth * tabIndex;
-    if (Math.abs(el.scrollLeft - target) < 2) return;
-    programmaticScrollRef.current = true;
-    el.scrollTo({ left: target, behavior: "smooth" });
-    setTimeout(() => { programmaticScrollRef.current = false; }, 400);
-  }, [tabIndex]);
-
-  const onScroll = () => {
-    if (programmaticScrollRef.current) return;
-    const el = trackRef.current;
-    if (!el) return;
-    const idx = Math.round(el.scrollLeft / el.clientWidth);
-    const clamped = Math.max(0, Math.min(TABS.length - 1, idx));
-    if (TABS[clamped] !== tab) setTab(TABS[clamped]);
-  };
+  const onScroll = useSnapCarousel(trackRef, tabIndex, TABS.length, (i) => setTab(TABS[i]));
 
   const goToTab = (next) => {
     if (next === tab) return;
@@ -14409,7 +14430,7 @@ export default function App() {
       </>
 
       {formMounted && (
-        <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+        <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", overflowX: "hidden", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
           <FormBoundary key={(() => {
             const id = selected?.id;
             if (!id) return `new${newDocSeq}`;
