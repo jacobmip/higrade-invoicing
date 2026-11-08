@@ -16,7 +16,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
-import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines } from './ChangeOrders.jsx';
+import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction } from './ChangeOrders.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
@@ -1018,6 +1018,21 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         ).join("\n");
         invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
       }
+      // Change orders on the open invoice (migration 111). Contact comes from
+      // the client record, like the card's defaults.
+      const coInvoiceId = currentInvoice?.type !== "estimate" ? currentInvoice?.id : null;
+      const coClient = currentInvoice ? (data?.clients || []).find(c => c.name === currentInvoice.client) : null;
+      const coContact = {
+        email: coClient?.email || currentInvoice?.clientInfo?.email || "",
+        phone: coClient?.mobile || coClient?.phone || currentInvoice?.clientInfo?.phone || "",
+      };
+      if (coInvoiceId && !readOnly) {
+        let coList = null;
+        try { coList = await listChangeOrders(coInvoiceId); } catch { coList = null; }
+        if (coList) invoiceContext += changeOrdersPromptBlock(coInvoiceId, coList, currentInvoice.tax, coContact);
+      } else if (currentInvoice?.type === "estimate" && !readOnly) {
+        invoiceContext += "\n\nThis is an ESTIMATE. Change orders only exist on invoices: if Jake asks for one, tell him to convert the estimate first (do not emit a change order action).";
+      }
       if (readOnly) invoiceContext += "\n\nREAD-ONLY MODE: the person asking is an apprentice who cannot change anything. Answer questions about this job and how to do the work. Do NOT emit action JSON and do not offer to edit, create or schedule anything.";
       const systemPrompt = systemBase ? systemBase + invoiceContext : null;
       // Build history. Past user messages with photos get converted to
@@ -1055,7 +1070,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         // Count how many items the model mentioned updating so the retry can be specific.
         const itemCountMatch = cleanText.match(/\b(\d+)\s+(item|line)/i);
         const expectedCount = itemCountMatch ? itemCountMatch[1] : 'all';
-        const retryPrompt = `You described updating ${expectedCount} item(s) but emitted 0 JSON action blocks. The app only changes when it sees the JSON. Emit ALL the update_item JSON blocks now — one per item, back to back, no prose between them. Start immediately.`;
+        const retryPrompt = /change order/i.test(cleanText + " " + (userMsg?.text || ""))
+          ? `You described a change order but emitted no JSON action. The app only acts on the JSON. Emit the create_change_order / update_change_order / send_change_order JSON now, no prose.`
+          : `You described updating ${expectedCount} item(s) but emitted 0 JSON action blocks. The app only changes when it sees the JSON. Emit ALL the update_item JSON blocks now — one per item, back to back, no prose between them. Start immediately.`;
         const retryReply = await callAI(
           [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: retryPrompt }],
           systemPrompt,
@@ -1076,7 +1093,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
 
       // Auto-detect one-word approval of a pending call
       if (!otherActions.length && !previewEstimate && userMsg) {
-        const approval = userMsg.trim().toLowerCase();
+        const approval = String(userMsg.text || "").trim().toLowerCase();
         const approvalWords = ['approve', 'ok', 'yes', 'yep', 'approved', 'confirm', 'go', 'uh-huh', 'yup'];
         if (approvalWords.includes(approval)) {
           // Emit approve_call action; the global handler will look up the pending call
@@ -1110,6 +1127,16 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
             || a.invoiceId === '(unsaved)'
             || !currentInvoice.id
           );
+          // Change orders run here, against the open invoice, and report what
+          // really happened (saved, emailed, texted, or why not).
+          if (/^(create|update|send)_change_order$/.test(a.action)) {
+            lisaLines.push(await runChangeOrderAction({ ...a, taxPct: currentInvoice?.tax }, {
+              invoiceId: currentInvoice?.id || null,
+              isInvoice: !!currentInvoice && currentInvoice.type !== "estimate",
+              phone: coContact.phone, email: coContact.email,
+            }));
+            continue;
+          }
           let handledLocally = false;
           if (looksLikeCurrent && onLocalAction) {
             handledLocally = !!(await onLocalAction(a));
@@ -1124,7 +1151,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         }
       }
 
-      const summaryFromActions = otherActions.map(a => a.action === "send_sms" || a.action === "place_call" ? null : a.summary).filter(Boolean).join("\n");
+      const summaryFromActions = otherActions.map(a => a.action === "send_sms" || a.action === "place_call" || /_change_order$/.test(a.action) ? null : a.summary).filter(Boolean).join("\n");
       const replyText = lisaLines.length ? [summaryFromActions, ...lisaLines].filter(Boolean).join("\n")
         : previewEstimate
         ? (previewEstimate.summary || "Here's your estimate:")
@@ -5319,6 +5346,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 invoiceId={form.id || autoSavedId}
                 taxPct={form.tax}
                 clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
+                clientEmail={selectedClient?.email || effectiveClientInfo?.email || ""}
                 loadedUpdatedAt={loadedUpdatedAtRef.current}
                 onApprovedLines={(lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
               />
