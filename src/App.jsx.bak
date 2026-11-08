@@ -1134,6 +1134,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
               invoiceId: currentInvoice?.id || null,
               isInvoice: !!currentInvoice && currentInvoice.type !== "estimate",
               phone: coContact.phone, email: coContact.email,
+              photos: userMsg.photos || [],
             }));
             continue;
           }
@@ -5344,6 +5345,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             <div style={{ padding: "0 16px" }}>
               <ChangeOrdersCard
                 invoiceId={form.id || autoSavedId}
+                linkedIds={linkedIds}
                 taxPct={form.tax}
                 clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
                 clientEmail={selectedClient?.email || effectiveClientInfo?.email || ""}
