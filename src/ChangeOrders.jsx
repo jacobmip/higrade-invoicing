@@ -197,7 +197,7 @@ const btnS = (kind) => ({
 // onBuild(row | null): start (null) or resume (a draft/sent row) change-order
 // mode on the invoice itself, where the invoice's own +, Price Book and AI add
 // lines to the change order (v1.57.0). building: that mode is on now.
-export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines, onBuild, building }) {
+export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines, onBuild, building, onEstimate }) {
   const [list, setList] = useState([]);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState('');
@@ -243,9 +243,10 @@ export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, cl
         <button disabled={!!building} onClick={() => (onBuild ? onBuild(null) : setEditing({ seq: nextSeq, items: [{ name: '', desc: '', qty: 1, price: 0, taxable: true }], note: '', status: 'draft' }))}
           style={{ ...btnS('ghost'), padding: '6px 12px', fontSize: 13, opacity: building ? 0.5 : 1 }}>+ Change order</button>
       </div>
+      {onEstimate && <div style={{ fontSize: 12, color: '#6677aa', marginTop: 6 }}>Shared with {invoiceId}. This estimate's own lines stay as the customer signed them; approved change orders are added to {invoiceId} and listed on both.</div>}
       {err && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 8 }}>{err}</div>}
       {!err && list.length === 0 && (
-        <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Extra work mid-job: email or text the customer a change order. When they approve (sign, or reply YES to the text) it is added to this invoice.</div>
+        <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Extra work mid-job: email or text the customer a change order. When they approve (sign, or reply YES to the text) it is added to {onEstimate ? invoiceId : 'this invoice'}.</div>
       )}
       {list.map(c => {
         const st = STATUS[c.status] || STATUS.draft;
@@ -690,8 +691,24 @@ Rules:
 // text is what really happened, never the model's own claim. Nothing is sent
 // from here (v1.56.0): a send request saves the change order and returns a
 // draft for the chat's SendDraftCard, which sends only when Jake taps Send.
+// The invoice a job's change orders are keyed on. An invoice is its own job
+// invoice; an estimate uses the invoice it converted into (stored link, else
+// the same number under shared numbering). An estimate not yet approved and
+// converted has none: change orders start once the customer has signed.
+export function jobInvoiceId(doc, docs = []) {
+  if (!doc) return null;
+  if (doc.type !== 'estimate') return doc.id || null;
+  const isInv = (id) => !!id && docs.some(d => d.id === id && d.type !== 'estimate' && !d.deletedAt);
+  if (isInv(doc.convertedToId)) return doc.convertedToId;
+  const n = parseInt((/^EST(\d+)$/.exec(doc.id || '') || [])[1], 10);
+  if (!Number.isFinite(n) || n < 1000) return null;
+  const id = 'INV' + String(n).padStart(4, '0');
+  if (!isInv(id) || docs.some(d => d.id !== doc.id && d.convertedToId === id)) return null;
+  return id;
+}
+
 export async function runChangeOrderAction(a, { invoiceId, isInvoice, phone, email, photos: chatPhotos }) {
-  if (!isInvoice) return { text: 'Change orders go on the invoice. Convert this estimate to an invoice first.' };
+  if (!isInvoice) return { text: 'Change orders start once the customer has approved this estimate and it has its invoice.' };
   if (!invoiceId) return { text: 'Save this invoice first (add a client), then I can make the change order.' };
   try {
     const list = await listChangeOrders(invoiceId);
@@ -746,4 +763,63 @@ export async function previewChangeOrderDraft(id) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || `Preview failed (${r.status})`);
   return j;
+}
+
+// ─── Change orders on the estimate (v1.58.0) ────────────────────────────────
+// The estimate's own lines are what the customer signed and never change.
+// Approved change orders are listed under them as add-ons, each with its own
+// approval, and the job total adds them up. Used by the estimate's Preview,
+// which is also the customer's /v/<token> page. `list` rows need seq, status,
+// items, approved_at, approved_name, approved_via.
+export function changeOrderJobTotals(estimateTotal, list, taxPct) {
+  const approved = (list || []).filter(c => c.status === 'approved');
+  const added = approved.reduce((t, c) => t + coTotals(c.items, taxPct).total, 0);
+  return { approved, added: Math.round(added * 100) / 100, job: Math.round((Number(estimateTotal || 0) + added) * 100) / 100 };
+}
+
+export function ChangeOrderAddenda({ list, taxPct, estimateTotal, jobId, showPending }) {
+  const { approved, added, job } = changeOrderJobTotals(estimateTotal, list, taxPct);
+  const pending = showPending ? (list || []).filter(c => c.status === 'sent') : [];
+  if (!approved.length && !pending.length) return null;
+  const cap = { fontSize: 9, fontWeight: 700, color: '#6677aa', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: "'Barlow Condensed', sans-serif" };
+  return (
+    <div data-co-addenda style={{ padding: '14px 24px 16px', borderTop: '1px solid #eaecf0' }}>
+      <div style={{ ...cap, marginBottom: 8 }}>Approved change orders</div>
+      {approved.map(c => {
+        const t = coTotals(c.items, taxPct);
+        return (
+          <div key={c.seq} style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, fontWeight: 700, color: '#222' }}>
+              <span>{jobId ? `${jobId}-` : ''}CO{c.seq}</span><span>{money(t.total)}</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#27ae60', marginBottom: 4 }}>
+              Approved {c.approved_at ? fmtDate(c.approved_at) : ''}{c.approved_via === 'sms' ? ' by text' : c.approved_name ? ` by ${c.approved_name}` : ''}
+            </div>
+            {(c.items || []).map((it, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, color: '#555', padding: '2px 0' }}>
+                <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{it.name || it.desc}{Number(it.qty ?? 1) !== 1 ? ` x ${it.qty}` : ''}</span>
+                <span>{money(Number(it.qty ?? 1) * Number(it.price ?? 0))}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {pending.map(c => (
+        <div key={'p' + c.seq} style={{ fontSize: 12, color: '#999', marginBottom: 6 }}>
+          {jobId ? `${jobId}-` : ''}CO{c.seq} · {money(coTotals(c.items, taxPct).total)} · awaiting the customer's approval (not in the total)
+        </div>
+      ))}
+      {approved.length > 0 && (
+        <div style={{ borderTop: '1px solid #eaecf0', marginTop: 6, paddingTop: 8 }}>
+          {[['Original estimate', money(estimateTotal)], ['Approved change orders', money(added)]].map(([l, v]) => (
+            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#666', marginBottom: 4 }}><span>{l}</span><span>{v}</span></div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 15, color: '#111' }}>JOB TOTAL</span>
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 18, color: '#E8622A' }}>{money(job)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

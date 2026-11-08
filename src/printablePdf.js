@@ -49,6 +49,19 @@ function fmtDate(d) {
   const dt = new Date(+m[1], +m[2] - 1, +m[3]);
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+// A Hawaii calendar day from a date or a timestamp. Mirrors hiDay() in App.jsx.
+function hiDay(v) {
+  if (!v) return null;
+  if (/^\d{4}-\d\d-\d\d$/.test(v)) return v;
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toLocaleDateString("en-CA", { timeZone: "Pacific/Honolulu" });
+}
+// Mirrors docDates() in App.jsx.
+function pdfDates(form) {
+  if (form.type === "estimate") return [["Date", form.date], ["Sent", hiDay(form.sentAt)], ["Approved", hiDay(form.signedAt)]];
+  const firstVisit = (form.visits || []).map(v => String(v.start || "").slice(0, 10)).filter(Boolean).sort()[0] || null;
+  return [["Date", form.date], ["Due", form.dueDate], ["Job started", form.jobStartedOn || firstVisit], ["Job completed", form.jobCompletedOn]];
+}
 function calcItemTotal(item) {
   const qty = Number(item.qty) || 0;
   const price = Number(item.price) || 0;
@@ -136,14 +149,15 @@ function drawHeader(doc, form) {
   setText(doc, "#8899bb");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
-  doc.text("DATE", MARGIN, 110);
-  doc.text("DUE", MARGIN + 130, 110);
+  // v1.58.0: an estimate shows Date / Sent / Approved, an invoice Date / Due /
+  // Job started / Job completed; only the ones that are set.
+  const cols = pdfDates(form).filter(([, v]) => !!v);
+  cols.forEach(([lbl], i) => doc.text(lbl.toUpperCase(), MARGIN + i * 110, 110));
 
   setText(doc, "#dde2ee");
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(fmtDate(form.date) || "—", MARGIN, 122);
-  doc.text(fmtDate(form.dueDate) || "—", MARGIN + 130, 122);
+  cols.forEach(([, v], i) => doc.text(fmtDate(v) || "", MARGIN + i * 110, 122));
 
   // Status pill on the right end of the strip.
   const status = (form.status || (isEst ? "outstanding" : "outstanding")).toUpperCase();
@@ -557,6 +571,50 @@ async function drawPhotos(doc, form, photos) {
   }
 }
 
+// Approved change orders under the estimate's own (unchanged) lines, with
+// the job total (v1.58.0). Same numbers as ChangeOrderAddenda in ChangeOrders.jsx.
+function drawChangeOrders(doc, form, startY, list, jobId) {
+  const approved = list.filter(c => c.status === "approved");
+  if (!approved.length) return startY;
+  const coTotal = (items) => {
+    let sub = 0, taxable = 0;
+    for (const it of items || []) { const l = Number(it.qty ?? 1) * Number(it.price ?? 0); sub += l; if (it.taxable !== false) taxable += l; }
+    return Math.round((sub + Math.round(taxable * Number(form.tax || 0)) / 100) * 100) / 100;
+  };
+  const right = PAGE_W - MARGIN;
+  const ensure = (y, h) => { if (y + h > PAGE_H - 90) { doc.addPage(); return MARGIN + 10; } return y; };
+  let y = ensure(startY + 18, 40);
+  setText(doc, "#6677aa"); doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+  doc.text("APPROVED CHANGE ORDERS", MARGIN, y); y += 16;
+  let added = 0;
+  for (const c of approved) {
+    const tot = coTotal(c.items); added += tot;
+    y = ensure(y, 30 + 14 * (c.items || []).length);
+    setText(doc, NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+    doc.text(`${jobId ? jobId + "-" : ""}CO${c.seq}`, MARGIN, y);
+    const ts = fmtMoney(tot); doc.text(ts, right - doc.getTextWidth(ts), y); y += 13;
+    setText(doc, "#27ae60"); doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    doc.text(`Approved ${fmtDate(hiDay(c.approved_at)) || ""}${c.approved_via === "sms" ? " by text" : c.approved_name ? " by " + c.approved_name : ""}`, MARGIN, y); y += 13;
+    setText(doc, TEXT_MID); doc.setFontSize(10);
+    for (const it of c.items || []) {
+      const amt = fmtMoney(Number(it.qty ?? 1) * Number(it.price ?? 0));
+      const nm = wrap(doc, `${it.name || it.desc || ""}${Number(it.qty ?? 1) !== 1 ? " x " + it.qty : ""}`, right - MARGIN - 90)[0] || "";
+      doc.text(nm, MARGIN + 8, y); doc.text(amt, right - doc.getTextWidth(amt), y); y += 13;
+    }
+    y += 6;
+  }
+  const t = calcTotals(form);
+  y = ensure(y, 50);
+  setDraw(doc, RULE); doc.setLineWidth(1); doc.line(MARGIN, y - 6, right, y - 6); y += 8;
+  setText(doc, TEXT_MID); doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+  for (const [l, v] of [["Original estimate", fmtMoney(t.total)], ["Approved change orders", fmtMoney(added)]]) { doc.text(l, MARGIN, y); doc.text(v, right - doc.getTextWidth(v), y); y += 14; }
+  setText(doc, NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(13);
+  doc.text("JOB TOTAL", MARGIN, y + 4);
+  setText(doc, ORANGE); doc.setFontSize(16);
+  const jt = fmtMoney(Math.round((t.total + added) * 100) / 100); doc.text(jt, right - doc.getTextWidth(jt), y + 4);
+  return y + 18;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 export async function buildPrintablePdf(form, opts = {}) {
@@ -565,7 +623,8 @@ export async function buildPrintablePdf(form, opts = {}) {
   drawHeader(doc, form);
   const billY = drawBillTo(doc, form, 158);
   const itemsEndY = drawItemsTable(doc, form, billY + 12);
-  const totalsEndY = drawTotals(doc, form, itemsEndY, opts.lateFee);
+  let totalsEndY = drawTotals(doc, form, itemsEndY, opts.lateFee);
+  if (form.type === "estimate" && opts.changeOrders?.length) totalsEndY = drawChangeOrders(doc, form, totalsEndY, opts.changeOrders, opts.coJobId);
   drawNotesAndFooter(doc, form, totalsEndY, opts.paymentInstructions);
   if (opts.photos?.length) await drawPhotos(doc, form, opts.photos);
 

@@ -1,5 +1,17 @@
 # HI Grade Invoicing — Changelog
 
+## v1.58.0 — 2026-11-08
+
+**Change orders on the estimate too, and the dates each document marks.** The sign-and-convert flow is unchanged.
+
+- **One set of change orders per job.** A converted estimate now has the same Change orders card as its invoice, saying it is shared with INV####. You can write, build (with the Price Book, + and AI) and send a change order from either one; both show the same list and status. Approved lines still go onto the invoice automatically.
+- **The estimate's own lines stay as the customer signed them.** Its Preview, PDF and the customer's estimate link list the approved change orders underneath as separate add-ons (each with its approval date and who approved it), then Original estimate, Approved change orders and a Job total. Change orders still waiting on the customer show in the app as "awaiting approval", outside the total.
+- **The AI chat on an approved estimate** makes change orders for the job instead of editing the signed lines. The header AI's draft change order works from the estimate number too. An estimate not yet approved still has no change orders.
+- **Estimate dates:** Sent (the first time it went out) and Approved (when the customer signed) show under the estimate date, in the Preview, the PDF and the customer link.
+- **Invoice dates:** new Job Started and Job Completed fields. Job started shows the first scheduled visit until you set it. Job completed fills in the first time the invoice is sent (sending it means the work is done), or tap Done today. Both show on the Preview, the PDF and the customer link.
+- **Needs migration 112** (two date columns on invoices) before the job dates save; until then the fields say so and nothing else is affected.
+- Tests: `test/e2e/estimate-co.mjs`, `test/public-estimate.test.mjs`.
+
 ## v1.57.5 — 2026-11-08
 
 **Fix: AI chat and Price Book placement with the keyboard was hit and miss.** Phones report the keyboard in several ways, and v1.57.4 only handled one. Tested each way from the top, middle and bottom of a long invoice: the old build failed 21 of 50 checks, the new one passes all 50, three runs in a row.

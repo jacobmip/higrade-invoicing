@@ -23,7 +23,7 @@ import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
 import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
-import { runChangeOrderAction } from './ChangeOrders.jsx';
+import { runChangeOrderAction, jobInvoiceId } from './ChangeOrders.jsx';
 
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
@@ -637,12 +637,14 @@ async function draftChangeOrder(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
   const inv = ctx.getData().invoices.find(i => i.id === id);
   if (!inv) return { error: `No document ${id} in the app.` };
-  if (inv.type === 'estimate') return { error: `${id} is an estimate. Change orders go on the invoice: convert it first.` };
+  // An approved, converted estimate shares its invoice's change orders (v1.58.0).
+  const jobId = jobInvoiceId(inv, ctx.getData().invoices);
+  if (!jobId) return { error: `${id} is an estimate the customer has not approved yet. Change orders start once it is approved and converted; until then edit the estimate's own lines.` };
   if (!Array.isArray(input.items) || !input.items.length) return { error: 'A change order needs at least one line.' };
   const client = ctx.getData().clients.find(c => c.name === inv.client) || {};
   const r = await runChangeOrderAction(
     { action: 'create_change_order', items: input.items, note: input.note || '', send: input.send || 'none', taxPct: inv.tax, email: input.email, phone: input.phone },
-    { invoiceId: inv.id, isInvoice: true, phone: client.mobile || client.phone || inv.clientInfo?.phone || '', email: client.email || inv.clientInfo?.email || '', photos: [] },
+    { invoiceId: jobId, isInvoice: true, phone: client.mobile || client.phone || inv.clientInfo?.phone || '', email: client.email || inv.clientInfo?.email || '', photos: [] },
   );
   if (/^Change order not done/.test(r.text)) return { error: r.text };
   return {

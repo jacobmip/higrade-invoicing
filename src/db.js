@@ -80,6 +80,10 @@ function toInvoice(row, items = [], payments = []) {
     // When the row was made. src/docLinks.js syncs a linked estimate/invoice
     // pair only when it was made on or after its cutoff.
     createdAt: row.created_at || null,
+    // Migration 112 (v1.58.0): when the job started and was completed, shown
+    // on the invoice. Written only by setInvoiceJobDates, never by a save.
+    jobStartedOn: row.job_started_on || null,
+    jobCompletedOn: row.job_completed_on || null,
     items: items
       .filter(it => it.invoice_id === row.id)
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -1636,6 +1640,27 @@ export async function updateCalendarAttendee(invoiceId, techEmail, prevEmail = n
 
 // Writes the entry list and its sum together; material_cost is what
 // commission reads, so the two never drift.
+// Job started / completed dates on an invoice (migration 112). A direct
+// update like the material entries: save_invoice_with_items never names
+// these columns, so a full save cannot clobber them. patch keys: startedOn,
+// completedOn ('' or null clears).
+export async function setInvoiceJobDates(invoiceId, patch) {
+  const row = {}
+  if ('startedOn' in patch) row.job_started_on = patch.startedOn || null
+  if ('completedOn' in patch) row.job_completed_on = patch.completedOn || null
+  const { error } = await supabase.from('invoices').update(row).eq('id', invoiceId)
+  if (error) throw error
+}
+
+// When a document was first sent (its earliest invoice_events 'sent' row), or
+// null. The estimate's "Sent" date (v1.58.0).
+export async function firstSentAt(invoiceId) {
+  const { data, error } = await supabase.from('invoice_events').select('created_at')
+    .eq('invoice_id', invoiceId).eq('kind', 'sent').order('created_at', { ascending: true }).limit(1)
+  if (error) throw error
+  return data?.[0]?.created_at || null
+}
+
 export async function setInvoiceMaterialEntries(invoiceId, entries) {
   const clean = (entries || []).map(e => ({ id: e.id, desc: e.desc || '', amount: Number(e.amount) || 0 }))
   const total = Math.round(clean.reduce((t, e) => t + e.amount, 0) * 100) / 100

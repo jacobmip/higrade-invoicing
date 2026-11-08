@@ -16,7 +16,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
-import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals } from './ChangeOrders.jsx';
+import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals, jobInvoiceId, ChangeOrderAddenda } from './ChangeOrders.jsx';
 import SendDraftCard, { ChangeOrderSendSheet } from './SendDraftCard.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
@@ -261,6 +261,21 @@ function statusDisplay(inv) {
   return { label: "Outstanding", color: ORANGE };
 }
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
+// A Hawaii calendar day (YYYY-MM-DD) from a date or a timestamp.
+function hiDay(v) {
+  if (!v) return null;
+  if (/^\d{4}-\d\d-\d\d$/.test(v)) return v;
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toLocaleDateString("en-CA", { timeZone: "Pacific/Honolulu" });
+}
+// The dates a document shows (v1.58.0). An estimate marks when it was sent and
+// approved; an invoice marks when the job started and was completed. Job
+// started falls back to the first scheduled visit until it is set.
+function docDates(form) {
+  if (form.type === "estimate") return [["Date", form.date], ["Sent", hiDay(form.sentAt)], ["Approved", hiDay(form.signedAt)]];
+  const firstVisit = (form.visits || []).map(v => String(v.start || "").slice(0, 10)).filter(Boolean).sort()[0] || null;
+  return [["Date", form.date], ["Due", form.dueDate], ["Job started", form.jobStartedOn || firstVisit], ["Job completed", form.jobCompletedOn]];
+}
 
 // Fuzzy client lookup for natural-language AI scheduling ("Karen" → "Karen
 // Sakamoto"). The regular client search uses exact substring matching; this
@@ -1071,7 +1086,8 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       }
       // Change orders on the open invoice (migration 111). Contact comes from
       // the client record, like the card's defaults.
-      const coInvoiceId = currentInvoice?.type !== "estimate" ? currentInvoice?.id : null;
+      // An estimate shares its invoice's change orders (v1.58.0): the form passes coInvoiceId.
+      const coInvoiceId = currentInvoice?.coInvoiceId !== undefined ? currentInvoice.coInvoiceId : (currentInvoice?.type !== "estimate" ? currentInvoice?.id : null);
       const coClient = currentInvoice ? (data?.clients || []).find(c => c.name === currentInvoice.client) : null;
       const coContact = {
         email: coClient?.email || currentInvoice?.clientInfo?.email || "",
@@ -1081,8 +1097,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         let coList = null;
         try { coList = await listChangeOrders(coInvoiceId); } catch { coList = null; }
         if (coList) invoiceContext += changeOrdersPromptBlock(coInvoiceId, coList, currentInvoice.tax, coContact);
+        if (currentInvoice?.type === "estimate") invoiceContext += `\n\nThis is the ESTIMATE for job ${coInvoiceId}. Its own line items are frozen: they are what the customer signed. Extra work goes in a change order (the actions above), never add_items on this estimate. Approved change orders show on both this estimate and invoice ${coInvoiceId}, and their lines are added to the invoice.`;
       } else if (currentInvoice?.type === "estimate" && !readOnly) {
-        invoiceContext += "\n\nThis is an ESTIMATE. Change orders only exist on invoices: if Jake asks for one, tell him to convert the estimate first (do not emit a change order action).";
+        invoiceContext += "\n\nThis is an ESTIMATE the customer has not approved yet. Change orders start once it is approved and converted: if Jake asks for one, tell him that, or edit the estimate's own lines instead (do not emit a change order action).";
       }
       if (currentInvoice?.coModeSeq && !readOnly) {
         invoiceContext += `\n\nCHANGE ORDER MODE IS ON: Jake is building change order ${currentInvoice.coModeSeq} on this invoice. The "Line items" listed above are THAT CHANGE ORDER's lines, not the invoice's. Use add_items / update_item / remove_item to build it (they change the change order, never the invoice). Do NOT use create_change_order now. When Jake says to send it, use send_change_order with seq ${currentInvoice.coModeSeq}.`;
@@ -1187,8 +1204,8 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           // really happened (saved, emailed, texted, or why not).
           if (/^(create|update|send)_change_order$/.test(a.action)) {
             const r = await runChangeOrderAction({ ...a, taxPct: currentInvoice?.tax }, {
-              invoiceId: currentInvoice?.id || null,
-              isInvoice: !!currentInvoice && currentInvoice.type !== "estimate",
+              invoiceId: coInvoiceId || null,
+              isInvoice: !!coInvoiceId,
               phone: coContact.phone, email: coContact.email,
               photos: userMsg.photos || [],
             });
@@ -3211,7 +3228,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
 }
 
 // ─── PDF Preview ──────────────────────────────────────────────────────────────
-function PDFPreview({ form, clients, photos = [] }) {
+function PDFPreview({ form, clients, photos = [], changeOrders = null, coJobId = null, showPendingCo = false }) {
   const t = calcTotals(form);
   const clientRecord = clients.find(c => c.name === form.client) || {};
   const clientData = form.clientInfo || clientRecord;
@@ -3248,10 +3265,10 @@ function PDFPreview({ form, clients, photos = [] }) {
             <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17, marginTop: 4 }}>{form.id || "DRAFT"}</div>
           </div>
         </div>
-        <div style={{ background: NAVY2, padding: "10px 24px", display: "flex", alignItems: "center", gap: 28 }}>
-          {/* Skip the Due column for estimates with no due date — estimates */}
-          {/* aren't bills, and the validity note below conveys the timeframe. */}
-          {[["Date", form.date], ["Due", form.dueDate]].filter(([_, val]) => !!val).map(([label, val]) => (
+        <div style={{ background: NAVY2, padding: "10px 24px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 24px" }}>
+          {/* Only the dates that are set: an estimate has no due date, and */}
+          {/* Sent / Approved / Job completed appear once they happen. */}
+          {docDates(form).filter(([_, val]) => !!val).map(([label, val]) => (
             <div key={label}>
               <div style={{ color: "#6677aa", fontSize: 9, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>{label}</div>
               <div style={{ color: "#dde2ee", fontSize: 13, fontWeight: 600 }}>{fmtDate(val)}</div>
@@ -3369,6 +3386,9 @@ function PDFPreview({ form, clients, photos = [] }) {
             </div>
           )}
         </div>
+        {isEstimate && changeOrders?.length > 0 && (
+          <ChangeOrderAddenda list={changeOrders} taxPct={form.tax} estimateTotal={t.total} jobId={coJobId} showPending={showPendingCo} />
+        )}
         {form.notes && (
           <div style={{ padding: "13px 24px", borderTop: "1px solid #f0f2f8" }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: "#6677aa", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif", marginBottom: 6 }}>Notes</div>
@@ -4118,6 +4138,50 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data?.invoices, form.id, autoSavedId, form.convertedToId, form.downPaymentInvoiceId, form.type]
   );
+  const isEstimateDoc = (f) => f.type === "estimate";
+  // The invoice this job's change orders live on (v1.58.0): this invoice, or
+  // for an approved and converted estimate, the invoice it became. The two
+  // documents show the same change orders; approved lines go on the invoice.
+  const coInvoiceId = useMemo(() => (isEstimateDoc(form) ? jobInvoiceId({ ...form, id: form.id || autoSavedId }, data?.invoices || []) : (form.id || autoSavedId || null)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data?.invoices, form.id, autoSavedId, form.convertedToId, form.type]);
+  const coInvIdRef = useRef(coInvoiceId);
+  coInvIdRef.current = coInvoiceId;
+  // The estimate's Preview lists the job's approved change orders and its
+  // Sent date (v1.58.0); both are read when the Preview tab opens.
+  const [jobCoList, setJobCoList] = useState(null);
+  const [estSentAt, setEstSentAt] = useState(null);
+  useEffect(() => {
+    if (!isEstimateDoc(form) || activeTab !== "preview") return;
+    let on = true;
+    if (coInvoiceId) listChangeOrders(coInvoiceId).then(l => { if (on) setJobCoList(l); }).catch(() => {});
+    const id = form.id || autoSavedId;
+    if (id) db.firstSentAt(id).then(v => { if (on) setEstSentAt(v); }).catch(() => {});
+    return () => { on = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coInvoiceId, activeTab, form.id, autoSavedId]);
+  useEffect(() => {
+    const id = form.id || autoSavedId;
+    if (!isEstimateDoc(form) || !id) return;
+    db.firstSentAt(id).then(setEstSentAt).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.id, autoSavedId]);
+  // The first send stamps the dates it marks: an estimate's Sent date, and an
+  // invoice's Job completed (sending the invoice means the work is done) when
+  // it is still blank.
+  const afterFirstSend = () => {
+    if (isEstimateDoc(formRef.current)) { setEstSentAt(v => v || new Date().toISOString()); return; }
+    if (!formRef.current.jobCompletedOn) setJobDate("completedOn", today());
+  };
+  // Job dates on an invoice (migration 112). Saved straight away, on their own.
+  const [jobDateErr, setJobDateErr] = useState("");
+  const setJobDate = async (key, value) => {
+    const id = form.id || autoSavedId;
+    setForm(f => ({ ...f, [key === "startedOn" ? "jobStartedOn" : "jobCompletedOn"]: value || null }));
+    if (!id) return;
+    try { await db.setInvoiceJobDates(id, { [key]: value || null }); setJobDateErr(""); }
+    catch (e) { setJobDateErr(/job_(started|completed)_on/.test(e?.message || "") ? "Job dates need database update 112 before they save." : "Job date not saved: " + (e?.message || e)); }
+  };
   const linkedKey = linkedIds.join(',');
   const photoIds = () => [form.id || autoSavedId, ...linkedIds].filter(Boolean);
   const [linkedEvents, setLinkedEvents] = useState([]);
@@ -4454,7 +4518,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     if (coTimerRef.current) { clearTimeout(coTimerRef.current); coTimerRef.current = null; }
     coChainRef.current = coChainRef.current.then(async () => {
       const m = coModeRef.current;
-      const invId = formRef.current.id || autoSavedId;
+      const invId = coInvIdRef.current;
       if (!m || !invId || !m.items.some(coMeaningful)) return;
       setCoSaveState('saving');
       try {
@@ -4475,7 +4539,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // Leaving the screen mid-edit still saves the change order.
   useEffect(() => () => { if (coTimerRef.current) coSaveNow(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const startChangeOrder = async (row) => {
-    const invId = form.id || autoSavedId;
+    const invId = coInvIdRef.current;
     if (!invId) return;
     let seq = row?.seq;
     if (!row) {
@@ -4746,6 +4810,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       if (form.id) {
         try { await db.recordInvoiceEvent(form.id, 'sent', tp.phone, { kind: tp.kind, channel: 'sms' }); }
         catch (e) { console.warn('recordInvoiceEvent failed:', e); }
+        afterFirstSend();
         refreshEvents?.();
       }
       setTextPreview(null);
@@ -4795,6 +4860,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         if (form.id) {
           try { await db.recordInvoiceEvent(form.id, 'sent', primaryEmail, { kind: 'estimate' }); }
           catch (e) { console.warn('recordInvoiceEvent failed:', e); }
+          afterFirstSend();
           try { await db.recordInvoiceVersion(form, primaryEmail, "Estimate sent", "email_sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
         }
@@ -4815,6 +4881,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (form.id) {
             try { await db.recordInvoiceEvent(form.id, 'sent', primaryEmail, { kind: 'invoice' }); }
             catch (e) { console.warn('recordInvoiceEvent failed:', e); }
+            afterFirstSend();
             try { await db.recordInvoiceVersion(form, primaryEmail, "Invoice sent", "email_sent"); }
             catch (e) { console.warn('Version snapshot failed:', e); }
           }
@@ -5201,7 +5268,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           scrolled (v1.57.2). */}
       {coSheet && coMode && createPortal(
         <ChangeOrderSendSheet
-          invoiceId={form.id || autoSavedId}
+          invoiceId={coInvoiceId}
           linkedIds={linkedIds}
           row={coRowRef.current}
           items={coMode.items.filter(coMeaningful)}
@@ -5593,6 +5660,28 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             {!isEstimate && (
               <div style={{ minWidth: 0 }}><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
             )}
+            {/* v1.58.0: the estimate marks when it was sent and approved; the */}
+            {/* invoice marks when the job started and was completed. */}
+            {isEstimate && (estSentAt || form.signedAt) && (
+              <div data-est-dates style={{ fontSize: 12, color: "#6677aa", marginTop: -2 }}>
+                {[estSentAt && `Sent ${fmtDate(hiDay(estSentAt))}`, form.signedAt && `Approved ${fmtDate(hiDay(form.signedAt))}`].filter(Boolean).join(" · ")}
+              </div>
+            )}
+            {!isEstimate && (
+              <div style={{ minWidth: 0 }}>
+                <label style={S.label}>Job Started</label>
+                <input aria-label="Job started" type="date" style={S.input} value={form.jobStartedOn || ""} onChange={e => setJobDate("startedOn", e.target.value)} />
+                {!form.jobStartedOn && docDates(form)[2][1] && <div style={{ fontSize: 11, color: "#999", marginTop: 3 }}>Blank shows the first visit, {fmtDate(docDates(form)[2][1])}</div>}
+              </div>
+            )}
+            {!isEstimate && (
+              <div style={{ minWidth: 0 }}>
+                <label style={S.label}>Job Completed</label>
+                <input aria-label="Job completed" type="date" style={S.input} value={form.jobCompletedOn || ""} onChange={e => setJobDate("completedOn", e.target.value)} />
+                {!form.jobCompletedOn && <button type="button" onClick={() => setJobDate("completedOn", today())} style={{ background: "none", border: "none", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "4px 0 0", cursor: "pointer" }}>Done today</button>}
+              </div>
+            )}
+            {!isEstimate && jobDateErr && <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "#c0392b" }}>{jobDateErr}</div>}
           </div>
 
           {/* Assigned tech (migration 053). Admin-only: a plumber does not get
@@ -5774,7 +5863,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               document.body
             )}
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq } : form} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} topInset={() => formHeaderRef.current?.getBoundingClientRect().bottom ?? 0} /></div>}
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq, coInvoiceId } : { ...form, coInvoiceId }} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} topInset={() => formHeaderRef.current?.getBoundingClientRect().bottom ?? 0} /></div>}
 
             {coMode && coMode.items.length === 0 && (
               <div style={{ fontSize: 13, color: "#999", padding: "8px 2px 12px" }}>No change order lines yet. Tap +, Price Book or AI.</div>
@@ -5819,10 +5908,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 mid-job, right under the invoice's own lines (v1.57.1). Hidden,
                 not unmounted, while one is being built: the orange banner
                 above takes its place. */}
-            {isAdmin && !isEstimate && !lockedView && (form.id || autoSavedId) && (
+            {isAdmin && !lockedView && coInvoiceId && (
               <div ref={coCardRef} style={{ display: coMode ? "none" : "block", marginBottom: 12 }}>
                 <ChangeOrdersCard
-                  invoiceId={form.id || autoSavedId}
+                  invoiceId={coInvoiceId}
+                  onEstimate={isEstimate}
                   linkedIds={linkedIds}
                   taxPct={form.tax}
                   clientPhone={selectedClient?.mobile || selectedClient?.phone || effectiveClientInfo?.phone || ""}
@@ -5830,7 +5920,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   loadedUpdatedAt={loadedUpdatedAtRef.current}
                   onBuild={startChangeOrder}
                   building={!!coMode}
-                  onApprovedLines={(lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
+                  onApprovedLines={isEstimate ? undefined : (lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
                 />
               </div>
             )}
@@ -6137,7 +6227,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             techName={viewerName}
           />
         )}
-        <PDFPreview form={form} clients={clients} photos={invoicePhotos} />
+        <PDFPreview form={isEstimate ? { ...form, sentAt: estSentAt } : form} clients={clients} photos={invoicePhotos} changeOrders={isEstimate ? jobCoList : null} coJobId={coInvoiceId} showPendingCo />
       </div>
       <div style={{ width: viewportW || `${100 / TABS.length}%`, flexShrink: 0, maxHeight: (tabIdx === 2 || dragX !== 0 || animating) ? "none" : 0, overflow: (tabIdx === 2 || dragX !== 0 || animating) ? "visible" : "hidden" }}>
         <div style={{ padding: 16 }}>
@@ -9141,9 +9231,9 @@ function PublicViewerPage({ token }) {
           return;
         }
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        const { invoice, items, payments, photos } = await r.json();
+        const { invoice, items, payments, photos, dates, changeOrders, coJobId } = await r.json();
         if (cancelled) return;
-        setState({ loading: false, error: null, invoice, items: items || [], payments: payments || [], photos: photos || [] });
+        setState({ loading: false, error: null, invoice, items: items || [], payments: payments || [], photos: photos || [], dates: dates || null, changeOrders: changeOrders || [], coJobId: coJobId || null });
         // Fire-and-forget open tracker. Guarded so React StrictMode double
         // mount doesn't double-log; the server also de-dupes by IP/hour.
         if (!trackedRef.current) {
@@ -9187,6 +9277,10 @@ function PublicViewerPage({ token }) {
     billingAddress: state.invoice.billing_address || null,
     jobAddress: state.invoice.job_address || null,
     showBillingAddress: state.invoice.show_billing_address ?? true,
+    sentAt: state.dates?.sentAt || null,
+    signedAt: state.dates?.signedAt || null,
+    jobStartedOn: state.dates?.jobStartedOn || null,
+    jobCompletedOn: state.dates?.jobCompletedOn || null,
     items: (state.items || []).sort((a, b) => a.sort_order - b.sort_order).map(it => ({
       name: it.name || '',
       desc: it.description ?? it.desc ?? '',
@@ -9265,6 +9359,8 @@ function PublicViewerPage({ token }) {
         lateFee: lateFeeInfo,
         paymentInstructions: paymentInstructionsText,
         photos,
+        changeOrders: state.changeOrders || [],
+        coJobId: state.coJobId || null,
       });
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank', 'noopener,noreferrer');
@@ -9703,7 +9799,7 @@ function PublicViewerPage({ token }) {
           </div>
         )}
         {/* Reuse the in-app PDF preview for full details */}
-        <PDFPreview form={invForm} clients={[]} photos={state.photos || []} />
+        <PDFPreview form={invForm} clients={[]} photos={state.photos || []} changeOrders={state.changeOrders || null} coJobId={state.coJobId || null} />
         {/* Footer */}
         <div style={{ textAlign: 'center', color: '#aaa', fontSize: 12, padding: '20px 16px 0' }}>
           Questions? Call or text 808-393-0015<br />higradeplumbing@gmail.com
@@ -13349,7 +13445,15 @@ export default function App() {
     const lateFee = calcLateFee(inv, t);
     const paymentInstructions = inv.type === 'estimate' ? '' : resolvePaymentInstructions();
     const photos = inv.id ? await fetchInvoicePhotos([inv.id, ...linkedDocIds(inv, dataRef.current?.invoices || [])]) : [];
-    return await mod.buildPrintablePdf(inv, { lateFee, paymentInstructions, photos });
+    // An estimate's PDF carries its Sent date and the job's approved change
+    // orders, like its Preview (v1.58.0).
+    let pdfInv = inv, changeOrders = [], coJobId = null;
+    if (inv.type === 'estimate' && inv.id) {
+      try { pdfInv = { ...inv, sentAt: await db.firstSentAt(inv.id) }; } catch { /* no Sent date */ }
+      coJobId = jobInvoiceId(inv, dataRef.current?.invoices || []);
+      if (coJobId) { try { changeOrders = await listChangeOrders(coJobId); } catch { /* none shown */ } }
+    }
+    return await mod.buildPrintablePdf(pdfInv, { lateFee, paymentInstructions, photos, changeOrders, coJobId });
   };
 
   const shareInvoice = async (inv) => {

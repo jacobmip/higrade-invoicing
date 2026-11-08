@@ -134,9 +134,60 @@ export default async function handler(req, res) {
     const payments = paymentsRes.ok ? await paymentsRes.json() : [];
     const photos = photosRes.ok ? await photosRes.json() : [];
 
-    return send(res, 200, { invoice: inv, items, payments, photos });
+    // v1.58.0: the dates the page shows, and for an estimate the job's
+    // approved change orders (listed under its own, unchanged, lines). Each
+    // read is best-effort: the page still loads without them.
+    const dates = await readDates(base, headers, inv);
+    let changeOrders = [], coJobId = null;
+    if (inv.type === 'estimate') {
+      try {
+        coJobId = await jobInvoiceIdFor(base, headers, inv);
+        if (coJobId) {
+          const cr = await fetch(`${base}/rest/v1/change_orders?invoice_id=eq.${encodeURIComponent(coJobId)}&status=eq.approved&select=seq,status,items,approved_at,approved_name,approved_via&order=seq`, { headers });
+          if (cr.ok) changeOrders = await cr.json();
+        }
+      } catch { /* no change orders shown */ }
+    }
+
+    return send(res, 200, { invoice: inv, items, payments, photos, dates, changeOrders, coJobId });
   } catch (e) {
     console.error('[public-invoice] error:', e);
     return send(res, 500, { error: e.message || String(e) });
   }
+}
+
+// Sent (first 'sent' event), approved (signature), job started (stored, else
+// the first visit) and job completed. job_started_on / job_completed_on come
+// from migration 112; until it is applied the read falls back without them.
+async function readDates(base, headers, inv) {
+  const out = { sentAt: null, signedAt: null, jobStartedOn: null, jobCompletedOn: null };
+  const id = encodeURIComponent(inv.id);
+  try {
+    let r = await fetch(`${base}/rest/v1/invoices?id=eq.${id}&select=signed_at,visits,job_started_on,job_completed_on`, { headers });
+    if (!r.ok) r = await fetch(`${base}/rest/v1/invoices?id=eq.${id}&select=signed_at,visits`, { headers });
+    const row = r.ok ? (await r.json())[0] : null;
+    if (row) {
+      out.signedAt = row.signed_at || null;
+      const firstVisit = (Array.isArray(row.visits) ? row.visits : []).map(v => String(v?.start || '').slice(0, 10)).filter(Boolean).sort()[0] || null;
+      out.jobStartedOn = row.job_started_on || firstVisit;
+      out.jobCompletedOn = row.job_completed_on || null;
+    }
+    const er = await fetch(`${base}/rest/v1/invoice_events?invoice_id=eq.${id}&kind=eq.sent&select=created_at&order=created_at.asc&limit=1`, { headers });
+    if (er.ok) out.sentAt = (await er.json())[0]?.created_at || null;
+  } catch { /* dates are extras */ }
+  return out;
+}
+
+// The invoice an estimate's change orders live on: its conversion, else the
+// same number (shared numbering, >= 1000). Mirrors jobInvoiceId() in src/ChangeOrders.jsx.
+async function jobInvoiceIdFor(base, headers, inv) {
+  const exists = async (id) => {
+    const r = await fetch(`${base}/rest/v1/invoices?id=eq.${encodeURIComponent(id)}&type=eq.invoice&deleted_at=is.null&select=id`, { headers });
+    return r.ok && (await r.json()).length > 0;
+  };
+  if (inv.converted_to_id && await exists(inv.converted_to_id)) return inv.converted_to_id;
+  const n = parseInt((/^EST(\d+)$/.exec(inv.id || '') || [])[1], 10);
+  if (!Number.isFinite(n) || n < 1000) return null;
+  const id = 'INV' + String(n).padStart(4, '0');
+  return (await exists(id)) ? id : null;
 }
