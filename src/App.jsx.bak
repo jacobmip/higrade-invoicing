@@ -4561,7 +4561,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   const handleConvert = async ({ finishing = false } = {}) => {
     const targetType = isEstimate ? "invoice" : "estimate";
     const msg = targetType === "estimate"
-      ? `Convert this invoice back to an estimate? The original invoice will be DELETED — only the new estimate will remain.`
+      ? `Create an estimate from this invoice? The invoice is kept, and the two are linked. Payments and the schedule stay on the invoice.`
       : `Create a copy of this as an invoice? The original estimate will be kept (and marked as closed).`;
     // Finishing a half-done conversion asks its own question in convertInvoice.
     if (!finishing && !confirm(msg)) return;
@@ -4587,7 +4587,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       return;
     }
     // From here the conversion owns this document's row: it writes the
-    // estimate as converted (or deletes the invoice), then opens the other
+    // estimate as converted (an invoice is left as it is), then opens the other
     // document. Opening it remounts the form (FormBoundary is keyed on the
     // document id since v1.38.5), and the unmount flush would save THIS form's
     // stale copy back over that write -- the estimate came back as an unlinked
@@ -13416,7 +13416,8 @@ export default function App() {
     //
     // Each row still gets a fresh id so the insert cannot collide with the
     // source document's rows before they are removed.
-    const carriedPayments = (form.payments || []).map(p => ({
+    // invoice -> estimate keeps the invoice (v1.51.1), so its payments stay on it.
+    const carriedPayments = (isEstTarget ? [] : (form.payments || [])).map(p => ({
       ...p,
       id: Date.now() + Math.floor(Math.random() * 100000),
       note: p.note || (targetType === "invoice" ? "Down payment (from estimate)" : ""),
@@ -13426,10 +13427,10 @@ export default function App() {
     // Status of the new doc:
     //   estimate → invoice: "paid" if deposit covers it, "partial" if some,
     //                       "outstanding" if none.
-    //   invoice  → estimate: always "outstanding".
+    //   invoice  → estimate: "converted", linked to the invoice it came from.
     const initialStatus = targetType === "invoice"
       ? (carriedPaid >= totals.total - 0.01 ? "paid" : carriedPaid > 0 ? "partial" : "outstanding")
-      : "draft";
+      : "converted";
     const movedVisits = targetType === "invoice"
       ? (Array.isArray(form.visits) ? form.visits : []).map(v => ({ ...v, kind: "job" }))
       : [];
@@ -13446,16 +13447,17 @@ export default function App() {
       // estimate -> invoice MOVES the schedule: the invoice takes the estimate's
       // visits (relabelled kind "job") and so its Google event ids, and the
       // estimate is cleared below. Anything else (invoice -> estimate) starts
-      // unscheduled, since the source is deleted and its event is not ours to carry.
+      // unscheduled: the invoice keeps its own visits and events.
       gcalEventId: movedVisits.length ? form.gcalEventId || null : null,
       gcalDate: movedVisits.length ? form.gcalDate || null : null,
       visits: movedVisits,
       gcalDurationMinutes: movedVisits.length ? form.gcalDurationMinutes ?? null : null,
       followUpEventId: null,
       followUpDate: null,
-      // Don't carry the convertedToId or viewToken from the source — the copy
-      // is brand new and viewToken must be unique across all invoices.
-      convertedToId: null,
+      // viewToken must be unique across all invoices, so never carry it. An
+      // estimate made from an invoice points at that invoice, exactly as if it
+      // had been converted into it, so the cross-link shows on both.
+      convertedToId: isEstTarget ? form.id : null,
       viewToken: null,
       // Down-payment settings belong to the estimate, not the invoice it
       // becomes. Carrying them over made the new invoice think it still owed
@@ -13468,10 +13470,10 @@ export default function App() {
     //   estimate → invoice: KEEP the source estimate, stamp it with
     //                       convertedToId so the Estimates list counts it
     //                       as "closed" (records of every signed estimate).
-    //   invoice  → estimate: DELETE the source invoice. Going back to an
-    //                       estimate means the invoice was sent prematurely
-    //                       — we don't want two competing copies.
-    const deleteSource = targetType === "estimate";
+    //   invoice  → estimate: KEEP the invoice untouched (v1.51.1; it used to be
+    //                       deleted). The new estimate carries convertedToId
+    //                       = the invoice, so the two are linked.
+    const updateSource = !isEstTarget;
     // payments: [] is the other half of the move. The save RPC
     // (migrations/059) deletes and reinserts a document's payment rows on
     // every save, so persisting an empty list removes them from the estimate.
@@ -13484,11 +13486,11 @@ export default function App() {
     // reads it too. Scoped inside the else (v1.35.3 to v1.42.0) it threw
     // "Can't find variable: sourceUpdated" after the invoice had already been
     // saved, so every in-app conversion stopped halfway.
-    const sourceUpdated = deleteSource ? null : { ...form, convertedToId: newId, status: "converted", payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
-    if (deleteSource) {
+    const sourceUpdated = !updateSource ? null : { ...form, convertedToId: newId, status: "converted", payments: [], ...(movedVisits.length ? { visits: [], gcalEventId: null, gcalDate: null, gcalDurationMinutes: null } : {}) };
+    if (!updateSource) {
       setData(d => ({
         ...d,
-        invoices: [copy, ...d.invoices.filter(inv => inv.id !== form.id)],
+        invoices: [copy, ...d.invoices],
         nextNum: isEstTarget ? d.nextNum : Math.max(d.nextNum, num + 1),
         nextEstimateNum: isEstTarget ? Math.max(d.nextEstimateNum || 712, num + 1) : (d.nextEstimateNum || 712),
       }));
@@ -13509,9 +13511,7 @@ export default function App() {
         try { await db.setInvoiceApprentice(newId, form.apprenticeId); }
         catch (e) { console.warn("carry apprentice on convert failed:", e); }
       }
-      if (deleteSource) {
-        await db.deleteInvoice(form.id);
-      } else {
+      if (updateSource) {
         // Before stamping convertedToId on the source estimate, delete any
         // invoices that share its viewToken. Those are orphans left by a
         // previous failed conversion (step 1 succeeded but step 2 threw),
