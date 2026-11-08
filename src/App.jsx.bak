@@ -17,6 +17,7 @@ import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
 import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction } from './ChangeOrders.jsx';
+import SendDraftCard from './SendDraftCard.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
@@ -506,7 +507,7 @@ Create a new estimate (use this when user says estimate, quote, or bid):
 Add items to an existing invoice:
 {"action":"add_items","invoiceId":"INV0000","items":[{"name":"Short Title","desc":"step1\\nstep2","qty":1,"price":000}],"summary":"one sentence"}
 
-Send invoice email (requires confirmation):
+Send invoice email (opens the app's send screen with the email for Jake to check and confirm; nothing is sent until he taps Send there):
 {"action":"send_email","invoiceId":"INV0000","summary":"one sentence"}
 
 Save or update a price in Jake's memory (use when Jake says "save", "remember", "set price", "my price for X is Y"):
@@ -529,12 +530,12 @@ CRITICAL — You can ALWAYS update an existing client with update_client. Never 
 Delete a client:
 {"action":"delete_client","clientName":"exact name","summary":"one sentence"}
 
-Send a text message from Lisa's number (sends immediately):
+Text the customer from Lisa's number (the app shows Jake a draft he can edit; it is sent only when he taps Send):
 {"action":"send_sms","phone":"8085551234","message":"Aloha John, just following up on your estimate...","summary":"one sentence"}
-- You can send a text message from Lisa's number using send_sms. Use this when Jake says "text", "message", "send a text to", or "follow up by text".
+- You can text a customer from Lisa's number using send_sms. Use this when Jake says "text", "message", "send a text to", or "follow up by text". The app shows it to Jake as a draft first and sends only when he taps Send, so never say it was sent: say the draft is ready.
 - Always write the message in Lisa's professional voice: warm, brief, Hawaiian (Aloha/Mahalo). Never include pricing unless Jake explicitly provides it.
 - Take the phone from CLIENTS above or from what Jake said. If there is no phone number, ask for it in plain text instead of emitting the action.
-- When asked to 'polish', 'rewrite', or 'clean up' a message for a customer, rewrite it in Lisa's voice (warm, Hawaiian, Aloha/Mahalo, under 160 chars, no pricing), show the polished version clearly with the label 'Polished message:', then immediately use send_sms to send it to the customer's phone. If you don't have the phone number, ask for it first. Never just show the polished text in chat without also offering to send it.
+- When asked to 'polish', 'rewrite', or 'clean up' a message for a customer, rewrite it in Lisa's voice (warm, Hawaiian, Aloha/Mahalo, under 160 chars, no pricing), show the polished version clearly with the label 'Polished message:', then immediately use send_sms so Jake gets it as a draft he can send. If you don't have the phone number, ask for it first.
 
 Queue an outbound call for Lisa (does NOT dial; Jake approves it on Telegram first or by saying 'approve'/'ok'/'yes' in chat):
 {"action":"place_call","phone":"8085551234","name":"John","about":"following up on the water heater estimate from last week","context":"customer asked about financing options","summary":"one sentence"}
@@ -1109,8 +1110,10 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       // never silently no-ops on a draft invoice.
       const INVOICE_OPS = new Set([
         'add_items', 'update_invoice', 'add_payment',
-        'remove_item', 'update_item',
+        'remove_item', 'update_item', 'send_email',
       ]);
+      // Drafts the chat shows before anything goes to a customer (v1.56.0).
+      const drafts = [];
       const lisaLines = [];
       if (otherActions.length && onGlobalAction) {
         for (const a of otherActions) {
@@ -1130,12 +1133,21 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           // Change orders run here, against the open invoice, and report what
           // really happened (saved, emailed, texted, or why not).
           if (/^(create|update|send)_change_order$/.test(a.action)) {
-            lisaLines.push(await runChangeOrderAction({ ...a, taxPct: currentInvoice?.tax }, {
+            const r = await runChangeOrderAction({ ...a, taxPct: currentInvoice?.tax }, {
               invoiceId: currentInvoice?.id || null,
               isInvoice: !!currentInvoice && currentInvoice.type !== "estimate",
               phone: coContact.phone, email: coContact.email,
               photos: userMsg.photos || [],
-            }));
+            });
+            lisaLines.push(r.text);
+            if (r.draft) drafts.push(r.draft);
+            continue;
+          }
+          // A text is never sent straight from the model: it becomes a draft
+          // Jake can edit, sent only when he taps Send.
+          if (a.action === "send_sms") {
+            drafts.push({ kind: "sms", phone: String(a.phone || coContact.phone || ""), message: String(a.message || ""), invoiceId: a.invoiceId || currentInvoice?.id || null, status: "draft" });
+            lisaLines.push("Here is the text. Check it, edit it if you like, and tap Send.");
             continue;
           }
           let handledLocally = false;
@@ -1158,7 +1170,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         ? (previewEstimate.summary || "Here's your estimate:")
         : (cleanText || summaryFromActions || (otherActions.length ? "✓ Done" : reply));
 
-      setMsgs(p => [...p, { role: "assistant", text: replyText, estimate: previewEstimate || undefined }]);
+      setMsgs(p => [...p, { role: "assistant", text: replyText, estimate: previewEstimate || undefined, ...(drafts.length ? { drafts } : {}) }]);
     } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Error: " + e.message }]); }
     setLoading(false);
   };
@@ -1192,6 +1204,14 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
                 </div>
               )}
               {m.text}
+              {(m.drafts || []).map((d, k) => (
+                <SendDraftCard key={k} draft={d}
+                  onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, drafts: (x.drafts || []).map((y, n) => n === k ? { ...y, ...patch } : y) } : x))}
+                  sendSms={async ({ phone, message, invoiceId }) => {
+                    const r = await sendLisaText({ phone, message, invoice: invoiceId ? (data?.invoices || []).find(x => x.id === invoiceId) : null });
+                    return r;
+                  }} />
+              ))}
               {m.estimate && (
                 <div style={{ marginTop: 10, borderTop: "1px solid #e8ecf4", paddingTop: 8 }}>
                   {m.estimate.items.map((it, j) => (
@@ -2940,6 +2960,9 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
               {m.card?.type === "batch_created" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", border: "1.5px solid #b8f0d0" }}>{m.card.invoices.map((inv, j) => <div key={j} onClick={() => onOpenDoc?.(inv)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", cursor: "pointer", borderBottom: j < m.card.invoices.length - 1 ? "1px solid #d4f5e4" : "none" }}><Icon name="check" size={13} color="#27ae60" /><span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#27ae60", flex: 1 }}>{inv.id} · {inv.type === "estimate" ? "Estimate" : "Invoice"}</span><span style={{ fontSize: 12, color: "#27ae60", fontWeight: 700 }}>{fmt(calcTotals(inv).total)}</span><span style={{ fontSize: 10, color: "#27ae60" }}>Open →</span></div>)}</div>}
               {m.card?.type === "added" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}><Icon name="check" size={16} color="#27ae60" /><div style={{ fontSize: 13, fontWeight: 600, color: "#27ae60" }}>{m.card.count} item{m.card.count !== 1 ? "s" : ""} added to {m.card.invoiceId}</div></div>}
               {m.card?.type === "saved_item" && <div style={{ marginTop: 10, background: "#edf4ff", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #c0d8ff" }}><Icon name="items" size={15} color="#2980b9" /><div><div style={{ fontSize: 13, fontWeight: 700, color: "#2980b9" }}>{m.card.item?.name}</div><div style={{ fontSize: 12, color: "#555" }}>{fmt(m.card.item?.price)} saved to My Items</div></div></div>}
+              {m.card?.type === "confirm_sms" && <SendDraftCard draft={{ kind: "sms", phone: m.card.phone, message: m.card.message, invoiceId: m.card.invoiceId, status: m.card.status || "draft", result: m.card.result }}
+                onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, ...patch } } : x))}
+                sendSms={({ phone, message, invoiceId }) => sendLisaText({ phone, message, invoice: invoiceId ? data.invoices.find(x => x.id === invoiceId) : null })} />}
               {m.card?.type === "confirm_email" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{m.card.invoiceId} · {fmt(m.card.total)}</div><div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Send to: {m.card.email}</div><div style={{ display: "flex", gap: 8 }}><button onClick={() => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, type: "email_cancelled" } } : x))} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "7px 0" }}>Cancel</button><button onClick={() => confirmEmail(i)} style={{ ...S.btn("navy"), flex: 2, fontSize: 12, padding: "7px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="mail" size={13} color="#fff" /> Confirm Send</button></div></div>}
               {m.card?.type === "email_sending" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>{[0,1,2].map(k => <span key={k} style={{ width: 7, height: 7, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}<span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>Sending…</span></div>}
               {m.card?.type === "email_sent" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}><Icon name="check" size={15} color="#27ae60" /><span style={{ fontSize: 12, fontWeight: 600, color: "#27ae60" }}>Sent!</span></div>}
@@ -4354,6 +4377,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     const a = action || {};
     const validStatus = (s) => ["outstanding", "paid", "partial", "net30"].includes(s);
     switch (a.action) {
+      // Email this document: open the normal send screen, which shows the
+      // email and recipients and sends only on Jake's tap (v1.56.0).
+      case "send_email": {
+        if (!form.id && !autoSavedId) return false;
+        setConfirmSend(isEstimate ? "estimate" : "invoice");
+        return true;
+      }
       case "add_items": {
         if (Array.isArray(a.items) && a.items.length) {
           handleAddFromAI(a.items, a.notes);
