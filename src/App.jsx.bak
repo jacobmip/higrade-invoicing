@@ -913,49 +913,61 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   // Scroll within the messages div only (direct scrollTop). scrollIntoView
   // bubbles up past the overflow container on iOS Safari and scrolls the
   // outer page, which made the whole page jump on every new message.
-  // Keyboard height while the typing box has focus (visualViewport), so the
-  // chat can shrink to the space between the form header and the keyboard.
-  const [focused, setFocused] = useState(false);
-  const [kb, setKb] = useState(0);
+  // Keep the whole chat between the form header and the keyboard while typing.
+  // Phones report the keyboard in different ways: a visualViewport resize (Safari),
+  // a late or missing event, Safari panning the page to the caret, or the app's
+  // webview itself shrinking. So fitChat() measures what is visible right now
+  // and is re-run on every viewport event plus a few timers after focus. It sets
+  // the height on the element directly and scrolls instantly: a smooth scroll
+  // started while the keyboard animates in is often cut off by iOS.
+  const FULL_H = 400;
+  const fullHRef = useRef(0);
   useEffect(() => {
-    const vv = window.visualViewport;
-    if (!focused || !vv) { setKb(0); return; }
-    const update = () => setKb(Math.max(0, Math.round(window.innerHeight - vv.height)));
-    update();
-    vv.addEventListener("resize", update);
-    return () => vv.removeEventListener("resize", update);
-  }, [focused]);
-  const headerBottom = () => Math.max(topInset ? topInset() : 0, window.visualViewport?.offsetTop || 0);
-  const panelHeight = focused && kb > 80
-    ? Math.max(220, Math.min(400, window.innerHeight - kb - headerBottom() - 20))
-    : 400;
-  useEffect(() => {
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-    }
-  }, [msgs, loading, panelHeight]);
-  // Put the whole chat between the form header and the keyboard. The invoice
-  // form scrolls inside its own panel (window.scrollY stays 0), so scroll the
-  // nearest scrolling ancestor, not the window.
-  const alignToKeyboard = () => {
+    const note = () => { if (document.activeElement !== inputElRef.current) fullHRef.current = window.innerHeight; };
+    fullHRef.current = window.innerHeight;
+    window.addEventListener("resize", note);
+    return () => window.removeEventListener("resize", note);
+  }, []);
+  const headerBottom = () => (topInset ? topInset() : 0);
+  const scrollMessagesDown = () => { const m = messagesRef.current; if (m) m.scrollTop = m.scrollHeight; };
+  const fitChat = () => {
     const el = panelRef.current;
     if (!el) return;
+    if (document.activeElement !== inputElRef.current) { if (el.style.height !== FULL_H + "px") { el.style.height = FULL_H + "px"; scrollMessagesDown(); } return; }
+    const vv = window.visualViewport;
+    // Safari scrolls the page itself to reach the caret. Undo it: the form
+    // panel is what should scroll, and a panned page hides the form header.
+    if ((vv && vv.offsetTop > 0) || window.scrollY > 0) window.scrollTo(0, 0);
+    const vTop = vv ? vv.offsetTop : 0;
+    const vBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const keyboardUp = vBottom < (fullHRef.current || window.innerHeight) - 80;
+    const top = Math.max(headerBottom(), vTop) + 6;
+    const bottom = vBottom - 8;
+    const h = keyboardUp ? Math.max(200, Math.min(FULL_H, Math.round(bottom - top))) : FULL_H;
+    if (el.style.height !== h + "px") { el.style.height = h + "px"; scrollMessagesDown(); }
+    if (!keyboardUp) return;
     let sc = el.parentElement;
     while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
-    const vv = window.visualViewport;
-    const visibleBottom = (vv ? vv.offsetTop + vv.height : window.innerHeight) - 8;
+    if (!sc) return;
     const r = el.getBoundingClientRect();
-    let delta = r.bottom - visibleBottom;
-    // Never push the top of the chat under the header.
-    if (r.top - delta < headerBottom() + 4) delta = r.top - headerBottom() - 4;
-    if (Math.abs(delta) <= 2) return;
-    if (sc) sc.scrollBy({ top: delta, behavior: "smooth" }); else window.scrollBy({ top: delta, behavior: "smooth" });
+    let delta = r.bottom - bottom;
+    if (r.top - delta < top) delta = r.top - top; // never under the header
+    if (Math.abs(delta) > 1) sc.scrollTop += delta;
   };
-  useLayoutEffect(() => {
-    if (!focused || kb <= 80) return;
-    const id = requestAnimationFrame(alignToKeyboard);
-    return () => cancelAnimationFrame(id);
-  }, [focused, kb, panelHeight]);
+  const fitTimersRef = useRef([]);
+  const scheduleFit = () => {
+    fitTimersRef.current.forEach(clearTimeout);
+    fitTimersRef.current = [0, 120, 300, 600, 1000, 1500].map(ms => setTimeout(() => requestAnimationFrame(fitChat), ms));
+  };
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const on = () => requestAnimationFrame(fitChat);
+    vv?.addEventListener("resize", on);
+    vv?.addEventListener("scroll", on);
+    window.addEventListener("resize", on);
+    return () => { vv?.removeEventListener("resize", on); vv?.removeEventListener("scroll", on); window.removeEventListener("resize", on); fitTimersRef.current.forEach(clearTimeout); };
+  }, []);
+  useEffect(() => { scrollMessagesDown(); }, [msgs, loading]);
 
   // Hold the active recognition instance so we can stop a stuck one and
   // toggle the mic button off without crashing the whole app. iOS Safari
@@ -1221,7 +1233,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
   // to promote the panel to a fixed overlay tied to visualViewport metrics
   // and lock body scroll on focus — that combination made the box visibly
   // shift around on every keystroke as the keyboard animated.
-  const containerStyle = { position: "relative", height: panelHeight, transition: "height 120ms ease-out", background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
+  const containerStyle = { position: "relative", height: FULL_H, background: "#f4f6fa", borderRadius: 12, overflow: "hidden", border: "1.5px solid #dde2ee" };
 
   return (
     <div ref={panelRef} data-no-swipe="true" style={containerStyle}>
@@ -1321,13 +1333,10 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           style={{ flex: 1, minHeight: 38, maxHeight: 120, border: "1.5px solid #dde2ee", borderRadius: 8, padding: "9px 12px", fontSize: 16, fontFamily: "'Barlow', sans-serif", outline: "none", background: "#f8f9fc", minWidth: 0, lineHeight: "20px", overflowY: "auto", overflowX: "hidden", whiteSpace: "pre-wrap", overflowWrap: "anywhere", WebkitUserModify: "read-write-plaintext-only" }}
           onInput={e => setInput(e.currentTarget.innerText)}
           onFocus={() => {
-            // The keyboard effect above sizes and places the chat once the
-            // keyboard is up. iOS sometimes reports the keyboard late, so also
-            // re-place it once the keyboard has animated in.
-            setFocused(true);
-            setTimeout(alignToKeyboard, 400);
+            // fitChat() places the chat once the keyboard is up; see above.
+            scheduleFit();
           }}
-          onBlur={() => setFocused(false)}
+          onBlur={() => scheduleFit()}
           // No Enter-to-send. Enter inserts a newline; the Send button is the
           // only way to submit. Mobile-friendly since Shift+Enter doesn't
           // exist on iOS keyboards.
