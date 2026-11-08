@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.57.4 — 2026-11-08
+
+**Fix: Price Book and the invoice AI chat scrolling and position.** Tested at phone size on a long, scrolled invoice, with the keyboard simulated. The old app failed 5 of 8 checks; the new one passes all 8.
+
+- **Price Book** opened in the middle of a scrolled invoice with its bottom cut off, because it was drawn inside the invoice's scrolling panel. It now opens over the whole screen, sits on the bottom edge, and stays above the keyboard while you search. Scrolling its list no longer drags the invoice behind it.
+- **The AI chat** on an invoice tried to scroll the page to put the typing box above the keyboard, but on the invoice only its own panel scrolls, so nothing moved the right way. It now scrolls that panel and, while the keyboard is up, shrinks to fit between the header and the keyboard, so the top of the chat is not hidden under the header. Scrolling the messages no longer drags the invoice behind them.
+- Test: `test/e2e/pb-ai-scroll.mjs`.
+
 ## v1.57.3 — 2026-11-08
 
 **Fix: screens ending up shifted left or right.** Tested by recreating each case at phone size. Three of them left the old app misaligned; the new one ends exactly on a tab every time.

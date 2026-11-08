@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -17,6 +18,18 @@ export default function PriceBook({ items, onSelect, onClose }) {
     return () => window.removeEventListener("resize", update);
   }, []);
 
+  // Size the overlay to the part of the screen the keyboard leaves visible
+  // (visualViewport), so the search box and the list stay above the keyboard.
+  const [vp, setVp] = useState(() => readViewport());
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => setVp(readViewport());
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+  }, []);
+
   const q = query.trim().toLowerCase();
   const filtered = q
     ? items.filter(i => i.name.toLowerCase().includes(q) || (i.category || "").toLowerCase().includes(q))
@@ -24,13 +37,16 @@ export default function PriceBook({ items, onSelect, onClose }) {
   const categories = [...new Set(filtered.map(i => i.category || "Other"))];
 
   const sheetStyle = isDesktop
-    ? { background: "#fff", borderRadius: 14, width: "100%", maxWidth: 460, maxHeight: "78vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 12px 48px rgba(0,0,0,0.22)" }
-    : { background: "#fff", borderRadius: "18px 18px 0 0", width: "100%", maxHeight: "86vh", display: "flex", flexDirection: "column", overflow: "hidden" };
+    ? { background: "#fff", borderRadius: 14, width: "100%", maxWidth: 460, maxHeight: Math.round(vp.height * 0.78), display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 12px 48px rgba(0,0,0,0.22)" }
+    : { background: "#fff", borderRadius: "18px 18px 0 0", width: "100%", maxHeight: Math.round(vp.height * 0.86), display: "flex", flexDirection: "column", overflow: "hidden" };
 
-  return (
+  // Portaled to <body>: inside the invoice form, a position:fixed element is
+  // placed relative to the form's transformed, scrolled panel, so on a long
+  // invoice the sheet opened half off the screen.
+  return createPortal(
     <div
       onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.58)", zIndex: 900, display: "flex", alignItems: isDesktop ? "center" : "flex-end", justifyContent: "center" }}
+      style={{ position: "fixed", left: 0, right: 0, top: vp.top, height: vp.height, background: "rgba(10,22,40,0.58)", zIndex: 2000, overscrollBehavior: "contain", display: "flex", alignItems: isDesktop ? "center" : "flex-end", justifyContent: "center" }}
     >
       <div onClick={e => e.stopPropagation()} style={sheetStyle}>
 
@@ -58,7 +74,7 @@ export default function PriceBook({ items, onSelect, onClose }) {
         </div>
 
         {/* Item list */}
-        <div style={{ overflowY: "auto", flex: 1, WebkitOverflowScrolling: "touch" }}>
+        <div style={{ overflowY: "auto", flex: 1, WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
           {categories.length === 0 && (
             <div style={{ padding: 32, textAlign: "center", color: "#aaa", fontSize: 14 }}>No items match</div>
           )}
@@ -98,5 +114,10 @@ export default function PriceBook({ items, onSelect, onClose }) {
 
       </div>
     </div>
-  );
+  , document.body);
+}
+
+function readViewport() {
+  const vv = window.visualViewport;
+  return vv ? { top: Math.round(vv.offsetTop), height: Math.round(vv.height) } : { top: 0, height: window.innerHeight };
 }
