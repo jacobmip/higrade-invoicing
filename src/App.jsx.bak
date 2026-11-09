@@ -5435,7 +5435,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       {confirmSend && <ConfirmSendModal kind={confirmSend} invoice={form} client={{ ...(selectedClient || {}), ...(effectiveClientInfo || {}) }} sending={sending} onClose={() => !sending && setConfirmSend(null)} onConfirm={handleConfirmedSend} />}
       {showScheduleJob && <ScheduleJobModal invoice={form} gcalAuthed={gcalAuthed} defaultMinutes={parseInt(data?.settings?.gcal_default_minutes, 10) || DEFAULT_JOB_MINUTES} onClose={() => setShowScheduleJob(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
       {showFollowUp && <FollowUpModal invoice={form} gcalAuthed={gcalAuthed} onClose={() => setShowFollowUp(false)} onSave={fields => { const updated = { ...form, ...fields }; setForm(updated); onPartialSave?.(updated); }} />}
-      {showSignature && <InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { const updated = { ...form, signatureData: sigData, signedAt: new Date().toISOString(), status: "approved" }; setForm(updated); setShowSignature(false); onPartialSave?.(updated); }} />}
+      {/* Portaled to <body> like the change order one below: inside the form it opened
+          above the scrolled panel and the app looked frozen (v1.63.2). */}
+      {showSignature && createPortal(<InPersonSignatureModal estimate={form} onClose={() => setShowSignature(false)} onSave={sigData => { const updated = { ...form, signatureData: sigData, signedAt: new Date().toISOString(), status: "approved" }; setForm(updated); setShowSignature(false); onPartialSave?.(updated); }} />, document.body)}
       {coMode && coEditing !== null && coMode.items[coEditing] && (
         <ItemModal
           item={coMode.items[coEditing]}
@@ -9286,7 +9288,7 @@ function InPersonSignatureModal({ estimate, onClose, onSave, co }) {
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 9999, display: "flex", flexDirection: "column", fontFamily: "'Barlow', sans-serif" }}>
+    <div data-sig-modal data-no-swipe="true" style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 9999, display: "flex", flexDirection: "column", fontFamily: "'Barlow', sans-serif" }}>
       <div style={{ background: NAVY, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div>
           <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17 }}>{estimate.client || "Client"}</div>
