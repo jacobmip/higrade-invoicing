@@ -79,6 +79,23 @@ async function loadCatalog() {
 
 const DISCLAIMER = "Estimates sight unseen can't be confirmed until we're on the job site in person.";
 
+// Insert-if-absent. Returns true when this call created the row. The row holds
+// the incoming message, so a concurrent second call for the same message sees
+// it and stops at the duplicate check.
+async function claimThread(leadId, message) {
+  const r = await fetch(`${supabaseUrl()}/rest/v1/yelp_threads?on_conflict=lead_id`, {
+    method: 'POST',
+    headers: sbHeaders({ Prefer: 'resolution=ignore-duplicates,return=representation' }),
+    body: JSON.stringify({
+      lead_id: leadId,
+      messages: [{ role: 'consumer', text: message, at: new Date().toISOString() }],
+    }),
+  });
+  if (!r.ok) throw new Error(`yelp_threads claim ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const rows = await r.json().catch(() => []);
+  return Array.isArray(rows) && rows.length === 1;
+}
+
 async function saveThread(row) {
   const r = await fetch(`${supabaseUrl()}/rest/v1/yelp_threads?on_conflict=lead_id`, {
     method: 'POST',
@@ -388,7 +405,13 @@ export async function draftYelpReply(p) {
   // so they are only ever used on the turn they arrive.
   const photoUrls = String(Array.isArray(p.attachment_urls) ? p.attachment_urls.join(' ') : (p.attachment_urls || ''))
     .split(/[\s,]+/).filter((u) => /^https:\/\/\S+$/i.test(u)).slice(0, 4);
-  const message = String(p.message || '').trim().slice(0, 4000) || (photoUrls.length ? '(sent photos)' : '');
+  const isNewLead = p.new_lead === true || String(p.new_lead).toLowerCase() === 'true';
+  // A New Lead has no message field: the customer's free text is the quote
+  // form's "Any additional information?", often blank. The form answers carry
+  // the job, so a blank one is still a real request.
+  const message = String(p.message || '').trim().slice(0, 4000)
+    || (photoUrls.length ? '(sent photos)' : '')
+    || (isNewLead ? '(quote request form, no message)' : '');
   if (!leadId) return { ok: false, error: 'lead_id is required' };
   if (!message) return { ok: false, error: 'message is required' };
 
@@ -396,32 +419,43 @@ export async function draftYelpReply(p) {
   if (!apiKey) return { ok: false, error: 'ANTHROPIC_API_KEY not configured' };
 
   const firstName = String(p.first_name || '').trim().split(/\s+/)[0].replace(/[^A-Za-z'\-]/g, '').slice(0, 40) || null;
-  const existing = await loadThread(leadId);
+  let existing = await loadThread(leadId);
+  if (!existing) {
+    // Claim the thread before doing anything slow. New Lead and New Consumer
+    // Message can fire for the same first message within a second of each
+    // other; whichever call loses this insert re-reads the winner's row and
+    // falls into the duplicate check below instead of answering twice.
+    const claimed = await claimThread(leadId, message);
+    if (!claimed) existing = await loadThread(leadId);
+  }
   const messages = Array.isArray(existing?.messages) ? existing.messages.slice() : [];
 
-  // Zapier retries and the Gmail-side duplicate: the same text twice in a row.
-  const lastConsumer = [...messages].reverse().find((m) => m.role === 'consumer');
-  const ageMs = lastConsumer?.at ? Date.now() - Date.parse(lastConsumer.at) : Infinity;
-  if (lastConsumer && lastConsumer.text === message && ageMs < 10 * 60 * 1000) {
+  // The same text again within 10 minutes: a Zapier retry, or the second of
+  // the two triggers for a lead's first message.
+  const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const recentSame = messages.some((m) => m.role === 'consumer' && norm(m.text) === norm(message)
+    && m.at && Date.now() - Date.parse(m.at) < 10 * 60 * 1000);
+  if (recentSame) {
     return { ok: true, should_send: false, skip_reason: 'duplicate: this message was already handled', reply: '' };
   }
 
-  // Lead-form details count as the opening message on a first contact.
-  // The Zapier "New Consumer Message" trigger fires for follow-ups: the lead's
-  // first message was already answered by the Gmail path or a New Lead Zap. So
-  // the default is "continuing". Only a caller that says new_lead gets the full
-  // first-reply format (Aloha opener and the three-line signature).
-  const isFirstReply = (p.new_lead === true || String(p.new_lead).toLowerCase() === 'true')
-    && !messages.some((m) => m.role === 'business');
-  const jobLine = [p.job && `Job: ${p.job}`, p.timing && `Timing they gave: ${p.timing}`, p.location && `Area they gave: ${p.location}`]
-    .filter(Boolean).join('\n');
+  // First reply = nothing from us in this thread yet. Since the Gmail path was
+  // retired, every lead's first answer comes through here, from either trigger.
+  const isFirstReply = !messages.some((m) => m.role === 'business');
+  const jobLine = [
+    p.job && `Job: ${p.job}`,
+    p.survey && `Quote form answers:\n${p.survey}`,
+    p.timing && `Timing they gave: ${p.timing}${p.dates ? ` (${p.dates})` : ''}`,
+    p.location && `Area they gave: ${p.location}`,
+  ].filter(Boolean).join('\n');
   const consumerText = isFirstReply && jobLine ? `${message}\n\n${jobLine}` : message;
   messages.push({
     role: 'consumer', text: message, at: new Date().toISOString(),
     ...(photoUrls.length ? { photos: photoUrls.length } : {}),
   });
 
-  const contact = extractContact(message);
+  // Yelp's opt-in "Phone Number" from a New Lead counts the same as one typed.
+  const contact = extractContact(`${message} ${p.phone || ''}`);
   const row = {
     lead_id: leadId,
     first_name: firstName || existing?.first_name || null,

@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.63.3 — 2026-11-09
+
+**Yelp first replies come through Zapier too (the Gmail path is being retired).**
+
+- `yelp_reply` takes the New Lead trigger's fields: `new_lead`, `survey` (Project Survey Answers Formatted), `dates`, and `phone` (Yelp's opt-in Phone Number), alongside `job`, `timing`, `location`, `attachment_urls`. A New Lead with a blank "Any additional information?" is still answered from the form answers.
+- A thread's first reply is now simply "nothing from us yet", from either trigger.
+- New Lead and New Consumer Message can fire for the same first message at once. A new thread is now claimed with an insert-if-absent that stores the message, so the losing call sees it and stops as a duplicate. Verified with both calls fired concurrently: one reply.
+
 ## v1.63.2 — 2026-11-09
 
 - Get Signature on an estimate works again. The signature pad was drawn inside the scrolled form, so it opened above the screen and the app looked frozen behind it. It now opens on top of everything, like the change order signature.
