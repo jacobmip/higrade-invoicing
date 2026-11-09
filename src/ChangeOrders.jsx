@@ -197,11 +197,26 @@ const btnS = (kind) => ({
 // onBuild(row | null): start (null) or resume (a draft/sent row) change-order
 // mode on the invoice itself, where the invoice's own +, Price Book and AI add
 // lines to the change order (v1.57.0). building: that mode is on now.
-export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines, onBuild, building, onEstimate }) {
+export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, clientEmail, loadedUpdatedAt, onApprovedLines, onBuild, building, onEstimate, onDeleted }) {
   const [list, setList] = useState([]);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState('');
   const pushedRef = useRef(new Set());
+
+  // v1.64.1: any change order can be deleted. An approved one takes its lines
+  // off the invoice with it (onDeleted, which the form handles).
+  const remove = async (c) => {
+    const label = `${invoiceId}-CO${c.seq}`;
+    const extra = c.status === 'approved' && c.applied_at ? ` Its lines come off ${invoiceId} too.` : c.status === 'sent' ? ' Its link will stop working.' : '';
+    if (!window.confirm(`Delete ${label}?${extra}`)) return;
+    setErr('');
+    try {
+      const { error } = await supabase.from('change_orders').delete().eq('id', c.id);
+      if (error) throw error;
+      setList(l => l.filter(x => x.id !== c.id));
+      if (onDeleted) await onDeleted(c);
+    } catch (e) { setErr(`Could not delete ${label}: ${e.message || e}`); }
+  };
 
   const load = async () => {
     if (!invoiceId) return;
@@ -243,7 +258,7 @@ export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, cl
         <button disabled={!!building} onClick={() => (onBuild ? onBuild(null) : setEditing({ seq: nextSeq, items: [{ name: '', desc: '', qty: 1, price: 0, taxable: true }], note: '', status: 'draft' }))}
           style={{ ...btnS('ghost'), padding: '6px 12px', fontSize: 13, opacity: building ? 0.5 : 1 }}>+ Change order</button>
       </div>
-      {onEstimate && <div style={{ fontSize: 12, color: '#6677aa', marginTop: 6 }}>Shared with {invoiceId}. This estimate's own lines stay as the customer signed them; approved change orders are added to {invoiceId} and listed on both.</div>}
+      {onEstimate && <div style={{ fontSize: 12, color: '#6677aa', marginTop: 6 }}>Shared with {invoiceId}. Lines you add or change on this estimate are made on {invoiceId} too; approved change orders are added to {invoiceId} and listed on both.</div>}
       {err && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 8 }}>{err}</div>}
       {!err && list.length === 0 && (
         <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Extra work mid-job: email or text the customer a change order. When they approve (sign, or reply YES to the text) it is added to {onEstimate ? invoiceId : 'this invoice'}.</div>
@@ -263,6 +278,10 @@ export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, cl
               </div>
             </div>
             <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: st.bg, color: st.fg, whiteSpace: 'nowrap' }}>{st.label}</span>
+            {!building && (
+              <button onClick={e => { e.stopPropagation(); remove(c); }} aria-label={`Delete ${invoiceId}-CO${c.seq}`}
+                style={{ background: 'none', border: 'none', color: '#c0392b', fontSize: 20, lineHeight: 1, padding: '2px 4px', cursor: 'pointer' }}>×</button>
+            )}
           </div>
         );
       })}

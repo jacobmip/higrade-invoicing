@@ -510,12 +510,8 @@ async function addLineItems(input, ctx) {
   if (error) return { error };
   const items = normalizeItems(input.items);
   if (!items.length) return { error: 'No items to add.' };
-  // A signed estimate is the customer's approved record: new work on it goes in
-  // a change order. Its invoice takes lines directly since v1.64.0 (Jake often
-  // has a verbal OK); a change order there is only when he asks for one.
-  if (inv.type === 'estimate' && jobInvoiceId(inv, ctx.getData().invoices)) {
-    return { error: `${inv.id} is a signed estimate, so its lines stay as the customer approved them. Add the work to its invoice ${jobInvoiceId(inv, ctx.getData().invoices)} instead, or call draft_change_order with document_id ${inv.id} if Jake wants the customer to approve it (send "none" unless Jake asked to send it).` };
-  }
+  // A converted estimate takes lines too; the app copies them onto its invoice
+  // (v1.64.1). Change orders are only for when Jake wants written approval.
   const updated = await ctx.onAction({ action: 'add_items', invoiceId: inv.id, items });
   return {
     ok: true, document_id: inv.id, added: items.length,

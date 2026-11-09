@@ -166,6 +166,7 @@ await page.route('**/*', async route => {
     const b = req.postData() ? JSON.parse(req.postData()) : {};
     if (m === 'POST') { const row = { id: 'co' + (db.change_orders.length + 1), created_at: new Date().toISOString(), ...b }; db.change_orders.push(row); return json(single ? row : [row], 201); }
     if (m === 'PATCH') { const idq = url.searchParams.get('id'); const row = db.change_orders.find(c => 'eq.' + c.id === idq); if (row) Object.assign(row, b); return single ? json(row || null) : json(row ? [row] : []); }
+    if (m === 'DELETE') { const idq = url.searchParams.get('id'); db.change_orders = db.change_orders.filter(c => 'eq.' + c.id !== idq); return route.fulfill({ status: 204, body: '' }); }
   }
   if (m === 'PATCH' && table === 'invoices') { const b = JSON.parse(req.postData() || '{}'); patches.push({ q: url.search, b }); if (SCENARIO === 'nomigration' && ('job_completed_on' in b || 'job_started_on' in b)) return json({ code: '42703', message: 'column "job_completed_on" of relation "invoices" does not exist' }, 400); const row = db.invoices.find(r => 'eq.' + r.id === url.searchParams.get('id')); if (row) Object.assign(row, b); return json([]); }
   log('WRITE', m, table, url.search.slice(0,80));
@@ -405,6 +406,36 @@ if (SCENARIO === 'estsign') {
   const last = saves.filter(x => x.id === 'EST1301').pop();
   check('estimate saved approved with signed_at', last && last.status === 'approved' && !!last.signed, JSON.stringify(last && { st: last.status, signed: last.signed }));
   check('form still responds (Approved shown)', /Approved/.test(await text()));
+}
+if (SCENARIO === 'estsync') {
+  // ── v1.64.1: a line added to a converted estimate also lands on its invoice ──
+  await open('EST1300');
+  await page.getByRole('button', { name: 'Price Book' }).first().dispatchEvent('click'); await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Add Angle stop replacement' }).dispatchEvent('click'); await page.waitForTimeout(3500);
+  const est = saves.filter(s => s.id === 'EST1300').pop();
+  check('estimate saved with the new line', est && est.items.some(i => /^Angle stop replacement\|/.test(i)), JSON.stringify(est && est.items));
+  const inv = saves.filter(s => s.id === 'INV1300').pop();
+  check('invoice INV1300 got the same line, keeping its own', inv && inv.items.some(i => /^Angle stop replacement\|/.test(i)) && inv.items.some(i => /^Add shutoff valve\|Change order #1/.test(i)) && inv.items.filter(i => /^Water heater/.test(i)).length === 1, JSON.stringify(inv && inv.items));
+  check('no change order made', !db.change_orders.some(c => (c.items || []).some(i => i.name === 'Angle stop replacement')));
+  // Edit the estimate's water heater line: the invoice's copy changes too.
+  db.invoice_items = db.invoice_items.filter(i => i.invoice_id !== 'INV1300').concat(inv.items.map((s, k) => { const [name, description] = s.split('|'); return { id: 'x' + k, invoice_id: 'INV1300', name, description, qty: 1, price: name === 'Water heater' ? 1800 : name === 'Add shutoff valve' ? 150 : 95, unit: 'ea', taxable: true, sort_order: k }; }));
+  await page.getByText('Water heater', { exact: true }).first().click(); await page.waitForTimeout(600);
+  await page.getByPlaceholder('e.g. Drain Clean – Snake').fill('Water heater 50 gal'); await page.waitForTimeout(200);
+  await page.getByRole('button', { name: 'Done', exact: true }).last().click(); await page.waitForTimeout(3500);
+  const inv2 = saves.filter(s => s.id === 'INV1300').pop();
+  check('editing an estimate line edits it on the invoice', inv2 && inv2.items.some(i => /^Water heater 50 gal\|/.test(i)) && !inv2.items.some(i => /^Water heater\|/.test(i)), JSON.stringify(inv2 && inv2.items));
+}
+if (SCENARIO === 'codel') {
+  // ── v1.64.1: change orders can be deleted, approved ones take their lines with them ──
+  await open('INV1300');
+  await page.getByRole('button', { name: 'Delete INV1300-CO2' }).click(); await page.waitForTimeout(2000);
+  check('sent change order deleted', !db.change_orders.some(c => c.id === 'co2'), JSON.stringify(db.change_orders.map(c => c.id)));
+  await page.getByRole('button', { name: 'Delete INV1300-CO1' }).click(); await page.waitForTimeout(3000);
+  check('approved change order deleted', !db.change_orders.some(c => c.id === 'co1'));
+  const last = saves.filter(s => s.id === 'INV1300').pop();
+  check('its lines left the invoice, the rest stayed', last && !last.items.some(i => /^Add shutoff valve/.test(i)) && last.items.some(i => /^Water heater/.test(i)), JSON.stringify(last && last.items));
+  check('confirm asked before each delete', dialogs.filter(d => /Delete INV1300-CO/.test(d)).length === 2, JSON.stringify(dialogs));
+  check('card shows none left', (await page.getByRole('button', { name: /^Delete INV1300-CO/ }).count()) === 0);
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();

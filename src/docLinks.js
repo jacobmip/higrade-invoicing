@@ -12,10 +12,11 @@
 //                   down-payment invoice, and only for pairs made on or after
 //                   SYNC_SINCE.
 //
-// The estimate is frozen at conversion (v1.53.0): its line items, customer
-// notes, tax and discount are what the customer approved, so the invoice's
-// change orders never rewrite it. Conversion copies them to the invoice once;
-// after that only internal notes (never shown to the customer) stay in step.
+// The invoice never rewrites the estimate (v1.53.0): the estimate's line
+// items, customer notes, tax and discount are what the customer approved.
+// Conversion copies them to the invoice once; after that internal notes stay
+// in step both ways, and since v1.64.1 a line changed on the estimate is
+// changed on the invoice too (applyItemDiff below), one way only.
 // v1.52.0 synced all of them, which let an invoice change rewrite a signed
 // estimate. Payments, status, dates, signature, schedule and the customer link
 // were always per document.
@@ -87,4 +88,54 @@ export function syncPatch(src) {
 
 export function syncEqual(a, b) {
   return syncPatch(a).internalNotes === syncPatch(b).internalNotes;
+}
+
+// ─── Estimate lines follow onto the invoice (v1.64.1) ───────────────────────
+// A line Jake adds, edits or removes on a converted estimate is made the same
+// way on its invoice. Only the change is applied (what this save did to the
+// estimate), never a copy of the whole list, so the invoice's own lines and
+// change order lines stay. One way only: invoice edits never touch the estimate.
+// Any conversion link, whatever its age: a diff only carries what Jake just did.
+export function itemSyncTarget(doc, all) {
+  if (!doc?.id || doc.type !== 'estimate' || !doc.convertedToId) return null;
+  const inv = (all || []).find(d => d.id === doc.convertedToId && d.type === 'invoice');
+  return inv && !inv.deletedAt ? inv : null;
+}
+
+const CO_LINE = /^Change order #\d+, approved /;
+const lineKey = (it) => JSON.stringify(normItems([it])[0]);
+
+export function sameItems(a, b) {
+  const ka = (a || []).map(lineKey), kb = (b || []).map(lineKey);
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i]);
+}
+
+// Returns the target's new item list, or null when nothing changes. Blank
+// lines (no name, desc or price) are ignored on both sides.
+export function applyItemDiff(prevItems, nextItems, targetItems) {
+  const real = (it) => it && (it.name || it.desc || Number(it.price));
+  const prev = (prevItems || []).filter(real), next = (nextItems || []).filter(real);
+  const pool = new Map();
+  for (const it of prev) { const k = lineKey(it); pool.set(k, [...(pool.get(k) || []), it]); }
+  const added = [];
+  for (const it of next) {
+    const k = lineKey(it); const left = pool.get(k);
+    if (left && left.length) left.shift(); else added.push(it);
+  }
+  const removed = [...pool.values()].flat();
+  if (!added.length && !removed.length) return null;
+  const out = [...(targetItems || [])];
+  const clean = ({ id, ...it }) => it; // eslint-disable-line no-unused-vars
+  for (const r of removed) {
+    const k = lineKey(r);
+    const idx = out.findIndex(t => !CO_LINE.test(t?.desc || '') && lineKey(t) === k);
+    if (idx < 0) continue; // already gone or changed on the invoice
+    if (added.length) out[idx] = clean(added.shift()); // an edit: same place
+    else out.splice(idx, 1);
+  }
+  if (added.length) {
+    const firstCo = out.findIndex(t => CO_LINE.test(t?.desc || ''));
+    out.splice(firstCo < 0 ? out.length : firstCo, 0, ...added.map(clean));
+  }
+  return out;
 }

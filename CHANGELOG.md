@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.64.1 — 2026-11-09
+
+- Change orders can be deleted: an x on each one in the Change orders card (draft, sent, approved or declined), after a confirm. Deleting an approved one also takes its lines off the invoice. History logs it (`change_order_deleted`).
+- A line added, edited or removed on a converted estimate now makes the same change on its invoice, without a change order. Only that change is applied, so the invoice's own lines and change order lines stay. A paid invoice that gains work goes to Partial. One way only: invoice edits do not change the estimate. Works from the form and the header AI.
+- Tests: `SCENARIO=codel` and `SCENARIO=estsync` in `test/e2e/estimate-co.mjs`.
+
 ## v1.64.0 — 2026-11-09
 
 - Invoices from a signed estimate are no longer locked. Every line can be edited or deleted, and +, Price Book and both AI chats add lines straight to the invoice again (for a verbal OK). Lines keep their labels: From estimate, Change order, Not on the estimate.
