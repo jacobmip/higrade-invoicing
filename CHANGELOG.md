@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.59.4 — 2026-11-09
+
+**Fix: lines could still be added straight to an invoice from a signed estimate.** The invoice screen's +, Price Book and AI chat already made a change order, but two ways around it remained:
+
+- **The header AI** ("add a shower valve to INV1199") wrote the line straight onto the invoice. It now refuses and drafts a change order instead.
+- **The invoice AI chat naming another document** did the same. It now puts the lines into that job's change order draft.
+- One rule now decides "this invoice came from a signed estimate" everywhere (the estimate's conversion link, else the same number), and it also counts an estimate that was signed but whose conversion link is missing.
+- Test: `test/e2e/estimate-co.mjs` (scenario `globaladd`).
+
 ## v1.59.3 — 2026-11-09
 
 **Fix: History said "Invoice" for things that happened to the estimate.** An invoice's History also lists its estimate's events, but every row was named after the document on screen, so the estimate's text read "Invoice opened by client (EST1056)".

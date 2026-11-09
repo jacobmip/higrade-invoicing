@@ -837,3 +837,19 @@ export async function approveChangeOrderInApp(row) {
   if (error) throw error;
   return data;
 }
+
+// The signed (approved or converted) estimate an invoice came from, or null
+// (v1.59.4). On such an invoice the estimate's lines are locked and every new
+// line goes in a change order. One rule for the form, the invoice AI chat and
+// the header AI, so no path adds a line straight to the invoice.
+export function signedEstimateFor(inv, docs = []) {
+  if (!inv || inv.type === 'estimate' || !inv.id) return null;
+  const live = docs.filter(d => d.type === 'estimate' && !d.deletedAt);
+  let est = live.find(d => d.convertedToId === inv.id || d.downPaymentInvoiceId === inv.id) || null;
+  if (!est) {
+    const n = parseInt((/^INV(\d+)$/.exec(inv.id) || [])[1], 10);
+    if (Number.isFinite(n) && n >= 1000) est = live.find(d => d.id === 'EST' + String(n).padStart(4, '0') && (!d.convertedToId || d.convertedToId === inv.id)) || null;
+  }
+  if (!est) return null;
+  return (est.convertedToId === inv.id || ['approved', 'converted'].includes(est.status) || est.signedAt) ? est : null;
+}

@@ -16,7 +16,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
-import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals, jobInvoiceId, ChangeOrderAddenda, CO_MARK_RE, coInvoiceLines, approveChangeOrderInApp, announceChangeOrders } from './ChangeOrders.jsx';
+import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals, jobInvoiceId, ChangeOrderAddenda, CO_MARK_RE, coInvoiceLines, approveChangeOrderInApp, announceChangeOrders, signedEstimateFor } from './ChangeOrders.jsx';
 import SendDraftCard, { ChangeOrderSendSheet } from './SendDraftCard.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
@@ -5089,8 +5089,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // v1.59.0: an invoice that came from a signed estimate. The estimate's lines
   // (and approved change orders) are locked on it, and every new line becomes
   // a change order, so the estimate and invoice never drift apart.
-  const lockedEst = (!isEstimate && isAdmin && !lockedView && linkedDoc && linkedDoc.type === "estimate" && !linkedDoc.unfinished
-    && (linkedDoc.convertedToId === (form.id || autoSavedId) || ["approved", "converted"].includes(linkedDoc.status))) ? linkedDoc : null;
+  const lockedEst = (!isEstimate && isAdmin && !lockedView) ? signedEstimateFor({ ...form, id: form.id || autoSavedId }, data?.invoices || []) : null;
   // Per invoice line: "estimate" (on the signed estimate), "co" (added by an
   // approved change order), "loose" (added straight to the invoice since), "blank".
   const lineKinds = useMemo(() => {
@@ -13265,6 +13264,16 @@ export default function App() {
     }
     if (parsed.action === "add_items") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
+      // v1.59.4: an invoice from a signed estimate takes new lines only
+      // through a change order (the draft in progress, else a new one).
+      const est = inv ? signedEstimateFor(inv, dataRef.current?.invoices || data.invoices) : null;
+      if (inv && est) {
+        const items = (parsed.items || []).map(it => ({ name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty ?? 1, price: it.price ?? 0, taxable: it.taxable !== false }));
+        const draft = (await listChangeOrders(inv.id)).filter(c => c.status === "draft").pop() || null;
+        const row = await saveChangeOrder({ row: draft, invoiceId: inv.id, items: [...(draft?.items || []), ...items], note: draft?.note, photos: draft?.photos });
+        announceChangeOrders(inv.id);
+        return { ...inv, changeOrderDraft: `${inv.id}-CO${row.seq}` };
+      }
       if (inv) {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
         setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));

@@ -89,6 +89,11 @@ await page.route('**/*', async route => {
       aiPrompts.push(b);
       if (b?.mode === 'agent') {
         const n = aiPrompts.filter(x => x.mode === 'agent').length;
+        if (SCENARIO === 'globaladd') {
+          if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'add_line_items', input: { document_id: 'INV1300', items: [{ name: 'Shower valve', qty: 1, price: 240 }] } }] });
+          if (n === 2) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu2', name: 'draft_change_order', input: { document_id: 'INV1300', items: [{ name: 'Shower valve', qty: 1, price: 240 }], send: 'none' } }] });
+          return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Change order drafted.' }] });
+        }
         if (n === 1 && SCENARIO === 'globalco') return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'draft_change_order', input: { document_id: 'INV1300', items: [{ name: 'Replace angle stop', qty: 1, price: 95 }], send: 'auto' } }] });
         if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'send_sms', input: { phone: '8085551234', message: 'Aloha Pat, just checking in on the water heater. Mahalo!' } }] });
         return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'The draft text is ready for you to check.' }] });
@@ -302,6 +307,20 @@ if (SCENARIO === 'estsent') {
   await page.getByRole('button', { name: 'Preview', exact: true }).first().dispatchEvent('click'); await page.waitForTimeout(1200);
   const tx = await text();
   check('its label says Sent', /\bSENT\b/.test(tx.replace(/SENT\s*\d\d\/\d\d\/\d{4}/g, '')), (tx.match(/EST1301[\s\S]{0,200}/) || [''])[0].replace(/\n/g, ' '));
+}
+if (SCENARIO === 'globaladd') {
+  // ── v1.59.4: the header AI cannot add a line straight to an invoice from a signed estimate ──
+  await page.goto(BASE + '/'); await page.waitForTimeout(2500);
+  const before = saves.length;
+  await page.getByRole('button', { name: 'AI assistant' }).click(); await page.waitForTimeout(800);
+  await page.getByLabel('Chat message').fill('Add a shower valve, 240, to INV1300');
+  await page.getByLabel('Chat message').press('Enter');
+  await page.waitForTimeout(5000);
+  const agentCalls = aiPrompts.filter(x => x.mode === 'agent');
+  const toolResult = JSON.stringify(agentCalls[1] || {});
+  check('add_line_items refused: lines are locked, use a change order', /signed estimate EST1300/.test(toolResult) && /draft_change_order/.test(toolResult));
+  check('no line written straight to INV1300', !saves.slice(before).some(x => x.id === 'INV1300' && x.items.some(i => /Shower valve/.test(i))) && !db.invoice_items.some(i => i.invoice_id === 'INV1300' && i.name === 'Shower valve'));
+  check('the line went into a change order draft', db.change_orders.some(c => c.invoice_id === 'INV1300' && c.status === 'draft' && (c.items || []).some(i => i.name === 'Shower valve')), JSON.stringify(db.change_orders.map(c => [c.seq, c.status])));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();
