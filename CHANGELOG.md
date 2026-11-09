@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.59.2 — 2026-11-09
+
+**Fix: a sent estimate still said Draft.** Only the email path moved an estimate from Draft to Sent. Sending by text, from an AI chat, or by Lani/Lisa outside the app logged the send in History but left the label on Draft.
+
+- Sending an estimate by text now marks it Sent, the same as email.
+- Any estimate whose History has a send shows **Sent** in the list, on the form and on its Status buttons, whoever sent it. Approved, declined, converted and expired estimates are unaffected.
+- Test: `test/e2e/estimate-co.mjs` (scenario `estsent`).
+
 ## v1.59.1 — 2026-11-09
 
 **Invoice dates: three, not four.** The invoice date and Job started were the same thing, and so were Job completed and the due date.

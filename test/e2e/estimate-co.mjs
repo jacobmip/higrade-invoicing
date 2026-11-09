@@ -37,6 +37,12 @@ db.invoice_items = [
 ];
 db.invoice_events = [{ id:'ev1', invoice_id:'EST1300', kind:'sent', created_at:'2026-11-02T01:00:00Z' }];
 // v1.59.0: a line added straight to the invoice after the estimate was signed (like INV1199).
+// v1.59.2: an estimate sent outside the app (Lani, Lisa): only an invoice_events 'sent' row, status still draft.
+if (SCENARIO === 'estsent') {
+  db.invoices.push({ id:'EST1302', type:'estimate', client_name:'Test Client', date:'2026-11-08', status:'draft', converted_to_id:null, owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'tG', visits:null, updated_at: now, created_at: now, deleted_at:null });
+  db.invoice_items.push({ id:'g1', invoice_id:'EST1302', name:'Toilet rebuild', description:'', qty:1, price:220, unit:'ea', taxable:true, sort_order:0 });
+  db.invoice_events.push({ id:'ev2', invoice_id:'EST1302', kind:'sent', created_at:'2026-11-08T20:00:00Z' });
+}
 if (SCENARIO === 'lock') db.invoice_items.push({ id:'i3', invoice_id:'INV1300', name:'Loose fix', description:'added after signing', qty:1, price:80, unit:'ea', taxable:true, sort_order:2 });
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
@@ -272,6 +278,23 @@ if (SCENARIO === 'lock') {
   await page.getByRole('button', { name: 'Done for now' }).click(); await page.waitForTimeout(2500);
   const last2 = saves.filter(s => s.id === 'INV1300').pop();
   check('loose line no longer on the invoice', last2 && !last2.items.some(i => /^Loose fix/.test(i)), JSON.stringify(last2 && last2.items));
+}
+if (SCENARIO === 'estsent') {
+  // ── v1.59.2: a sent estimate says Sent ──
+  await page.goto(BASE + '/'); await page.waitForTimeout(2500);
+  await page.getByRole('button', { name: /^Estimates/ }).first().click().catch(() => {}); await page.waitForTimeout(1000);
+  const cardLabel = (id) => page.evaluate((id) => { const el = [...document.querySelectorAll('div')].filter(d => d.offsetParent && d.textContent.includes(id + ' ·')).sort((a, b) => a.textContent.length - b.textContent.length)[0]; let c = el; for (let k = 0; k < 4 && c && !/DRAFT|SENT/i.test(c.textContent); k++) c = c.parentElement; return c ? (c.textContent.match(/DRAFT|SENT/i) || [''])[0] : null; }, id);
+  check('estimate sent outside the app shows Sent in the list', /sent/i.test(await cardLabel('EST1302') || ''), await cardLabel('EST1302'));
+  check('unsent estimate still shows Draft', /draft/i.test(await cardLabel('EST1301') || ''), await cardLabel('EST1301'));
+  await page.getByText('EST1301').first().click({ force: true }); await page.waitForTimeout(2500);
+  await page.getByRole('button', { name: /Send Email/ }).first().click(); await page.waitForTimeout(600);
+  await page.getByRole('button', { name: /Text Message/ }).click(); await page.waitForTimeout(1200);
+  await page.getByRole('button', { name: 'Send via Lisa' }).click(); await page.waitForTimeout(2500);
+  const st = saves.filter(x => x.id === 'EST1301').pop();
+  check('estimate sent by text is saved as sent', st && st.status === 'sent', JSON.stringify(saves.filter(x => x.id === 'EST1301').map(x => x.status)));
+  await page.getByRole('button', { name: 'Preview', exact: true }).first().dispatchEvent('click'); await page.waitForTimeout(1200);
+  const tx = await text();
+  check('its label says Sent', /\bSENT\b/.test(tx.replace(/SENT\s*\d\d\/\d\d\/\d{4}/g, '')), (tx.match(/EST1301[\s\S]{0,200}/) || [''])[0].replace(/\n/g, ' '));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();
