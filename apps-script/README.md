@@ -16,7 +16,8 @@ folder is the mirror that fixes that.
 | Open it | https://script.google.com — sign in as jacobmip@gmail.com, it is in **My Projects** |
 | Deployed URL | stored in `settings.gcal_webhook_url` in Supabase |
 | Runs as | the account owner, which is why it dodges the 7-day refresh-token expiry an unverified OAuth app would hit (see migration 033) |
-| Writes to | the shared **Work** calendar, which must match `google_credentials.calendar_id` (migration 046) |
+| Writes to | the **business calendar** `higradeplumbing@gmail.com` since 2026-11-09 (shared to jacobmip@gmail.com with "Make changes and see all event details"); must match `google_credentials.calendar_id`. Was the shared Work calendar (migration 046) |
+| Deployments | Two exist. **A** (`...TFyYawWQj/exec`) is the live one in `settings.gcal_webhook_url`; **B** (`...BlSqkakPj35c1smSBcWtR/exec`, version 1) is an unused leftover from setup day |
 
 ## This folder is a copy, not the source of truth
 
@@ -31,7 +32,7 @@ script has the real values inline. Each is recoverable:
 |---|---|
 | `SECRET` | `settings.gcal_webhook_secret` in Supabase |
 | `ANON_KEY` | the Supabase anon key, also in `src/supabase.js` |
-| `CAL_ID` | already the real value; the shared Work calendar |
+| `CAL_ID` | already the real value: `higradeplumbing@gmail.com`, the business calendar (since 2026-11-09, deployment A version 3; before that the shared Work calendar) |
 
 ## How to edit and deploy it
 
@@ -61,7 +62,7 @@ select push_invoice_to_calendar('EST0807');
 ```
 
 It returns `queued` (the POST is fire-and-forget via pg_net), then the event
-appears on the Work calendar and `invoices.gcal_event_id` fills in a moment
+appears on the business calendar and `invoices.gcal_event_id` fills in a moment
 later via the `set_invoice_gcal_event` callback. If the id never populates, the
 script ran but `reportBack` failed — check the Apps Script **Executions** tab.
 

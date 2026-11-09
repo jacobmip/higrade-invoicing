@@ -331,7 +331,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 - **042** — `gcal_duration_minutes` on invoices, so a scheduled job's length survives without Google
 - **043** — shared price book: `admin_owner_ids()` plus a widening SELECT policy on `saved_items`
 - **044** — `visits` jsonb: a job can be scheduled across several appointments
-- **045–046** — server-side Google OAuth (`google_credentials`), and the shared Work calendar as the single write target
+- **045–046** — server-side Google OAuth (`google_credentials`), and the shared Work calendar as the single write target. **Since 2026-11-09 the write target is the business calendar `higradeplumbing@gmail.com`** (data change, no migration): `calendar_id` = it, `read_calendar_ids` = primary + Work + it, and the Apps Script `CAL_ID` matches. Work stays in the read list so jobs booked there before the switch still block time and still move or cancel (`onEventCalendar` tries every read calendar)
 - **047** — the calendar callback writes into `visits` instead of `gcal_event_id`, which the `sync_first_visit` trigger was overwriting
 - **048** — stop `save_invoice_with_items` restamping `gcal_date` as UTC
 - **049–050** — lead timestamps in Hawaii time, and a backfill of the ten rows already written wrong

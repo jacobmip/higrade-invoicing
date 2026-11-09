@@ -9,17 +9,18 @@
 //
 //   SECRET        settings.gcal_webhook_secret in Supabase
 //   ANON_KEY      the Supabase anon key, also in src/supabase.js
-//   CAL_ID        the shared Work calendar, see migration 046
+//   CAL_ID        the business calendar (higradeplumbing@gmail.com) since 2026-11-09;
+//                 was the shared Work calendar (migration 046)
 //
 // What it does: push_invoice_to_calendar() POSTs here when the AI receptionist
-// books a lead. This creates the event on the Work calendar, then calls
+// books a lead. This creates the event on the business calendar, then calls
 // set_invoice_gcal_event() back with the id so invoices.gcal_event_id is
 // populated — which is what makes moving or cancelling the job possible later.
 
 const SECRET       = 'REPLACE_WITH_settings.gcal_webhook_secret';
 const SUPABASE_URL = 'https://cwhgcxxszyvevjpbnnkc.supabase.co';
 const ANON_KEY     = 'REPLACE_WITH_SUPABASE_ANON_KEY';
-const CAL_ID       = 'fcqqtdsa77rru3ikdqno2hiims@group.calendar.google.com';
+const CAL_ID       = 'higradeplumbing@gmail.com';
 
 function doPost(e) {
   try {
