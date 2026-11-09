@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.62.1 — 2026-11-09
+
+**Yelp quotes are always a range, and Zapier messages are treated as follow-ups.**
+
+- A single price-book price is expanded in code to "P to H" (H = P plus 25%, rounded up to the next $25). Several matching lines still give lowest to highest. The low end is always the book price.
+- `yelp_reply` is "continuing" by default: no Aloha opener and a short sign-off, because the Zapier New Consumer Message trigger fires for follow-ups. Pass `new_lead: true` for the full first-reply format.
+- Left as is on purpose: the scheduling link is still offered once. Jake wants to see whether Yelp renders it clickable before changing it.
+
 ## v1.62.0 — 2026-11-09
 
 **Lisa quotes simple jobs on Yelp, and says "call or text".** Jake's call: leads close more when they get a number fast. Applies to the Zapier path (`yelp_reply`); the Gmail first-reply path still quotes nothing.

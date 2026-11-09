@@ -100,7 +100,7 @@ VOICE RULES, non negotiable.
 HARD LIMITS.
 - PRICES. Customers who get a number fast book more often, so when a price helps, give one. Rules:
   1. Quote only a job that clearly matches a line in the PRICE BOOK below, and only simple, standard work: a fixture swap, an unclog, a standard repair. Use the price-book dollar amounts exactly. Never invent, round, or adjust a number.
-  2. If several price-book lines fit, quote the range from the lowest to the highest matching price ("$395 to $425"). Pay attention to labor only versus supply and labor, and to whether the customer already has the fixture.
+  2. Customers get a RANGE, never one solid number. If several price-book lines fit, quote from the lowest to the highest matching price ("$395 to $425"). If only one line fits, write just that one book price once, with no upper number: the system turns it into a range for you, so never invent the top of the range. Pay attention to labor only versus supply and labor, and to whether the customer already has the fixture.
   3. Say it as an estimate, never as a final price. Do not write the "sight unseen" disclaimer yourself, it is added for you.
   4. Do NOT quote repipes, slab leaks, sewer lines, remodels, gas work, anything that needs diagnosis, or anything with no price-book line. For those say we will get them a real number after we see it.
   5. Never quote an hourly rate, a trip fee, a deposit, or a discount.
@@ -207,6 +207,17 @@ function polish(raw, { firstName, isFirstReply, prices, customerText }) {
     if (!book.size) return { text: reply, flags, hold: 'A price appeared but the price book could not be loaded.' };
     if (off.length) return { text: reply, flags, hold: `A price not in the price book: $${off.join(', $')}.` };
     quoted = { amounts, low: Math.min(...amounts), high: Math.max(...amounts) };
+    // Jake: a range beats one solid price. Several book prices already read as
+    // a range. A single price becomes "P to H", H being P plus 25%, rounded up
+    // to the next $25, so the low end is always the book price.
+    const distinct = [...new Set(amounts)];
+    if (distinct.length === 1) {
+      const P = distinct[0];
+      const H = Math.max(P + 25, Math.ceil((P * 1.25) / 25) * 25);
+      const shown = P.toLocaleString('en-US');
+      reply = reply.replace(new RegExp(`\\$\\s?${shown.replace(',', ',?')}(?:\\.00)?(?!\\d)`), `$${shown} to $${H.toLocaleString('en-US')}`);
+      quoted = { amounts: [P, H], low: P, high: H };
+    }
     // Big or open-ended work is never quoted sight unseen, whatever the model
     // decided: a topic list plus a dollar ceiling. Held for Jake.
     if (BIG_JOB.test(`${customerText || ''}\n${reply}`)) {
@@ -302,7 +313,12 @@ export async function draftYelpReply(p) {
   }
 
   // Lead-form details count as the opening message on a first contact.
-  const isFirstReply = !messages.some((m) => m.role === 'business');
+  // The Zapier "New Consumer Message" trigger fires for follow-ups: the lead's
+  // first message was already answered by the Gmail path or a New Lead Zap. So
+  // the default is "continuing". Only a caller that says new_lead gets the full
+  // first-reply format (Aloha opener and the three-line signature).
+  const isFirstReply = (p.new_lead === true || String(p.new_lead).toLowerCase() === 'true')
+    && !messages.some((m) => m.role === 'business');
   const jobLine = [p.job && `Job: ${p.job}`, p.timing && `Timing they gave: ${p.timing}`, p.location && `Area they gave: ${p.location}`]
     .filter(Boolean).join('\n');
   const consumerText = isFirstReply && jobLine ? `${message}\n\n${jobLine}` : message;
