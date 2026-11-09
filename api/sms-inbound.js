@@ -45,7 +45,7 @@ import { autoReply, draftReply } from './_lib/sms-agent.js';
 import { handleInfoReply } from './_lib/sms-reply-capture.js';
 import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
-import { draftYelpReply } from './_lib/yelp-agent.js';
+import { draftYelpReply, logYelpBusinessMessage } from './_lib/yelp-agent.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -189,6 +189,12 @@ async function appSend(req, res) {
     if (params.op === 'yelp_reply') {
       const r = await draftYelpReply(params);
       return jsonOut(res, r.ok ? 200 : (r.error && /required/.test(r.error) ? 400 : 502), r);
+    }
+    // A message the business posted on Yelp (Zapier "New Business Message"):
+    // recorded so Lisa sees Jake's own replies too. Sends nothing.
+    if (params.op === 'yelp_log') {
+      const r = await logYelpBusinessMessage(params);
+      return jsonOut(res, r.ok ? 200 : 400, r);
     }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });

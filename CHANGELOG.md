@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.65.0 — 2026-11-09
+
+**Lisa on Yelp: scheduling first, reads the whole conversation, sounds like a person.** Prompted by Dan M.: he asked to schedule and was asked what his pressure was, after telling us 90-100 psi on the form and again by message; his next reply was held and he got nothing.
+
+- **Scheduling first.** Lisa is handed real open times (`openSlots()` in `_lib/yelp-booking.js`, from `/api/availability`: weekdays, starts 8 AM to 3 PM, one morning and one afternoon per day). A customer who asks to schedule gets two of them by name plus the address question in one message; picking a time gets the address and phone in one ask; then it books. A day the customer names ("Thursday", "tomorrow", "11/13") is checked against the calendar directly (`requestedDates()`), and Lisa is told never to call an unchecked day unavailable.
+- **Reads everything.** The Yelp quote form is kept on the thread (migration 117, `yelp_threads.form`) and given to every reply, not just the first. New op `yelp_log` records messages the business posts on Yelp (Zapier "New Business Message"), so Jake's own replies from the Yelp app are part of the thread; Lisa's own replies coming back the same way are skipped.
+- **Voice.** New prompt built around Jake's real reply to Dan as the style to match: name the likely fix plainly, one ask, straight to estimate and schedule. Never re-ask what the form or thread already says, never repeat a sentence, no plumbing lectures, no filler openers. Effort raised from low to medium.
+- **No more silent holds for wording.** The "stated a cause / implied a visit" check was a hold and left Dan unanswered; it is a flag now. Holds remain for prices not in the book, the owner's name, transfer offers, hourly/trip fees and empty drafts.
+
 ## v1.64.1 — 2026-11-09
 
 - Change orders can be deleted: an x on each one in the Change orders card (draft, sent, approved or declined), after a confirm. Deleting an approved one also takes its lines off the invoice. History logs it (`change_order_deleted`).

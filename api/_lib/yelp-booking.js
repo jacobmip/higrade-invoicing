@@ -209,3 +209,87 @@ export async function requestChange({ phone, action, visitStart, newTime, reason
     p_reason: reason ? `Yelp: ${String(reason).slice(0, 300)}` : 'Requested on Yelp',
   });
 }
+
+/**
+ * Real open times Lisa can offer, from the same /api/availability the phone
+ * line uses (calendar + every booked visit, fails closed). Weekdays only and
+ * starts between 8 AM and 3 PM: in the visit history Jake books Monday to
+ * Friday, one Saturday ever, almost never after 3. One morning and one
+ * afternoon option per day, soonest first.
+ * @returns {Promise<Array<{start:string, spoken:string}>>} empty when the calendar could not be read
+ */
+export async function openSlots({ max = 4, days = 3, prefer = [] } = {}) {
+  const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
+  const { webhookSecret } = await import('./sms.js');
+  const secret = await webhookSecret().catch(() => null);
+  if (!secret) return [];
+
+  // Days the customer named come first, so "can you come Thursday?" is
+  // answered from Thursday's real calendar, never guessed.
+  const preferred = [...new Set(prefer)].filter(Boolean);
+  const dates = [...preferred];
+  const base = new Date(`${hawaiiNow().iso}T00:00:00Z`);
+  for (let i = 0, added = 0; added < days + 1 && i < 10; i++) {
+    const d = new Date(base.getTime() + i * 86400000);
+    const iso = d.toISOString().slice(0, 10);
+    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6 && !dates.includes(iso)) { dates.push(iso); added++; }
+  }
+  const toMin = (t) => Number(t.slice(11, 13)) * 60 + Number(t.slice(14, 16));
+  const results = await Promise.all(dates.map(async (date) => {
+    try {
+      const r = await fetch(`${APP_URL}/api/availability?date=${date}`, {
+        headers: { 'x-webhook-secret': secret }, signal: AbortSignal.timeout(6000),
+      });
+      const j = await r.json().catch(() => null);
+      return r.ok && j?.ok && Array.isArray(j.suggested_free_slots) ? { date, slots: j.suggested_free_slots } : null;
+    } catch { return null; }
+  }));
+  // One failed day is skipped; if nothing came back, offer nothing rather
+  // than guess (the prompt then asks what day works).
+  const out = [];
+  const fullDays = [];
+  for (const day of results.filter(Boolean)) {
+    let morning = null, afternoon = null;
+    for (const w of day.slots) {
+      // First on-the-hour start inside the window that leaves 90 minutes.
+      let s = Math.ceil(toMin(w.start) / 60) * 60;
+      for (; s + 90 <= toMin(w.end) && s <= 15 * 60; s += 60) {
+        if (s < 8 * 60) continue;
+        const t = `${day.date}T${String(s / 60).padStart(2, '0')}:00`;
+        if (s < 12 * 60 && !morning) morning = t;
+        if (s >= 12 * 60 && !afternoon) afternoon = t;
+      }
+    }
+    const isPreferred = preferred.includes(day.date);
+    if (!morning && !afternoon && isPreferred) fullDays.push(speakVisit(day.date));
+    for (const t of [morning, afternoon]) if (t) out.push({ start: t, spoken: speakVisit(t), asked: isPreferred });
+  }
+  // Every opening on a day they asked for, then the soonest others up to max.
+  const asked = out.filter((x) => x.asked);
+  const rest = out.filter((x) => !x.asked).slice(0, Math.max(0, max - asked.length));
+  const slots = [...asked, ...rest];
+  slots.fullDays = fullDays;
+  return slots;
+}
+
+/** Weekday dates the customer named ("Thursday", "tomorrow", "11/12"), as YYYY-MM-DD, today onward. */
+export function requestedDates(text) {
+  const t = String(text || '').toLowerCase();
+  const today = new Date(`${hawaiiNow().iso}T00:00:00Z`);
+  const out = [];
+  const names = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  names.forEach((n, idx) => {
+    if (new RegExp(`\\b${n}s?\\b|\\b${n.slice(0, 3)}\\b`).test(t)) {
+      const ahead = (idx - today.getUTCDay() + 7) % 7;
+      out.push(new Date(today.getTime() + ahead * 86400000));
+    }
+  });
+  if (/\btomorrow\b/.test(t)) out.push(new Date(today.getTime() + 86400000));
+  if (/\btoday\b/.test(t)) out.push(today);
+  for (const m of t.matchAll(/\b(1[0-2]|0?[1-9])\/([12]\d|3[01]|0?[1-9])\b/g)) {
+    let d = new Date(Date.UTC(today.getUTCFullYear(), Number(m[1]) - 1, Number(m[2])));
+    if (d < today) d = new Date(Date.UTC(today.getUTCFullYear() + 1, Number(m[1]) - 1, Number(m[2])));
+    out.push(d);
+  }
+  return out.filter((d) => d.getUTCDay() !== 0 && d.getUTCDay() !== 6).map((d) => d.toISOString().slice(0, 10));
+}
