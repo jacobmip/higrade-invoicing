@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.60.3 — 2026-11-09
+
+**Client form: one less way to enter a name.** The client editor had Name, First name (optional), and Last name (optional) all at once — three overlapping fields for the same thing.
+
+- Dropped the raw Name box. First name is now required (blocked at save with an alert); last name stays optional but no longer says so.
+- `client.name` is still set automatically from first + last under the hood, since invoices match clients by name string and client creation depends on it being non-empty — nothing downstream changes.
+- Existing clients that predate the first/last split (name only, no first name) are grandfathered: editing one to change something else doesn't force a first-name backfill first.
+
 ## v1.60.2 — 2026-11-09
 
 **Change orders: get the customer's signature in person.** Review & send on a change order now offers three ways to approve it: send it (email and/or text), **Get signature now (in person)**, or Add to invoice without approval.
