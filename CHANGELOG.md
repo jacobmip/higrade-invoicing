@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.63.1 — 2026-11-09
+
+**Lisa reads photos on Yelp and can quote from them on the very first message.** Jake's call: when a customer sends pictures and enough detail, the estimate should go out on the first reply.
+
+- `yelp_reply` takes `attachment_urls` (Zapier's "Attachment URLs": comma or space separated, or an array). Up to four `https` links go to the model as images on the turn they arrive; Yelp's links expire after 24 hours, so they are never re-sent later. A photo-only message is accepted.
+- When the photos and description make a simple price-book job clear, Lisa gives the range in that reply. Same price rules as v1.62: book prices only, always a range, the sight-unseen line, big jobs never quoted.
+- A link the API cannot open no longer fails the reply: Lisa answers from the text and asks for the photo by text to 808-444-5450, and the draft is flagged.
+
 ## v1.63.0 — 2026-11-09
 
 **Lisa on Yelp knows who she is talking to, sees their appointments, and books visits.** Same booking rules as texting.

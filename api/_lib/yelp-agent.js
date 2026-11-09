@@ -128,6 +128,7 @@ SCHEDULING
 - When they propose a day and time and you already have the address and phone number, pencil it in ("We have you penciled in for Thursday at 10, the team will confirm") and set ready_to_book to true with appointment filled. The system checks the calendar; if that time is taken it offers the next opening for you. You never see the calendar yourself, so never promise a time is open.
 - If they already have an upcoming visit, do not book another unless they clearly want a separate, additional job.
 - If they ask to move or cancel a visit, set action to "reschedule" or "cancel", set visit_start to that visit's [visit_start] value, and new_time for a reschedule. Say you have passed it to the team and they will confirm. NEVER say a visit has been moved or cancelled.
+- PHOTOS. If the customer sent photos, look at them closely. When the photos plus what they wrote make a simple job clear and it matches the price book, give the estimate range in THIS reply, including on the very first message. Fast, specific estimates win jobs. Say plainly what you can see ("the shutoff under the sink looks corroded at the nut"), never a definite cause. If the photos do not settle it, say what you would need to see.
 - If they just want to confirm a visit that is still ahead, confirm the day and time from the list above and set action to "none". Do not say you are checking with the tech.
 - Only when the visit time has arrived or passed, or they say we are late, or they ask where the tech is right now: set action to "where_is_tech". Say you are checking with the tech right now and will update them shortly. NEVER invent an arrival time or a reason for a delay. If the "on my way" line appears above, you may say the tech is on the way.
 `;
@@ -382,7 +383,12 @@ function extractContact(text) {
  */
 export async function draftYelpReply(p) {
   const leadId = String(p.lead_id || '').trim();
-  const message = String(p.message || '').trim().slice(0, 4000);
+  // Photos the customer attached (Zapier's "Attachment URLs": one string,
+  // comma or space separated, or an array). Yelp's links expire after 24 hours,
+  // so they are only ever used on the turn they arrive.
+  const photoUrls = String(Array.isArray(p.attachment_urls) ? p.attachment_urls.join(' ') : (p.attachment_urls || ''))
+    .split(/[\s,]+/).filter((u) => /^https:\/\/\S+$/i.test(u)).slice(0, 4);
+  const message = String(p.message || '').trim().slice(0, 4000) || (photoUrls.length ? '(sent photos)' : '');
   if (!leadId) return { ok: false, error: 'lead_id is required' };
   if (!message) return { ok: false, error: 'message is required' };
 
@@ -410,7 +416,10 @@ export async function draftYelpReply(p) {
   const jobLine = [p.job && `Job: ${p.job}`, p.timing && `Timing they gave: ${p.timing}`, p.location && `Area they gave: ${p.location}`]
     .filter(Boolean).join('\n');
   const consumerText = isFirstReply && jobLine ? `${message}\n\n${jobLine}` : message;
-  messages.push({ role: 'consumer', text: message, at: new Date().toISOString() });
+  messages.push({
+    role: 'consumer', text: message, at: new Date().toISOString(),
+    ...(photoUrls.length ? { photos: photoUrls.length } : {}),
+  });
 
   const contact = extractContact(message);
   const row = {
@@ -450,6 +459,20 @@ export async function draftYelpReply(p) {
   }));
   if (isFirstReply) turns[0] = { role: 'user', content: `LEAD_MESSAGE_START\n${consumerText}\nLEAD_MESSAGE_END` };
   while (turns.length && turns[0].role !== 'user') turns.shift();
+  // The newest customer turn carries this message's photos, images first.
+  const withPhotos = (list, urls) => {
+    if (!urls.length) return list;
+    const copy = list.slice();
+    const last = copy[copy.length - 1];
+    copy[copy.length - 1] = {
+      role: 'user',
+      content: [
+        ...urls.map((url) => ({ type: 'image', source: { type: 'url', url } })),
+        { type: 'text', text: `${last.content}\n\n(The customer attached ${urls.length} photo${urls.length > 1 ? 's' : ''}, shown above.)` },
+      ],
+    };
+    return copy;
+  };
 
   // Who is this, and what is on the calendar for them. Never fatal: an
   // unmatched customer is just a new customer.
@@ -474,7 +497,7 @@ export async function draftYelpReply(p) {
   const allCustomerText = messages.filter((m) => m.role === 'consumer').map((m) => m.text).join('\n') + (p.job ? `\n${p.job}` : '');
   const catalogText = BIG_JOB.test(allCustomerText) ? '' : prices.map((x) => `${x.name} - $${x.price}`).join('\n');
 
-  const res = await fetch(ANTHROPIC, {
+  const callModel = (urls) => fetch(ANTHROPIC, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01',
@@ -494,10 +517,23 @@ export async function draftYelpReply(p) {
       }) + voiceRules({
         firstName: row.first_name, isFirstReply, knownTiming: !!p.timing, knownLocation: !!p.location, catalog: catalogText,
       }),
-      messages: turns,
+      messages: withPhotos(turns, urls),
     }),
   });
-  const json = await res.json().catch(() => ({}));
+  let res = await callModel(photoUrls);
+  let json = await res.json().catch(() => ({}));
+  if (!res.ok && photoUrls.length && res.status === 400) {
+    // A photo link the API could not fetch (expired, private) must not cost
+    // the customer their reply: answer from the text alone and say so.
+    console.error('[yelp-agent] photos rejected, retrying without:', JSON.stringify(json).slice(0, 200));
+    turns[turns.length - 1] = {
+      ...turns[turns.length - 1],
+      content: `${turns[turns.length - 1].content}\n\n(The customer attached photos, but they could not be opened. Ask them to text the photos to 808-444-5450 if you need them.)`,
+    };
+    res = await callModel([]);
+    json = await res.json().catch(() => ({}));
+    out.flags.push('photos could not be opened');
+  }
   if (!res.ok) {
     // Never swallow this: a silent failure here is a customer with no answer.
     const why = `Claude API ${res.status}: ${JSON.stringify(json).slice(0, 200)}`;
