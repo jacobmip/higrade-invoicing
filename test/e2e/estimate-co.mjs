@@ -35,7 +35,7 @@ db.invoice_items = [
   { id:'i2', invoice_id:'INV1300', name:'Add shutoff valve', description:'Change order #1, approved Nov 6 - 3/4 inch', qty:1, price:150, unit:'ea', taxable:true, sort_order:1 },
   { id:'f1', invoice_id:'EST1301', name:'Drain clear', description:'', qty:1, price:250, unit:'ea', taxable:true, sort_order:0 },
 ];
-db.invoice_events = [{ id:'ev1', invoice_id:'EST1300', kind:'sent', created_at:'2026-11-02T01:00:00Z' }];
+db.invoice_events = [{ id:'ev1', invoice_id:'EST1300', kind:'sent', recipient:'+18085551234', meta:{ kind:'estimate', channel:'sms' }, created_at:'2026-11-02T01:00:00Z' }, { id:'ev0', invoice_id:'EST1300', kind:'opened', created_at:'2026-11-02T03:00:00Z' }, { id:'ev3', invoice_id:'INV1300', kind:'change_order_sent', recipient:'pat@example.com', meta:{ seq:2, label:'INV1300-CO2', email:'pat@example.com', phone:null, total:314.14 }, created_at:'2026-11-07T22:00:00Z' }];
 // v1.59.0: a line added straight to the invoice after the estimate was signed (like INV1199).
 // v1.59.2: an estimate sent outside the app (Lani, Lisa): only an invoice_events 'sent' row, status still draft.
 if (SCENARIO === 'estsent') {
@@ -201,6 +201,13 @@ if (SCENARIO === 'send' || SCENARIO === 'invoice' || SCENARIO === 'nomigration')
   let tx = await text();
   const val = (l) => page.getByLabel(l).inputValue();
   const hint = () => page.locator('[data-due-hint]').innerText();
+  if (SCENARIO === 'invoice') {
+    await tab('History');
+    const h = await text();
+    check('invoice history: the estimate\'s send and open say Estimate', /Estimate texted to \+18085551234 \(EST1300\)/.test(h) && /Estimate opened by client \(EST1300\)/.test(h) && !/Invoice texted|Invoice opened/.test(h), (h.match(/(Estimate|Invoice)[^\n]*/g) || []).join(' | '));
+    check('invoice history: change order send says which change order', /INV1300-CO2 emailed to pat@example.com/.test(h));
+    await tab('Edit');
+  }
   check('invoice: Job started is the invoice date; due follows', (await val('Job started')) === '2026-11-03' && (await page.getByLabel('Job completed').count()) === 1 && /Due on completion/.test(await hint()), await hint());
   await page.getByLabel('Job completed').fill('2026-11-08'); await page.waitForTimeout(800);
   check('invoice: due date follows Job completed', (await val('Due date')) === '2026-11-08' && /follows Job Completed/.test(await hint()), (await val('Due date')) + ' ' + await hint());

@@ -131,5 +131,9 @@ const sms0 = sms.length, mail0 = mail.length;
 const pv = await co.previewChangeOrder({ id: 'co8' });
 check('preview returns text + email, sends nothing', pv.ok && /Reply YES/.test(pv.text) && /Review &amp; Approve/.test(pv.email.html) && sms.length === sms0 && mail.length === mail0);
 
+// v1.59.3: History events for change order sends and declines (never kind 'sent').
+check('send logs change_order_sent with where it went', db.invoice_events.some(e => e.kind === 'change_order_sent' && e.meta.seq === 6 && e.meta.email === 'pat@example.com'));
+check('decline logs change_order_declined', db.invoice_events.some(e => e.kind === 'change_order_declined' && e.meta.seq === 2));
+check('change order sends never log a plain sent event', !db.invoice_events.some(e => e.kind === 'sent'));
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);

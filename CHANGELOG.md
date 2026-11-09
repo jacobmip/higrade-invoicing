@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.59.3 — 2026-11-09
+
+**Fix: History said "Invoice" for things that happened to the estimate.** An invoice's History also lists its estimate's events, but every row was named after the document on screen, so the estimate's text read "Invoice opened by client (EST1056)".
+
+- Each History row now names the document it belongs to: "Estimate texted to ... (EST1056)", "Estimate opened by client (EST1056)", "Invoice emailed to ...". Sends now say emailed or texted.
+- **Change orders are in History too:** "INV1056-CO1 emailed to ... and texted to ...", declined by the customer, approved by signature or text, or added without customer approval. A change order send is never counted as the invoice being sent.
+- Tests: `test/change-order.test.mjs`, `test/e2e/estimate-co.mjs` (scenario `invoice`).
+
 ## v1.59.2 — 2026-11-09
 
 **Fix: a sent estimate still said Draft.** Only the email path moved an estimate from Draft to Sent. Sending by text, from an AI chat, or by Lani/Lisa outside the app logged the send in History but left the label on Draft.

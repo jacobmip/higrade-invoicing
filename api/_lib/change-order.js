@@ -155,6 +155,9 @@ export async function declineChangeOrder({ token }) {
   const co = won?.[0];
   if (!co) return { ok: false, error: 'not_open' };
   await telegramNotify(`Change order ${coLabel(co)} was declined by the customer. Nothing was added to ${co.invoice_id}.`);
+  try {
+    await rest('invoice_events', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ invoice_id: co.invoice_id, kind: 'change_order_declined', meta: { seq: co.seq, label: coLabel(co) } }) });
+  } catch (e) { console.warn('[change-order] history event failed:', e.message || e); }
   return { ok: true, label: coLabel(co) };
 }
 
@@ -292,6 +295,14 @@ export async function sendChangeOrder({ id, to, email }) {
   await rest(`change_orders?id=eq.${co.id}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ status: 'sent', sent_at: now, updated_at: now,
       ...(sent.text ? { sent_to: sent.text } : {}), ...(sent.email ? { sent_email: sent.email } : {}) }) });
+  // History on the invoice (and its estimate): which change order went where.
+  // Its own kind, never 'sent': that one means the invoice itself was sent.
+  try {
+    await rest('invoice_events', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({
+      invoice_id: co.invoice_id, kind: 'change_order_sent', recipient: [sent.email, sent.text].filter(Boolean).join(', ') || null,
+      meta: { seq: co.seq, label: coLabel(co), email: sent.email || null, phone: sent.text || null, total: coTotals(co.items, inv.tax).total },
+    }) });
+  } catch (e) { console.warn('[change-order] history event failed:', e.message || e); }
   return { ok: true, label: coLabel(co), link: `${APP_URL}/co/${co.view_token}`, sent, errors };
 }
 

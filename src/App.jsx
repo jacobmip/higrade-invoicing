@@ -4621,6 +4621,8 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     if (!row) throw new Error('The change order has no lines yet.');
     if (note !== undefined || photos) row = await saveChangeOrder({ row, invoiceId: coInvIdRef.current, items: row.items, note, photos });
     const done = await approveChangeOrderInApp(row);
+    try { await db.recordInvoiceEvent(coInvIdRef.current, 'change_order_approved', null, { seq: done.seq, label: `${coInvIdRef.current}-CO${done.seq}`, via: null, total: coTotals(done.items, form.tax).total }); }
+    catch (e) { console.warn('history event failed:', e); }
     const lines = coInvoiceLines(done);
     const build = (f) => ({ ...f, status: f.status === "paid" ? "partial" : f.status, items: mergeChangeOrderLines(f.items, lines) });
     setForm(build);
@@ -5196,12 +5198,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   function historyRow(ev) {
     {
       const when = ev.created_at;
+      // v1.59.3: name the document the event belongs to, not the one on
+      // screen: the invoice's History also lists its estimate's events.
+      const evDoc = ev._doc || ev.invoice_id || form.id || '';
+      const docWord = /^EST/i.test(evDoc) ? 'Estimate' : 'Invoice';
       if (ev.kind === 'sent') {
         const isText = ev.meta?.channel === 'sms';
-        const verb = isText ? 'Texted' : 'Sent';
+        const verb = isText ? 'texted' : (ev.recipient ? 'emailed' : 'sent');
         return {
           date: when,
-          label: ev.recipient ? `${verb} to ${ev.recipient}` : (isEstimate ? `Estimate ${verb.toLowerCase()}` : `Invoice ${verb.toLowerCase()}`),
+          label: ev.recipient ? `${docWord} ${verb} to ${ev.recipient}` : `${docWord} ${verb}`,
           type: 'sent',
           channel: isText ? 'sms' : 'email',
           amount: null,
@@ -5211,7 +5217,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       if (ev.kind === 'opened') {
         return {
           date: when,
-          label: isEstimate ? 'Estimate opened by client' : 'Invoice opened by client',
+          label: `${docWord} opened by client`,
           type: 'opened',
           amount: null,
           sortKey: new Date(when).getTime(),
@@ -5221,11 +5227,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         const m = ev.meta || {};
         return {
           date: when,
-          label: `${m.label || 'Change order'} approved ${m.via === 'sms' ? 'by text' : 'by signature'}${m.name ? ` (${m.name})` : ''}, added to invoice`,
+          label: m.via ? `${m.label || 'Change order'} approved ${m.via === 'sms' ? 'by text' : 'by signature'}${m.name ? ` (${m.name})` : ''}, added to invoice` : `${m.label || 'Change order'} added to invoice without customer approval`,
           type: 'sent',
           amount: m.total ?? null,
           sortKey: new Date(when).getTime(),
         };
+      }
+      if (ev.kind === 'change_order_sent') {
+        const m = ev.meta || {};
+        const how = [m.email && `emailed to ${m.email}`, m.phone && `texted to ${m.phone}`].filter(Boolean).join(' and ') || 'sent';
+        return { date: when, label: `${m.label || 'Change order'} ${how}`, type: 'sent', channel: m.email ? 'email' : 'sms', amount: m.total ?? null, sortKey: new Date(when).getTime() };
+      }
+      if (ev.kind === 'change_order_declined') {
+        const m = ev.meta || {};
+        return { date: when, label: `${m.label || 'Change order'} declined by the customer`, type: 'opened', amount: null, sortKey: new Date(when).getTime() };
       }
       if (ev.kind === 'items_edited') {
         const m = ev.meta || {};
