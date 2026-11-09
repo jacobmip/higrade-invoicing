@@ -247,6 +247,9 @@ function estimateDisplay(inv) {
   if (estimateDeclined(inv)) return { label: "Declined", color: "#e74c3c", closed: true };
   if (inv.status === "expired" || estimateExpired(inv)) return { label: "Expired", color: "#95a5a6", closed: false };
   if (inv.status === "sent") return { label: "Sent", color: "#2980b9", closed: false };
+  // v1.59.2: sent by text, by an AI chat, or by Lani/Lisa outside the app: the
+  // History has a 'sent' event even though the status was never moved.
+  if (inv.id && db.wasSent(inv.id)) return { label: "Sent", color: "#2980b9", closed: false };
   return { label: "Draft", color: "#8899bb", closed: false };
 }
 function statusDisplay(inv) {
@@ -4179,6 +4182,17 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // The first send stamps the dates it marks: an estimate's Sent date, and an
   // invoice's Job completed (sending the invoice means the work is done) when
   // it is still blank.
+  // draft -> sent, by email or by text. Legacy "outstanding" counts as unsent;
+  // approved, declined, converted and expired are never walked back by a re-send.
+  const markEstimateSent = () => {
+    const f = formRef.current;
+    if (!isEstimateDoc(f)) return;
+    if (!f.status || f.status === "draft" || f.status === "outstanding" || f.status === "pending") {
+      const sentForm = { ...f, status: "sent" };
+      setForm(sentForm);
+      onPartialSave?.(sentForm);
+    }
+  };
   const afterFirstSend = () => {
     if (isEstimateDoc(formRef.current)) { setEstSentAt(v => v || new Date().toISOString()); return; }
     if (!formRef.current.jobCompletedOn) setCompleted(today());
@@ -4895,6 +4909,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         try { await db.recordInvoiceEvent(form.id, 'sent', tp.phone, { kind: tp.kind, channel: 'sms' }); }
         catch (e) { console.warn('recordInvoiceEvent failed:', e); }
         afterFirstSend();
+        markEstimateSent();
         refreshEvents?.();
       }
       setTextPreview(null);
@@ -4948,13 +4963,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           try { await db.recordInvoiceVersion(form, primaryEmail, "Estimate sent", "email_sent"); }
           catch (e) { console.warn('Version snapshot failed:', e); }
         }
-        // draft -> sent. Legacy "outstanding" counts as unsent; approved, declined,
-        // converted and expired are never walked back by a re-send.
-        if (!form.status || form.status === "draft" || form.status === "outstanding" || form.status === "pending") {
-          const sentForm = { ...formRef.current, status: "sent" };
-          setForm(sentForm);
-          onPartialSave?.(sentForm);
-        }
+        markEstimateSent();
         alert("Estimate sent. The link in the email will be tracked when opened.");
       } else {
         const result = await sendInvoiceEmail(form, client, message, viewLink, toAddresses, ccAdmin);
@@ -6223,7 +6232,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     }
                   }
                   setField("status", s);
-                }} style={{ ...S.btn(form.status === s ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>{label}</button>
+                }} style={{ ...S.btn((form.type === "estimate" && s === "sent" && estimateDisplay(form).label === "Sent") || (form.status === s && !(form.type === "estimate" && s === "draft" && estimateDisplay(form).label === "Sent")) ? "primary" : "ghost"), flex: 1, fontSize: 13 }}>{label}</button>
               ))}
             </div>
           </div>
