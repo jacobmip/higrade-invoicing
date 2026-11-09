@@ -6599,6 +6599,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             type="button"
             disabled={savingClient}
             onClick={async () => {
+              const grandfathered = selectedClient?.id && clientDraft.name?.trim();
+              if (!clientDraft.firstName?.trim() && !grandfathered) {
+                alert("First name is required");
+                return;
+              }
               const cleaned = normalizeClientDraft({ ...clientDraft, name: clientDraft.name || form.client || "" });
               setSavingClient(true);
               try {
@@ -7308,7 +7313,7 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
   const sectionLabelStyle = { fontSize: 11, fontWeight: 700, color: "#6677aa", letterSpacing: 2, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" };
   return (
     <div>
-      {[["name", "Name"], ["firstName", "First name (optional)"], ["lastName", "Last name (optional)"], ["companyName", "Company (optional)"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"]].map(([k, l]) => (
+      {[["firstName", "First name"], ["lastName", "Last name"], ["companyName", "Company (optional)"], ["email", "Email"], ["email2", "Secondary Email"], ["phone", "Phone"]].map(([k, l]) => (
         <div key={k} style={{ marginBottom: compact ? 9 : 12 }}>
           <label style={{ ...S.label, marginBottom: compact ? 3 : 4 }}>{l}</label>
           <input style={S.input} value={form[k] || ""} onChange={e => setField(k, e.target.value)} type={k === "email" || k === "email2" ? "email" : "text"} />
@@ -7431,8 +7436,13 @@ function ClientEditFields({ value, onChange, compact, isAdmin }) {
 // Normalize a draft client before save: ensure every address has an id,
 // parse legacy line3 into city/state/zip if needed, and compute line3.
 function normalizeClientDraft(draft) {
+  // The form no longer has a raw Name box — name is derived from first/last
+  // so the many places that still key off client.name (invoice matching,
+  // client creation gating) keep working untouched.
+  const derivedName = [draft.firstName, draft.lastName].filter(Boolean).join(" ").trim();
   return {
     ...draft,
+    name: derivedName || draft.name || "",
     addresses: (draft.addresses || []).map(a => {
       let city = a.city || "", state = a.state || "", zip = a.zip || "";
       // Back-compat: if no parsed fields but line3 exists, extract from it
@@ -7852,6 +7862,14 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
   }, [mode, detailId]);
 
   const save = () => {
+    // First name is required going forward. Existing clients that predate
+    // the first/last split (name only, no firstName) can still save edits
+    // to other fields without being forced to backfill it right now.
+    const grandfathered = editId !== "new" && form.name?.trim();
+    if (!form.firstName?.trim() && !grandfathered) {
+      alert("First name is required");
+      return;
+    }
     clearClientTabDraft();
     // Make sure each address has an id and a label so dropdowns work later.
     onSave(normalizeClientDraft(form), editId);
