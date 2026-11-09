@@ -714,6 +714,33 @@ function sendDocumentEmail(input, ctx) {
   };
 }
 
+// Jake's switch for Lisa's automatic replies. Two settings rows, both admin-only
+// under migration 070: yelp_autoreply_enabled (Yelp, via the Zapier Zaps) and
+// sms_autoreply_enabled (texts to 808-444-5450). Missing reads as on for Yelp,
+// off for texts, matching how each server reads it. Phone calls are not covered:
+// Vapi answers 444-5450 regardless.
+const LISA_KEYS = { yelp: 'yelp_autoreply_enabled', texts: 'sms_autoreply_enabled' };
+async function lisaSwitch(input) {
+  const channel = ['yelp', 'texts', 'all'].includes(input.channel) ? input.channel : 'all';
+  const keys = channel === 'all' ? Object.keys(LISA_KEYS) : [channel];
+  if (typeof input.on === 'boolean') {
+    for (const k of keys) {
+      const { error } = await supabase.from('settings')
+        .upsert({ key: LISA_KEYS[k], value: input.on ? 'true' : 'false' }, { onConflict: 'key' });
+      if (error) return { error: `Could not switch ${k}: ${error.message}` };
+    }
+  }
+  const { data, error } = await supabase.from('settings').select('key,value').in('key', Object.values(LISA_KEYS));
+  if (error) return { error: `Could not read Lisa's switches: ${error.message}` };
+  const val = (k) => data.find((r) => r.key === LISA_KEYS[k])?.value;
+  const status = {
+    yelp: String(val('yelp') ?? 'true').toLowerCase() !== 'false' ? 'on' : 'off',
+    texts: String(val('texts') ?? 'false').toLowerCase() === 'true' ? 'on' : 'off',
+    phone: 'on (not switchable here: Lisa answers 808-444-5450 calls regardless)',
+  };
+  return { ok: true, changed: typeof input.on === 'boolean' ? keys : [], status };
+}
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 const TOOLS = {
   search_documents: searchDocuments,
@@ -741,11 +768,12 @@ const TOOLS = {
   send_sms: sendSms,
   place_call: placeCall,
   delete_document: deleteDocument,
+  lisa_switch: lisaSwitch,
 };
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
   'remove_line_item', 'update_document', 'record_payment', 'save_price', 'schedule_job',
-  'send_document_email', 'send_sms', 'place_call', 'delete_document', 'draft_change_order',
+  'send_document_email', 'send_sms', 'place_call', 'delete_document', 'draft_change_order', 'lisa_switch',
 ]);
 
 // What the chat shows while a tool runs.
@@ -755,6 +783,7 @@ const PROGRESS = {
   find_client: (i) => `Looking up ${i.query || 'client'}`,
   search_price_book: 'Checking the price book',
   get_schedule: 'Checking the schedule',
+  lisa_switch: (i) => (typeof i.on === 'boolean' ? `Turning Lisa ${i.on ? 'on' : 'off'}` : "Checking Lisa's switches"),
   business_summary: 'Adding up the numbers',
   query_business_data: 'Checking the numbers',
   query_database: 'Checking the database',

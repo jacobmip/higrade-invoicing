@@ -496,6 +496,20 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'lisa_switch',
+    description:
+      "Turn Lisa's automatic replies off or on, or check whether they are on. Lisa is the AI receptionist: she auto-replies on Yelp and to texts to 808-444-5450. " +
+      'Use when Jake says things like "Lisa off", "pause Lisa", "stop Lisa on Yelp", "turn Lisa back on", "is Lisa on?". Omit `on` to just report status. ' +
+      'While off, Yelp messages are still recorded so Lisa has the full thread when she is turned back on. Phone calls are NOT covered by this switch: say so if Jake asks to stop her answering the phone.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', enum: ['all', 'yelp', 'texts'], description: 'Which replies. Default all.' },
+        on: { type: 'boolean', description: 'true = turn on, false = turn off. Omit to only check status.' },
+      },
+    },
+  },
+  {
     name: 'place_call',
     description:
       "Queue an outbound phone call for Lisa to a customer. Does NOT dial: it files the call and Jake approves it from the approval_link before Lisa dials. Return the link to Jake in your reply so he can tap it to approve. " +

@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.66.0 — 2026-11-09
+
+**An off switch for Lisa, in the app's AI header.** Say "Lisa off", "pause Lisa on Yelp", "turn Lisa back on" or "is Lisa on?".
+
+- New header tool `lisa_switch` (`src/aiAgent.js`, schema in `api/_lib/agent-tools.js`): turns Lisa's automatic replies off or on for Yelp, texts, or both, and reports status. Phone calls are not covered: Vapi answers 808-444-5450 regardless, and the tool says so.
+- New setting `yelp_autoreply_enabled` (missing reads as on). While off, `yelp_reply` still records the customer's message in `yelp_threads` and returns `should_send: false`, so nothing posts and Lisa has the full thread when switched back on. Texts use the existing `sms_autoreply_enabled`.
+- Verified: switched off, a Yelp message was recorded and not answered; switched back on.
+
 ## v1.65.0 — 2026-11-09
 
 **Lisa on Yelp: scheduling first, reads the whole conversation, sounds like a person.** Prompted by Dan M.: he asked to schedule and was asked what his pressure was, after telling us 90-100 psi on the form and again by message; his next reply was held and he got nothing.

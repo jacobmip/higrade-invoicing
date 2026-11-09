@@ -23,6 +23,7 @@
 // pings Jake urgently: Lisa never invents an ETA.
 
 import { telegramNotify } from './convert-estimate.js';
+import { getSetting } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
 import {
   hawaiiNow, speakVisit, upcomingVisits, onMyWayToday, matchClient, bookVisit, requestChange, openSlots, requestedDates,
@@ -494,6 +495,15 @@ export async function draftYelpReply(p) {
     await telegramNotify(`Yelp thread held for you\n${firstName || 'A customer'}: "${message.slice(0, 300)}"\nWhy: ${why}\nLead ${leadId}`);
     return out;
   };
+
+  // Jake's off switch (settings.yelp_autoreply_enabled; the app header's
+  // "Lisa off"). Missing means on. The message is still recorded, so Lisa has
+  // the whole thread when she is switched back on.
+  if (String(await getSetting('yelp_autoreply_enabled') ?? 'true').toLowerCase() === 'false') {
+    await saveThread(row);
+    out.skip_reason = 'Lisa is switched off for Yelp';
+    return out;
+  }
 
   if (row.replies_sent >= MAX_REPLIES_PER_THREAD) {
     return hold(`Reached the ${MAX_REPLIES_PER_THREAD}-reply ceiling for this thread. Take it from here.`);
