@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.61.1 — 2026-11-09
+
+**Yelp reply: fixed an empty-message bug caught on the first Zapier test.** When the model wrote "Aloha Andrew. We can handle it." on one line, the opener cleanup deleted the whole line and the draft came back as greeting plus sign-off with `should_send: true`.
+
+- The opener strip now removes only the greeting. A draft with no real message in it is held for Jake instead of marked sendable.
+- The question-mark fixer no longer turns a "When you are ready..." statement into a question.
+- Same bug fixed in `AI-OS/infra/n8n/code/build-reply.js`, the Gmail first-reply path.
+
 ## v1.61.0 — 2026-11-09
 
 **Lisa can hold a Yelp conversation, not just answer the first message.** New `op: 'yelp_reply'` on `/api/sms-inbound` for the Zapier Yelp Leads Zap. Nothing in the app UI changes.

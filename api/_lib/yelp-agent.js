@@ -25,6 +25,11 @@ const MODEL = process.env.YELP_MODEL || 'claude-haiku-4-5';
 const MAX_REPLIES_PER_THREAD = 8;
 const INTAKE_URL = 'https://higrade-invoicing.vercel.app/schedule?src=yelp';
 const SIGNATURE = 'Lisa\nHI Grade Plumbing LLC\n808-444-5450';
+// Just the greeting: "Aloha Andrew," / "Aloha Andrew." plus trailing space. It
+// must NOT run to the end of the line: the model sometimes writes
+// "Aloha Andrew. We can handle that." on one line, and eating the line ate
+// the whole message (caught on the first live test, 1 run in 8).
+const GREETING = /^Aloha\b[^\n,.!?]{0,40}[,.!]?[ \t]*\n*/i;
 const WRONG_NUMBERS = /\(?808\)?[-. ]?393[-. ]?0015|8083930015/g;
 
 function supabaseUrl() {
@@ -121,7 +126,7 @@ function polish(raw, { firstName, isFirstReply }) {
   // A question the model punctuated with a period: last sentence opens with an
   // interrogative and the message has no question mark at all.
   if (!reply.includes('?')) {
-    reply = reply.replace(/((?:^|[.!]\s+)(?:Is|Are|Does|Do|Did|Was|Were|Can|Could|Would|Will|Has|Have|How|What|When|Where|Which|Who)\b[^.?!\n]*)\.\s*$/, '$1?');
+    reply = reply.replace(/((?:^|[.!]\s+)(?:Is|Are|Does|Do|Did|Was|Were|Can|Could|Would|Has|Have)\b[^.?!,\n]*)\.\s*$/, '$1?');
   }
 
   if (WRONG_NUMBERS.test(reply)) {
@@ -137,12 +142,23 @@ function polish(raw, { firstName, isFirstReply }) {
 
   if (isFirstReply) {
     const opener = firstName ? `Aloha ${firstName},` : 'Aloha,';
-    if (/^Aloha\b/i.test(reply)) reply = reply.replace(/^Aloha[^\n]*\n*/i, opener + '\n\n');
-    else { flags.push('model omitted the Aloha opener, added it'); reply = opener + '\n\n' + reply; }
+    if (/^Aloha\b/i.test(reply)) {
+      reply = reply.replace(GREETING, '').replace(/^[a-z]/, (c) => c.toUpperCase());
+    } else {
+      flags.push('model omitted the Aloha opener, added it');
+    }
+    reply = opener + '\n\n' + reply;
     reply = reply.trim() + '\n\nMahalo,\n\n' + SIGNATURE;
   } else {
     // Mid-thread: no greeting again, a short sign-off instead of the full block.
-    reply = reply.replace(/^Aloha[^\n]*\n+/i, '').trim() + '\n\nMahalo,\nLisa';
+    reply = reply.replace(GREETING, '').replace(/^[a-z]/, (c) => c.toUpperCase()).trim() + '\n\nMahalo,\nLisa';
+  }
+
+  // Never mark a message sendable when there is nothing in it but greeting and
+  // sign-off. Strip both and require real words left.
+  const core = reply.replace(/^Aloha[^\n]*\n*/i, '').replace(/\n*Mahalo,[\s\S]*$/i, '').trim();
+  if (core.split(/\s+/).filter(Boolean).length < 6) {
+    return { text: reply, flags, hold: 'The draft had no real message in it.' };
   }
 
   if (/\$\s?\d/.test(reply) || /\b\d+\s*(dollars|per hour|an hour|\/hr)\b/i.test(reply)) {
