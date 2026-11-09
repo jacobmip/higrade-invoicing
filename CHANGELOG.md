@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.60.2 — 2026-11-09
+
+**Change orders: get the customer's signature in person.** Review & send on a change order now offers three ways to approve it: send it (email and/or text), **Get signature now (in person)**, or Add to invoice without approval.
+
+- The signature screen shows the change order's lines and total with tax, the printed name (prefilled with the client, editable) and a signature box. Approve puts the lines on the invoice at once, recorded as approved by signature with the signer's name and signature, the same as signing on the link.
+- History: "INV####-CO# signed in person (Name), added to invoice". The estimate and the customer link show it as approved by that name.
+- Test: `test/e2e/estimate-co.mjs` (scenario `sign`).
+
 ## v1.60.1 — 2026-11-09
 
 **Fix: a new document could be saved on top of an existing one.** EST1201 was converted onto INV1200, which already existed, instead of becoming INV1201.

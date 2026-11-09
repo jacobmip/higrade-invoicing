@@ -829,10 +829,14 @@ export function ChangeOrderAddenda({ list, taxPct, estimateTotal, jobId, showPen
 // only signature | sms, and null means "added by HI Grade"), applied at once.
 // The caller, the open invoice form, puts the lines on the invoice
 // (coInvoiceLines) and saves it: the form is the writer, so nothing races it.
-export async function approveChangeOrderInApp(row) {
+// v1.60.2: also the in-person signature (signature = PNG data URL, name =
+// who signed): approved_via 'signature', the same as signing on the link.
+export async function approveChangeOrderInApp(row, { signature, name } = {}) {
   const now = new Date().toISOString();
+  const signed = !!signature;
   const { data, error } = await supabase.from('change_orders')
-    .update({ status: 'approved', approved_at: now, approved_via: null, approved_name: null, approval_message: 'Added by HI Grade without a customer signature', applied_at: now, updated_at: now })
+    .update({ status: 'approved', approved_at: now, approved_via: signed ? 'signature' : null, approved_name: signed ? (String(name || '').trim().slice(0, 120) || null) : null,
+      signature_data: signed ? signature : null, approval_message: signed ? 'Signed in person' : 'Added by HI Grade without a customer signature', applied_at: now, updated_at: now })
     .eq('id', row.id).in('status', ['draft', 'sent']).select().single();
   if (error) throw error;
   return data;

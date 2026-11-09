@@ -4634,21 +4634,22 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   };
   // Jake puts a change order on the invoice himself, no customer sign-off
   // (v1.59.0). The form adds the lines and saves them; nothing races it.
-  const approveWithoutCustomer = async ({ note, photos } = {}) => {
+  const [coSignFor, setCoSignFor] = useState(null); // v1.60.2: in-person signature for the change order being built
+  const approveWithoutCustomer = async ({ note, photos, signature, name } = {}) => {
     const m = coModeRef.current;
     if (!m) return;
-    if (!confirm(`Add change order ${m.seq} to the invoice now, without the customer's approval?`)) return;
+    if (!signature && !confirm(`Add change order ${m.seq} to the invoice now, without the customer's approval?`)) return;
     await coSaveNow();
     let row = coRowRef.current;
     if (!row) throw new Error('The change order has no lines yet.');
     if (note !== undefined || photos) row = await saveChangeOrder({ row, invoiceId: coInvIdRef.current, items: row.items, note, photos });
-    const done = await approveChangeOrderInApp(row);
-    try { await db.recordInvoiceEvent(coInvIdRef.current, 'change_order_approved', null, { seq: done.seq, label: `${coInvIdRef.current}-CO${done.seq}`, via: null, total: coTotals(done.items, form.tax).total }); }
+    const done = await approveChangeOrderInApp(row, signature ? { signature, name } : {});
+    try { await db.recordInvoiceEvent(coInvIdRef.current, 'change_order_approved', null, { seq: done.seq, label: `${coInvIdRef.current}-CO${done.seq}`, via: signature ? 'signature' : null, inPerson: !!signature, name: signature ? name : null, total: coTotals(done.items, form.tax).total }); }
     catch (e) { console.warn('history event failed:', e); }
     const lines = coInvoiceLines(done);
     const build = (f) => ({ ...f, status: f.status === "paid" ? "partial" : f.status, items: mergeChangeOrderLines(f.items, lines) });
     setForm(build);
-    snapshotEvent('line_item_added', `Change order ${done.seq} added without customer approval`, build(formRef.current));
+    snapshotEvent('line_item_added', signature ? `Change order ${done.seq} signed in person by ${name}` : `Change order ${done.seq} added without customer approval`, build(formRef.current));
     announceChangeOrders(coInvIdRef.current);
     setCoSheet(false);
     leaveChangeOrderMode();
@@ -5248,7 +5249,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         const m = ev.meta || {};
         return {
           date: when,
-          label: m.via ? `${m.label || 'Change order'} approved ${m.via === 'sms' ? 'by text' : 'by signature'}${m.name ? ` (${m.name})` : ''}, added to invoice` : `${m.label || 'Change order'} added to invoice without customer approval`,
+          label: m.via ? `${m.label || 'Change order'} ${m.inPerson ? 'signed in person' : `approved ${m.via === 'sms' ? 'by text' : 'by signature'}`}${m.name ? ` (${m.name})` : ''}, added to invoice` : `${m.label || 'Change order'} added to invoice without customer approval`,
           type: 'sent',
           amount: m.total ?? null,
           sortKey: new Date(when).getTime(),
@@ -5428,6 +5429,20 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       {/* Portaled to <body>: inside the form, position:fixed would be relative
           to the tab carousel's transform and open off-screen once you have
           scrolled (v1.57.2). */}
+      {coSignFor && coMode && createPortal(
+        <InPersonSignatureModal
+          estimate={form}
+          co={{ label: `${coInvoiceId}-CO${coMode.seq}`, seq: coMode.seq, lines: coMode.items.filter(coMeaningful), total: coTotals(coMode.items.filter(coMeaningful), form.tax).total }}
+          onClose={() => setCoSignFor(null)}
+          onSave={async (sig, name) => {
+            const extra = coSignFor;
+            setCoSignFor(null);
+            try { await approveWithoutCustomer({ ...extra, signature: sig, name }); }
+            catch (e) { alert("Not saved: " + (e.message || e)); }
+          }}
+        />,
+        document.body
+      )}
       {coSheet && coMode && createPortal(
         <ChangeOrderSendSheet
           invoiceId={coInvoiceId}
@@ -5440,6 +5455,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           onSaved={(r) => { coRowRef.current = r; setCoMode(m => (m ? { ...m, seq: r.seq, note: r.note || '', photos: r.photos || [] } : m)); }}
           onSent={() => { coSentRef.current = true; }}
           onApproveNow={isEstimate ? undefined : approveWithoutCustomer}
+          onSignNow={isEstimate ? undefined : async ({ note, photos }) => { setCoSignFor({ note, photos }); }}
           onClose={() => {
             setCoSheet(false);
             // Sent: the change order is done, back to the invoice's own lines.
@@ -9207,10 +9223,13 @@ function CalendarTab({ isAdmin, invoices, gcalAuthed, gcalMissing, onAuthChange,
 }
 
 // ─── In-Person Signature Modal ────────────────────────────────────────────────
-function InPersonSignatureModal({ estimate, onClose, onSave }) {
+// v1.60.2: also signs a change order in person (`co`: { label, seq, lines,
+// total }); then it asks for the signer's printed name and onSave gets it.
+function InPersonSignatureModal({ estimate, onClose, onSave, co }) {
   const canvasRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
   const [isEmpty, setIsEmpty] = useState(true);
+  const [signer, setSigner] = useState(co ? (estimate.client || "") : "");
   const t = calcTotals(estimate);
 
   useEffect(() => {
@@ -9252,15 +9271,24 @@ function InPersonSignatureModal({ estimate, onClose, onSave }) {
       <div style={{ background: NAVY, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div>
           <div style={{ color: "#fff", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 17 }}>{estimate.client || "Client"}</div>
-          <div style={{ color: ORANGE, fontSize: 12 }}>{estimate.id || "Estimate"} · {fmt(t.total)}</div>
+          <div style={{ color: ORANGE, fontSize: 12 }}>{co ? `${co.label} · ${fmt(co.total)}` : `${estimate.id || "Estimate"} · ${fmt(t.total)}`}</div>
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#8899bb", cursor: "pointer", fontSize: 26, lineHeight: 1 }}>✕</button>
       </div>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: 20, gap: 12, overflow: "hidden" }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>Sign to Approve Estimate</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>{co ? `Sign to approve change order ${co.seq}` : "Sign to Approve Estimate"}</div>
           <div style={{ fontSize: 12, color: "#888", marginTop: 3 }}>Draw your signature in the box below</div>
         </div>
+        {co && (
+          <div data-co-sign-lines style={{ background: "#f8f9fc", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#333", maxHeight: 150, overflowY: "auto" }}>
+            {co.lines.map((l, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}><span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{l.name}{Number(l.qty ?? 1) !== 1 ? ` x ${l.qty}` : ""}</span><span>{fmt(Number(l.qty ?? 1) * Number(l.price ?? 0))}</span></div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, borderTop: "1px solid #dde2ee", marginTop: 4, paddingTop: 4 }}><span>Total with tax</span><span>{fmt(co.total)}</span></div>
+          </div>
+        )}
+        {co && <input aria-label="Signer name" value={signer} onChange={e => setSigner(e.target.value)} placeholder="Printed name" style={{ ...S.input, fontSize: 16 }} />}
         <canvas
           ref={canvasRef}
           width={600}
@@ -9277,8 +9305,8 @@ function InPersonSignatureModal({ estimate, onClose, onSave }) {
         <div style={{ textAlign: "center", color: "#bbb", fontSize: 12, marginTop: -6 }}>× Sign above the line</div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={clear} style={{ ...S.btn("ghost"), flex: 1, fontSize: 14 }}>Clear</button>
-          <button onClick={() => onSave(canvasRef.current.toDataURL("image/png"))} disabled={isEmpty} style={{ ...S.btn(isEmpty ? "ghost" : "primary"), flex: 2, fontSize: 15, opacity: isEmpty ? 0.5 : 1 }}>
-            ✓ Approve Estimate
+          <button onClick={() => onSave(canvasRef.current.toDataURL("image/png"), signer.trim())} disabled={isEmpty || (co && !signer.trim())} style={{ ...S.btn(isEmpty || (co && !signer.trim()) ? "ghost" : "primary"), flex: 2, fontSize: 15, opacity: isEmpty || (co && !signer.trim()) ? 0.5 : 1 }}>
+            {co ? "✓ Approve change order" : "✓ Approve Estimate"}
           </button>
         </div>
       </div>

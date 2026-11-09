@@ -46,6 +46,7 @@ if (SCENARIO === 'estsent') {
 if (SCENARIO === 'lock') db.invoice_items.push({ id:'i3', invoice_id:'INV1300', name:'Loose fix', description:'added after signing', qty:1, price:80, unit:'ea', taxable:true, sort_order:2 });
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
+const dialogs = [];
 db.saved_items = [{ id: 's1', name: 'Angle stop replacement', price: 95, category: 'Valves', owner_id: JAKE, taxable: true }];
 db.job_photos = [{ id: 'jp1', invoice_id: 'INV1300', url: 'https://cwhgcxxszyvevjpbnnkc.supabase.co/storage/v1/object/public/job-photos/INV1300/old.jpg', type: 'before', created_at: now }];
 const uploads = [];
@@ -69,7 +70,7 @@ await ctx.addInitScript(([s, scenario]) => {
   }
 }, [session, SCENARIO]);
 const page = await ctx.newPage();
-page.on('dialog', async d => { const msg = d.message(); log('DIALOG', d.type(), JSON.stringify(msg.slice(0,90)));
+page.on('dialog', async d => { const msg = d.message(); dialogs.push(msg); log('DIALOG', d.type(), JSON.stringify(msg.slice(0,90)));
   if (SCENARIO === 'cancel' && /already exists/.test(msg)) { log('  -> dismissing'); await d.dismiss(); } else await d.accept(); });
 page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') log('console.'+m.type(), m.text().slice(0,160)); });
 page.on('pageerror', e => log('PAGEERROR', e.message));
@@ -338,6 +339,27 @@ if (SCENARIO === 'collide') {
   check('conversion did not write onto the existing INV1300', !created.some(x => x.id === 'INV1300'), JSON.stringify(created.map(x => x.id + ':' + x.items.join(','))));
   check('it took the next free number instead', created.some(x => x.id === 'INV1302' && x.items.some(i => /Drain clear/.test(i))), JSON.stringify(created.map(x => x.id)));
   check('INV1300 still has its own lines', db.invoice_items.filter(i => i.invoice_id === 'INV1300').some(i => i.name === 'Water heater'));
+}
+if (SCENARIO === 'sign') {
+  // ── v1.60.2: change order signed in person on the phone ──
+  await open('INV1300');
+  await page.getByRole('button', { name: 'Price Book' }).dispatchEvent('click'); await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Add Angle stop replacement' }).dispatchEvent('click'); await page.waitForTimeout(2500);
+  await page.getByRole('button', { name: 'Review & send' }).dispatchEvent('click'); await page.waitForTimeout(1200);
+  await page.getByRole('button', { name: 'Get signature now (in person)' }).click(); await page.waitForTimeout(800);
+  const tx = await text();
+  check('signature screen shows the change order lines and total', /Sign to approve change order/.test(tx) && /Angle stop replacement/.test(tx) && /Total with tax/.test(tx));
+  check('printed name prefilled with the client', (await page.getByLabel('Signer name').inputValue()) === 'Test Client');
+  const box = await page.locator('canvas').boundingBox();
+  await page.mouse.move(box.x + 30, box.y + 40); await page.mouse.down();
+  for (let k = 1; k <= 12; k++) await page.mouse.move(box.x + 30 + k * 18, box.y + 40 + (k % 2) * 25);
+  await page.mouse.up();
+  await page.getByRole('button', { name: /Approve change order/ }).click(); await page.waitForTimeout(3000);
+  const co = db.change_orders.find(c => (c.items || []).some(i => i.name === 'Angle stop replacement'));
+  check('change order approved by signature, with the name and the signature', co && co.status === 'approved' && co.approved_via === 'signature' && co.approved_name === 'Test Client' && /^data:image\/png/.test(co.signature_data || '') && !!co.applied_at, JSON.stringify(co && { st: co.status, via: co.approved_via, name: co.approved_name }));
+  const last = saves.filter(x => x.id === 'INV1300').pop();
+  check('its line is on the invoice with the change order mark', last && last.items.some(i => /^Angle stop replacement\|Change order #\d+, approved /.test(i)), JSON.stringify(last && last.items));
+  check('no confirm "without approval" was asked', !dialogs.some(d => /without the customer/.test(d)), JSON.stringify(dialogs));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();
