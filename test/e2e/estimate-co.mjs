@@ -382,6 +382,33 @@ if (SCENARIO === 'dup') {
   const dup = saves.find(x => x.id.startsWith('EST') && !['EST1300', 'EST1301', 'EST1310'].includes(x.id));
   check('a new duplicate starts unconverted and unsigned', dup && dup.conv == null && dup.status === 'draft' && !dup.signed, JSON.stringify(dup && { id: dup.id, conv: dup.conv, st: dup.status, signed: dup.signed }));
 }
+if (SCENARIO === 'estsign') {
+  // ── v1.63.2: Get Signature on an estimate, from a scrolled form, signed with a finger ──
+  await open('EST1301');
+  const btn = page.getByRole('button', { name: /Get Signature/ }).first();
+  await btn.scrollIntoViewIfNeeded(); await page.waitForTimeout(500);
+  await btn.click(); await page.waitForTimeout(800);
+  const box = await page.locator('canvas').first().boundingBox();
+  const vh = 844;
+  check('signature pad opens on screen', box && box.y >= 0 && box.y + box.height <= vh && box.x >= 0 && box.x + box.width <= 390, JSON.stringify(box));
+  check('signature pad is not inside the form panel', await page.evaluate(() => { const c = document.querySelector('canvas'); return !!c && c.closest('[data-sig-modal]')?.parentElement === document.body; }));
+  // A sideways finger stroke, the way a signature is drawn.
+  const cdp = await ctx.newCDPSession(page);
+  const tp = (x, y) => [{ x, y, id: 1 }];
+  const x0 = box.x + 30, y0 = box.y + box.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: tp(x0, y0) });
+  for (let k = 1; k <= 15; k++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: tp(x0 + k * 18, y0 + (k % 2) * 20) }); await page.waitForTimeout(16); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await page.waitForTimeout(600);
+  const box2 = await page.locator('canvas').first().boundingBox().catch(() => null);
+  check('signing sideways does not swipe the form tabs', box2 && Math.abs(box2.x - box.x) < 1, JSON.stringify(box2));
+  const approve = page.getByRole('button', { name: /Approve Estimate/ });
+  check('stroke registered (Approve enabled)', await approve.isEnabled());
+  await approve.click(); await page.waitForTimeout(2500);
+  check('signature pad closes', (await page.locator('canvas').count()) === 0);
+  const last = saves.filter(x => x.id === 'EST1301').pop();
+  check('estimate saved approved with signed_at', last && last.status === 'approved' && !!last.signed, JSON.stringify(last && { st: last.status, signed: last.signed }));
+  check('form still responds (Approved shown)', /Approved/.test(await text()));
+}
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();
 process.exit(fails ? 1 : 0);

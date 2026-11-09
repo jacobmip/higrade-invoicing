@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.63.2 — 2026-11-09
+
+- Get Signature on an estimate works again. The signature pad was drawn inside the scrolled form, so it opened above the screen and the app looked frozen behind it. It now opens on top of everything, like the change order signature.
+- Signing with a sideways finger stroke no longer counts as a swipe between the form's tabs (both signature pads).
+- Test: `SCENARIO=estsign test/e2e/estimate-co.mjs`.
+
 ## v1.63.1 — 2026-11-09
 
 **Lisa reads photos on Yelp and can quote from them on the very first message.** Jake's call: when a customer sends pictures and enough detail, the estimate should go out on the first reply.
