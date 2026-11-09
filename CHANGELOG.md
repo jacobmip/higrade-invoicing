@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.61.0 — 2026-11-09
+
+**Lisa can hold a Yelp conversation, not just answer the first message.** New `op: 'yelp_reply'` on `/api/sms-inbound` for the Zapier Yelp Leads Zap. Nothing in the app UI changes.
+
+- `api/_lib/yelp-agent.js` drafts Lisa's reply to one Yelp message with the whole thread as context. It sends nothing; the Zap's Create Message step posts it.
+- Migration 115: `yelp_threads`, one row per Yelp lead, service role only.
+- Same voice rules as the Gmail first-reply path. Held for Jake on Telegram instead of sent: a price, a decided fix or stated cause, the owner's name, an offer to transfer to the owner, a cut-off draft, an API failure, or the 8-reply ceiling per thread. A customer who types a phone number triggers a Telegram heads-up.
+- Retries are deduped (same text within 10 minutes).
+
 ## v1.60.3 — 2026-11-09
 
 **Client form: one less way to enter a name.** The client editor had Name, First name (optional), and Last name (optional) all at once — three overlapping fields for the same thing.

@@ -45,6 +45,7 @@ import { autoReply, draftReply } from './_lib/sms-agent.js';
 import { handleInfoReply } from './_lib/sms-reply-capture.js';
 import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
+import { draftYelpReply } from './_lib/yelp-agent.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -181,6 +182,13 @@ async function appSend(req, res) {
       if (!invoiceId) return jsonOut(res, 400, { error: 'invoice_id is required' });
       await proposeInBackground({ invoiceId, problem: String(params.description || '') });
       return jsonOut(res, 200, { ok: true, queued: true });
+    }
+    // Lisa's draft for one Yelp message, called by the Zapier Yelp Leads Zap
+    // (secret or session). Returns { should_send, reply }; the Zap posts it.
+    // Sends nothing itself. See ./_lib/yelp-agent.js.
+    if (params.op === 'yelp_reply') {
+      const r = await draftYelpReply(params);
+      return jsonOut(res, r.ok ? 200 : (r.error && /required/.test(r.error) ? 400 : 502), r);
     }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
