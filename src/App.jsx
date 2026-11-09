@@ -2976,7 +2976,7 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
       // so we persist the equivalent change directly to the DB.
       if (inv && ['outstanding', 'partial', 'net30'].includes(inv.status) && inv.dueDate === inv.date) {
         inv.dueDate = today();
-        try { await db.upsertInvoice(inv, true); }
+        try { await db.upsertInvoice(inv, false); }
         catch (e) { console.warn('auto due-date update failed:', e); }
       }
       let viewToken = inv?.viewToken;
@@ -13053,6 +13053,18 @@ export default function App() {
       console.warn("[docnum] allocator unreachable, using local counter:", e?.message || e);
     }
     if (num == null) num = nextDocNumRef.current;
+    // v1.60.1: a number is only handed out when no EST or INV row (live or in
+    // Recently Deleted) holds it. A stale counter used to hand back a number
+    // already in use, and the new document then overwrote that one.
+    for (let tries = 0; tries < 20; tries++) {
+      const pad = String(num).padStart(4, "0");
+      let taken = false;
+      try { taken = !!(await db.fetchInvoiceUpdatedAt(`EST${pad}`)) || !!(await db.fetchInvoiceUpdatedAt(`INV${pad}`)); }
+      catch { taken = false; } // cannot check: the save's own guard still refuses an existing id
+      if (!taken) break;
+      console.warn(`[docnum] ${pad} is already used; trying the next number`);
+      num += 1;
+    }
     bumpDocNum(num + 1);
     return { num, id: `${type === "estimate" ? "EST" : "INV"}${String(num).padStart(4, "0")}` };
   };

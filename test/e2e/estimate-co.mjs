@@ -139,8 +139,12 @@ await page.route('**/*', async route => {
     else db.invoices.push({ ...inv, owner_id: JAKE, assigned_tech_id: JAKE, updated_at: upd, created_at: upd, deleted_at: null, visits: null });
     return json({ id: inv.id, updated_at: upd });
   }
+  // v1.60.1 collide: the counter hands back a number already in use (1300).
+  if (SCENARIO === 'collide' && url.pathname === '/rest/v1/rpc/allocate_doc_number') return json(1300);
   if (url.pathname.startsWith('/rest/v1/rpc/')) return json(null);
   const table = url.pathname.replace('/rest/v1/','');
+  // v1.60.1 collide: the phone's "is INV1301 free?" check fails once (as on poor signal).
+  if (SCENARIO === 'collide' && m === 'GET' && table === 'invoices' && url.searchParams.get('id') === 'eq.INV1301' && url.searchParams.get('select') === 'updated_at') { return route.fulfill({ status: 503, body: 'unavailable' }); }
   if (m === 'GET') {
     let rows = db[table] || [];
     const idEq = url.searchParams.get('id');
@@ -322,6 +326,18 @@ if (SCENARIO === 'globaladd') {
   check('add_line_items refused: lines are locked, use a change order', /signed estimate EST1300/.test(toolResult) && /draft_change_order/.test(toolResult));
   check('no line written straight to INV1300', !saves.slice(before).some(x => x.id === 'INV1300' && x.items.some(i => /Shower valve/.test(i))) && !db.invoice_items.some(i => i.invoice_id === 'INV1300' && i.name === 'Shower valve'));
   check('the line went into a change order draft', db.change_orders.some(c => c.invoice_id === 'INV1300' && c.status === 'draft' && (c.items || []).some(i => i.name === 'Shower valve')), JSON.stringify(db.change_orders.map(c => [c.seq, c.status])));
+}
+if (SCENARIO === 'collide') {
+  // ── v1.60.1: converting never overwrites an existing document ──
+  await page.goto(BASE + '/'); await page.waitForTimeout(2500);
+  await page.getByRole('button', { name: /^Estimates/ }).first().click().catch(() => {}); await page.waitForTimeout(800);
+  await page.getByText('EST1301').first().click({ force: true }); await page.waitForTimeout(2500);
+  const before = saves.length;
+  await page.getByRole('button', { name: /Invoice/ }).last().click(); await page.waitForTimeout(16000);
+  const created = saves.slice(before).filter(x => x.id.startsWith('INV'));
+  check('conversion did not write onto the existing INV1300', !created.some(x => x.id === 'INV1300'), JSON.stringify(created.map(x => x.id + ':' + x.items.join(','))));
+  check('it took the next free number instead', created.some(x => x.id === 'INV1302' && x.items.some(i => /Drain clear/.test(i))), JSON.stringify(created.map(x => x.id)));
+  check('INV1300 still has its own lines', db.invoice_items.filter(i => i.invoice_id === 'INV1300').some(i => i.name === 'Water heater'));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();

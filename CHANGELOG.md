@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.60.1 — 2026-11-09
+
+**Fix: a new document could be saved on top of an existing one.** EST1201 was converted onto INV1200, which already existed, instead of becoming INV1201.
+
+- **Cause.** Converting keeps the number (EST1201 becomes INV1201) only after checking INV1201 is free. When that check fails, as it can on poor signal, the app takes a fresh number from the counter. If the counter is behind and hands back a number already in use, the save quietly overwrote that document, because saving a document updates whatever row already has its number.
+- **Now:** the counter skips any number an estimate or invoice already uses (including ones in Recently Deleted), and every new-document save refuses to land on a number that exists. Both guards would have stopped the INV1200 case.
+- The header AI's "email this invoice" saved the existing invoice as if it were new; it now saves it as the existing document it is.
+- Test: `test/e2e/estimate-co.mjs` (scenario `collide`: the free-check fails and the counter returns a used number; the conversion lands on the next free number and the existing invoice keeps its lines).
+
 ## v1.60.0 — 2026-11-09
 
 **Every estimate and invoice now records how it was made.** History's first row says it in words, and the header AI can answer "how was INV1201 made?".

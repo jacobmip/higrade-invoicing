@@ -733,6 +733,20 @@ export async function upsertInvoice(inv, isNew) {
   // trigger on the table so every writer is held to this, but catch a brand-new
   // row here too: an insert can never legitimately mismatch, and failing before
   // the round trip gives a clearer error than the trigger's.
+  // v1.60.1: a NEW document must never land on a number that already exists.
+  // save_invoice_with_items upserts (on conflict do update), so a stale counter
+  // or a failed free-check would silently overwrite another job (EST1201 was
+  // converted onto the existing INV1200 on 2026-11-09). Checked here, before
+  // the write, for every caller. The row may be soft-deleted: still taken.
+  if (isNew && payload.inv.id) {
+    const { data: hit, error: hitErr } = await supabase.from('invoices').select('id').eq('id', payload.inv.id).maybeSingle()
+    if (!hitErr && hit) {
+      const taken = new Error('ID_TAKEN')
+      taken.code = 'ID_TAKEN'
+      taken.detail = `${payload.inv.id} already exists, so a new document was not saved on top of it.`
+      throw taken
+    }
+  }
   if (isNew && /^(EST|INV)/.test(payload.inv.id || '')) {
     const idWantsEstimate = payload.inv.id.startsWith('EST')
     if ((payload.inv.type === 'estimate') !== idWantsEstimate) {
