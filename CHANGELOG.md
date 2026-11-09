@@ -1,5 +1,15 @@
 # HI Grade Invoicing — Changelog
 
+## v1.59.0 — 2026-11-09
+
+**An invoice from a signed estimate: the estimate's lines are locked, and anything added becomes a change order.** So the estimate and invoice can no longer drift apart (the INV1199 case).
+
+- **Locked lines.** On an invoice that came from a signed estimate, the estimate's lines (marked "Estimate · locked") and lines from approved change orders ("Change order · locked") cannot be edited or deleted. Tapping one says why. The AI chat cannot change them either.
+- **Adding a line starts a change order.** +, Price Book and the AI chat all put the new line into a change order (the draft already in progress, else a new one) instead of straight onto the invoice. It shows on the estimate too.
+- **Send it, or add it without approval.** Review & send now also has **Add to invoice without approval**, for extra work that needs no customer sign-off. The lines go on the invoice at once, still recorded as a change order ("added without approval"; on the estimate and customer link it reads "Added <date>").
+- **Lines already added straight to the invoice** (before this version) are flagged "Not on the estimate" with a **Make it a change order** button that moves them into one. Open INV1199 to fix it.
+- Test: `test/e2e/estimate-co.mjs` (scenario `lock`).
+
 ## v1.58.0 — 2026-11-08
 
 **Change orders on the estimate too, and the dates each document marks.** The sign-and-convert flow is unchanged.

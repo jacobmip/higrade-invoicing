@@ -114,7 +114,7 @@ export default function SendDraftCard({ draft, onUpdate, sendSms }) {
 // built with the invoice's own tools, a note and photos, then the exact email
 // and text as a SendDraftCard. Nothing goes out until Send.
 const fmtMoney = (n) => '$' + (Math.round(Number(n || 0) * 100) / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-export function ChangeOrderSendSheet({ invoiceId, linkedIds, row, items, taxPct, phone, email, onClose, onSaved, onSent }) {
+export function ChangeOrderSendSheet({ invoiceId, linkedIds, row, items, taxPct, phone, email, onClose, onSaved, onSent, onApproveNow }) {
   const [note, setNote] = useState(row?.note || '');
   const [photos, setPhotos] = useState(row?.photos || []);
   const [saved, setSaved] = useState(null);
@@ -169,6 +169,12 @@ export function ChangeOrderSendSheet({ invoiceId, linkedIds, row, items, taxPct,
               {err && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 6 }}>{err}</div>}
               <button onClick={toPreview} disabled={busy || !items.length} style={{ ...btn(true), width: '100%', marginTop: 12, padding: '12px 0', fontSize: 15, opacity: busy || !items.length ? 0.6 : 1 }}>{busy ? 'Saving…' : 'Preview email and text'}</button>
               <div style={{ fontSize: 12, color: '#888', marginTop: 8, textAlign: 'center' }}>Nothing is sent until you tap Send on the next step.</div>
+              {/* v1.59.0: extra work that needs no customer sign-off goes
+                  straight onto the invoice, still recorded as a change order. */}
+              {onApproveNow && (
+                <button onClick={async () => { setBusy(true); setErr(''); try { await onApproveNow({ note, photos }); } catch (e) { setErr(e.message || String(e)); } finally { setBusy(false); } }} disabled={busy || !items.length}
+                  style={{ ...btn(false), width: '100%', marginTop: 14, padding: '11px 0', fontSize: 14, opacity: busy || !items.length ? 0.6 : 1 }}>Add to invoice without approval</button>
+              )}
             </>
           )}
           {draft && (

@@ -36,6 +36,8 @@ db.invoice_items = [
   { id:'f1', invoice_id:'EST1301', name:'Drain clear', description:'', qty:1, price:250, unit:'ea', taxable:true, sort_order:0 },
 ];
 db.invoice_events = [{ id:'ev1', invoice_id:'EST1300', kind:'sent', created_at:'2026-11-02T01:00:00Z' }];
+// v1.59.0: a line added straight to the invoice after the estimate was signed (like INV1199).
+if (SCENARIO === 'lock') db.invoice_items.push({ id:'i3', invoice_id:'INV1300', name:'Loose fix', description:'added after signing', qty:1, price:80, unit:'ea', taxable:true, sort_order:2 });
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
 db.saved_items = [{ id: 's1', name: 'Angle stop replacement', price: 95, category: 'Valves', owner_id: JAKE, taxable: true }];
@@ -219,6 +221,41 @@ if (SCENARIO === 'send' || SCENARIO === 'customer') {
   const tx = await text();
   check('customer estimate page: approved CO1 and job total', /INV1300-CO1/.test(tx) && /JOB TOTAL\s*\$2,041\.89/.test(tx) && !/CO2/.test(tx));
   check('customer estimate page: Sent and Approved dates', /SENT\s*11\/01\/2026/i.test(tx) && /APPROVED\s*11\/03\/2026/i.test(tx));
+}
+if (SCENARIO === 'lock') {
+  // ── v1.59.0: invoice from a signed estimate: lines locked, additions are change orders ──
+  await open('INV1300');
+  const kinds = await page.evaluate(() => [...document.querySelectorAll('[data-line-kind]')].map(e => e.getAttribute('data-line-kind') + ':' + e.textContent.slice(0, 14)));
+  check('lines marked: estimate, change order, not on the estimate', kinds.length === 3 && /^estimate:Water heater/.test(kinds[0]) && /^co:Add shutoff/.test(kinds[1]) && /^loose:Loose fix/.test(kinds[2]), JSON.stringify(kinds));
+  let tx = await text();
+  check('locked note and loose-line banner shown', /Lines from the signed estimate EST1300 are locked/.test(tx) && /1 line was added after the estimate was signed/.test(tx));
+  await page.locator('[data-line-kind="estimate"]').click(); await page.waitForTimeout(500);
+  tx = await text();
+  check('tapping a locked line explains, opens no editor', /on the signed estimate EST1300, so it is locked/.test(tx) && !/Save to My Items/.test(tx), (tx.match(/[^\n]*locked[^\n]*/g) || []).join(' | '));
+  // Price Book on this invoice starts a change order instead of adding a line.
+  const savesBefore = saves.length;
+  await page.getByRole('button', { name: 'Price Book' }).dispatchEvent('click'); await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Add Angle stop replacement' }).dispatchEvent('click'); await page.waitForTimeout(2500);
+  tx = await text();
+  const draft = db.change_orders.find(c => c.status === 'draft' && (c.items || []).some(i => i.name === 'Angle stop replacement'));
+  check('Price Book line became a change order draft on INV1300', /Building change order/.test(tx) && draft && draft.invoice_id === 'INV1300', JSON.stringify(draft && { inv: draft.invoice_id, st: draft.status }));
+  check('nothing added straight to the invoice', !saves.slice(savesBefore).some(s => s.id === 'INV1300' && s.items.some(i => /^Angle stop replacement\|(?!Change order)/.test(i))), JSON.stringify(saves.slice(savesBefore).map(s => s.items)));
+  // Add it without the customer's approval.
+  await page.getByRole('button', { name: 'Review & send' }).dispatchEvent('click'); await page.waitForTimeout(1200);
+  await page.getByRole('button', { name: 'Add to invoice without approval' }).click(); await page.waitForTimeout(3000);
+  check('marked approved by HI Grade, applied', draft.status === 'approved' && draft.approved_via == null && !!draft.applied_at, JSON.stringify({ st: draft.status, via: draft.approved_via, applied: draft.applied_at }));
+  const last = saves.filter(s => s.id === 'INV1300').pop();
+  check('its line saved on the invoice with the change order mark', last && last.items.some(i => /^Angle stop replacement\|Change order #\d+, approved /.test(i)), JSON.stringify(last && last.items));
+  const kinds2 = await page.evaluate(() => [...document.querySelectorAll('[data-line-kind]')].map(e => e.getAttribute('data-line-kind') + ':' + e.textContent.slice(0, 14)));
+  check('new line shows as a locked change order line', kinds2.some(k => /^co:Angle stop/.test(k)), JSON.stringify(kinds2));
+  // The loose line: one tap moves it into a change order.
+  await page.getByRole('button', { name: 'Make it a change order' }).click(); await page.waitForTimeout(3000);
+  tx = await text();
+  const moved = db.change_orders.find(c => c.status === 'draft' && (c.items || []).some(i => i.name === 'Loose fix'));
+  check('loose line moved into a change order draft', /Building change order/.test(tx) && moved && moved.invoice_id === 'INV1300', JSON.stringify(db.change_orders.map(c => [c.seq, c.status, (c.items || []).map(i => i.name)])));
+  await page.getByRole('button', { name: 'Done for now' }).click(); await page.waitForTimeout(2500);
+  const last2 = saves.filter(s => s.id === 'INV1300').pop();
+  check('loose line no longer on the invoice', last2 && !last2.items.some(i => /^Loose fix/.test(i)), JSON.stringify(last2 && last2.items));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();

@@ -46,7 +46,7 @@ export function mergeChangeOrderLines(formItems, serverItems) {
 }
 
 // The lines a change order put on the invoice, in the form's item shape.
-function coInvoiceLines(co) {
+export function coInvoiceLines(co) {
   const mark = coLineMark(co.seq, co.applied_at || co.approved_at);
   return (co.items || []).map(it => ({
     name: String(it.name || 'Additional work').slice(0, 200),
@@ -258,7 +258,7 @@ export function ChangeOrdersCard({ invoiceId, linkedIds, taxPct, clientPhone, cl
               <div style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {(c.items || []).map(i => i.name).filter(Boolean).join(', ') || 'No lines yet'}
                 {(c.photos || []).length ? ` · ${c.photos.length} photo${c.photos.length === 1 ? '' : 's'}` : ''}
-                {c.status === 'approved' && c.approved_at ? ` · ${c.approved_via === 'sms' ? 'texted YES' : 'signed'} ${fmtDate(c.approved_at)}` : ''}
+                {c.status === 'approved' && c.approved_at ? ` · ${c.approved_via === 'sms' ? 'texted YES' : c.approved_via === 'signature' ? 'signed' : 'added without approval'} ${fmtDate(c.approved_at)}` : ''}
                 {c.status === 'sent' && c.sent_at ? ` · ${[c.sent_email && 'emailed', c.sent_to && 'texted'].filter(Boolean).join(' + ') || 'sent'} ${fmtDate(c.sent_at)}` : ''}
               </div>
             </div>
@@ -793,7 +793,7 @@ export function ChangeOrderAddenda({ list, taxPct, estimateTotal, jobId, showPen
               <span>{jobId ? `${jobId}-` : ''}CO{c.seq}</span><span>{money(t.total)}</span>
             </div>
             <div style={{ fontSize: 11, color: '#27ae60', marginBottom: 4 }}>
-              Approved {c.approved_at ? fmtDate(c.approved_at) : ''}{c.approved_via === 'sms' ? ' by text' : c.approved_name ? ` by ${c.approved_name}` : ''}
+              {c.approved_via ? 'Approved' : 'Added'} {c.approved_at ? fmtDate(c.approved_at) : ''}{c.approved_via === 'sms' ? ' by text' : c.approved_via && c.approved_name ? ` by ${c.approved_name}` : ''}
             </div>
             {(c.items || []).map((it, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, color: '#555', padding: '2px 0' }}>
@@ -822,4 +822,18 @@ export function ChangeOrderAddenda({ list, taxPct, estimateTotal, jobId, showPen
       )}
     </div>
   );
+}
+
+// Jake adds a change order to the invoice himself, without the customer's
+// approval (v1.59.0). Marked approved with no approved_via (the column allows
+// only signature | sms, and null means "added by HI Grade"), applied at once.
+// The caller, the open invoice form, puts the lines on the invoice
+// (coInvoiceLines) and saves it: the form is the writer, so nothing races it.
+export async function approveChangeOrderInApp(row) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase.from('change_orders')
+    .update({ status: 'approved', approved_at: now, approved_via: null, approved_name: null, approval_message: 'Added by HI Grade without a customer signature', applied_at: now, updated_at: now })
+    .eq('id', row.id).in('status', ['draft', 'sent']).select().single();
+  if (error) throw error;
+  return data;
 }

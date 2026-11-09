@@ -594,7 +594,7 @@ function drawChangeOrders(doc, form, startY, list, jobId) {
     doc.text(`${jobId ? jobId + "-" : ""}CO${c.seq}`, MARGIN, y);
     const ts = fmtMoney(tot); doc.text(ts, right - doc.getTextWidth(ts), y); y += 13;
     setText(doc, "#27ae60"); doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    doc.text(`Approved ${fmtDate(hiDay(c.approved_at)) || ""}${c.approved_via === "sms" ? " by text" : c.approved_name ? " by " + c.approved_name : ""}`, MARGIN, y); y += 13;
+    doc.text(`${c.approved_via ? "Approved" : "Added"} ${fmtDate(hiDay(c.approved_at)) || ""}${c.approved_via === "sms" ? " by text" : c.approved_via && c.approved_name ? " by " + c.approved_name : ""}`, MARGIN, y); y += 13;
     setText(doc, TEXT_MID); doc.setFontSize(10);
     for (const it of c.items || []) {
       const amt = fmtMoney(Number(it.qty ?? 1) * Number(it.price ?? 0));
