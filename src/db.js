@@ -80,6 +80,10 @@ function toInvoice(row, items = [], payments = []) {
     // When the row was made. src/docLinks.js syncs a linked estimate/invoice
     // pair only when it was made on or after its cutoff.
     createdAt: row.created_at || null,
+    // Migration 113 (v1.60.0): how the document came to exist, from where, by whom.
+    createdVia: row.created_via || null,
+    createdFrom: row.created_from || null,
+    createdBy: row.created_by || null,
     // Migration 112 (v1.58.0): when the job started and was completed, shown
     // on the invoice. Written only by setInvoiceJobDates, never by a save.
     jobStartedOn: row.job_started_on || null,
@@ -789,6 +793,14 @@ export async function upsertInvoice(inv, isNew) {
   // only matters when a row is invisible to that scan -- soft-deleted, or
   // hidden by RLS. That is exactly the case migration 020 had to clean up
   // after, where the counter reset onto a number that was already taken.
+  // How it was made (migration 113). The database stamps 'app' on insert; this
+  // narrows it to the in-app path that made it. Best-effort: before 113 the
+  // column is missing and the update just fails.
+  if (isNew && savedId) {
+    supabase.from('invoices').update({ created_via: inv.createdVia || 'app_manual', created_from: inv.createdFrom || null })
+      .eq('id', savedId)
+      .then(({ error: viaErr }) => { if (viaErr) console.warn('created_via not saved:', viaErr.message) })
+  }
   if (isNew) {
     const m = /^(?:EST|INV)(\d+)$/.exec(savedId || '')
     if (m) {
@@ -1803,4 +1815,10 @@ export async function loadTeamPositions() {
     if (!prev || new Date(row.updatedAt) > new Date(prev.updatedAt)) out.set(r.tech_id, row)
   }
   return [...out.values()]
+}
+
+// Deleted / restored (v1.60.0): written to the document's History so a missing
+// document can be explained. Best-effort.
+export async function recordDocEvent(invoiceId, kind, meta) {
+  try { await recordInvoiceEvent(invoiceId, kind, null, meta || null) } catch (e) { console.warn(kind + ' event failed:', e) }
 }

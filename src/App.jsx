@@ -263,6 +263,28 @@ function statusDisplay(inv) {
   if (isPending) return { label: "Pending", color: "#2980b9" };
   return { label: "Outstanding", color: ORANGE };
 }
+// How a document came to exist, in words (v1.60.0, migration 113). Also used
+// by the header AI so "how was INV1201 made?" has a straight answer.
+function createdLabel(doc, byName) {
+  const what = doc.type === "estimate" ? "Estimate" : "Invoice";
+  const from = doc.createdFrom ? ` ${doc.createdFrom}` : "";
+  const by = byName ? ` by ${byName}` : "";
+  const channel = { phone: "a phone call", lisa: "a phone call", sms: "a text", web: "the website form", yelp: "a Yelp lead" };
+  const v = doc.createdVia || "";
+  if (v === "app_manual") return `${what} created in the app${by}`;
+  if (v === "app_ai_chat") return `${what} created by the invoice AI chat${by}`;
+  if (v === "app_header_ai") return `${what} created by the AI assistant${by}`;
+  if (v === "app_price_book") return `${what} created from the Price Book${by}`;
+  if (v === "app_conversion") return `${what} converted from${from || " another document"}${by}`;
+  if (v === "app_duplicate") return `${what} duplicated from${from || " another document"}${by}`;
+  if (v === "customer_signed") return `${what} created when the customer signed${from || " the estimate"}`;
+  if (v === "paypal_deposit") return `${what} created when the customer paid the deposit on${from || " the estimate"}`;
+  if (v.startsWith("lisa_")) return v === "lisa_web" ? `${what} created from the website form (Lisa)` : `${what} created by Lisa from ${channel[v.slice(5)] || "a lead"}`;
+  if (v === "outside_app") return `${what} created outside the app (Lani, Hermes or a script)`;
+  if (v === "app") return `${what} created in the app${by}`;
+  if (doc.source === "ai_lead") return `${what} created by Lisa (lead)`;
+  return `${what} created (before origin tracking)`;
+}
 function fmtDate(d) { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${m}/${day}/${y}`; }
 // A Hawaii calendar day (YYYY-MM-DD) from a date or a timestamp.
 function hiDay(v) {
@@ -2975,7 +2997,7 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
   };
 
   const createFromEstimate = (estimate) => {
-    const newInv = onAction({ action: "create_invoice", invoice: { client: estimate.client || "", client_id: estimate.client_id, clientInfo: estimate.clientInfo, jobAddress: estimate.jobAddress, date: today(), dueDate: today(), items: estimate.items, notes: estimate.notes || "", tax: estimate.tax || TAX_RATE, discount: estimate.discount || 0, discountType: estimate.discountType }, summary: "Invoice created from estimate" });
+    const newInv = onAction({ action: "create_invoice", createdVia: "app_conversion", createdFrom: estimate.id, invoice: { client: estimate.client || "", client_id: estimate.client_id, clientInfo: estimate.clientInfo, jobAddress: estimate.jobAddress, date: today(), dueDate: today(), items: estimate.items, notes: estimate.notes || "", tax: estimate.tax || TAX_RATE, discount: estimate.discount || 0, discountType: estimate.discountType }, summary: "Invoice created from estimate" });
     setMsgs(p => [...p, { role: "assistant", text: `Created ${newInv.id} from ${estimate.id} — open it to review before sending.`, card: { type: "created", invoice: newInv } }]);
   };
 
@@ -5184,7 +5206,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // so we sort by a unified `sortKey` (timestamp ms).
   const dayMs = (d) => d ? new Date(d + (d.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
   const historyEvents = [
-    { date: form.date, label: isEstimate ? "Estimate created" : "Invoice created", type: "created", amount: null, sortKey: dayMs(form.date) },
+    { date: form.date, label: createdLabel(form, (users || []).find(u => u.id === form.createdBy)?.displayName), type: "created", amount: null, sortKey: dayMs(form.date) },
     ...(form.payments || []).map(p => {
       const m = canonicalMethod(p.method);
       return { date: p.date, label: m ? `${m} payment received` : "Payment received", type: "payment", amount: p.amount, sortKey: dayMs(p.date) + 1 };
@@ -5231,6 +5253,11 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           amount: m.total ?? null,
           sortKey: new Date(when).getTime(),
         };
+      }
+      if (ev.kind === 'deleted' || ev.kind === 'restored') {
+        const m = ev.meta || {};
+        const how = ev.kind === 'restored' ? 'restored' : m.via === 'menu' ? 'deleted from the list' : 'deleted by the AI';
+        return { date: when, label: `${docWord} ${how}`, type: 'opened', amount: null, sortKey: new Date(when).getTime() };
       }
       if (ev.kind === 'change_order_sent') {
         const m = ev.meta || {};
@@ -13230,7 +13257,7 @@ export default function App() {
         throw new Error(`Cannot create ${docType} without a client name. Please specify a valid client.`);
       }
       
-      const newInvoice = { id, year, type: docType, client: clientName, date: today(), dueDate: today(), status: docType === "estimate" ? "draft" : "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
+      const newInvoice = { id, year, createdVia: parsed.createdVia || opts.createdVia || (opts.strict ? "app_header_ai" : "app_ai_chat"), createdFrom: parsed.createdFrom || null, type: docType, client: clientName, date: today(), dueDate: today(), status: docType === "estimate" ? "draft" : "outstanding", items: inv.items || [], tax: docTax, discount: inv.discount || 0, discountType: inv.discountType || "$", notes: inv.notes || "", payments: [],
         // The RPC assigns a new document to whoever saves it; mirror that here
         // so the form shows it before the next reload (migration 053/058).
         ...(session?.user?.id ? { assignedTechId: session.user.id } : {}),
@@ -13340,6 +13367,7 @@ export default function App() {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       if (!inv) return;
       try { await db.deleteInvoice(parsed.invoiceId); } catch (e) { fail(e); return; }
+      db.recordDocEvent(parsed.invoiceId, 'deleted', { via: opts.createdVia || 'ai' });
       setDataNow(d => ({ ...d, invoices: d.invoices.filter(i => i.id !== parsed.invoiceId) }));
     }
     if (parsed.action === "add_payment") {
@@ -13574,6 +13602,7 @@ export default function App() {
   const deleteInvoice = async (id) => {
     try {
       await db.deleteInvoice(id);
+      db.recordDocEvent(id, 'deleted', { via: 'menu', by: session?.user?.id || null });
     } catch (e) {
       console.error('Delete invoice failed:', e);
       alert('Could not delete this invoice: ' + (e.message || e));
@@ -13592,6 +13621,7 @@ export default function App() {
   const restoreInvoice = async (id) => {
     try {
       await db.restoreInvoice(id);
+      db.recordDocEvent(id, 'restored', { by: session?.user?.id || null });
     } catch (e) {
       console.error('Restore invoice failed:', e);
       alert('Could not restore this: ' + (e.message || e));
@@ -13748,6 +13778,7 @@ export default function App() {
     const copy = {
       ...inv,
       id: newId,
+      createdVia: 'app_duplicate', createdFrom: inv.id,
       date: today(),
       year: new Date().getFullYear(),
       payments: [],
@@ -14167,6 +14198,7 @@ export default function App() {
       id: newId,
       type: targetType,
       year,
+      createdVia: "app_conversion", createdFrom: form.id,
       // Carry payments over; reset only signature + scheduling state.
       payments: carriedPayments,
       signatureData: null,
@@ -14847,7 +14879,7 @@ export default function App() {
             setShowPriceBook(false);
             try {
               const newInv = await handleGlobalAIAction({
-                action: "create_invoice",
+                action: "create_invoice", createdVia: "app_price_book",
                 invoice: { date: today(), dueDate: today(), items: [{ name: item.name, desc: item.desc || "", qty: 1, price: item.price, taxable: item.taxable, unit: item.unit || "ea", discount: 0, discountType: "%" }], tax: TAX_RATE, discount: 0 },
               });
               if (newInv) { setSelected(newInv); setView("form"); setNewDocType("invoice"); }

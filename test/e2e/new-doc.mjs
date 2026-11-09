@@ -106,5 +106,7 @@ await page.waitForTimeout(2500);
 const ids2 = [...new Set(saves.map(s => s.id))];
 log('after Done, saved ids:', JSON.stringify(ids2), ids2.length === 1 ? 'PASS' : 'FAIL (want 1)');
 log('typed text saved:', saves.some(x => /typed while/.test(x.notes || '')) ? 'PASS' : 'FAIL');
+const via = writes.filter(w => w.m === 'PATCH' && w.table === 'invoices' && /created_via/.test(w.body || ''));
+log('origin stamped app_manual on the new document (v1.60.0):', via.length >= 1 && via.every(w => /"created_via":"app_manual"/.test(w.body) && w.q.includes(ids2[0])) ? 'PASS' : 'FAIL ' + JSON.stringify(via));
 await page.screenshot({ path: process.env.SHOT || 'new-doc.png' });
 await browser.close();

@@ -130,7 +130,7 @@ export const AGENT_TOOLS = [
   {
     name: 'get_document',
     description:
-      'Full detail of one estimate or invoice: numbered line items with descriptions, payments, scheduled visits, notes, internal notes, job address, totals and balance.',
+      'Full detail of one estimate or invoice: numbered line items with descriptions, payments, scheduled visits, notes, internal notes, job address, totals and balance. created_via says how it was made: app_manual (by hand in the app), app_ai_chat / app_header_ai (by an AI chat), app_price_book, app_conversion / app_duplicate (from created_from), customer_signed / paypal_deposit (customer signed or paid the deposit on created_from), lisa_phone / lisa_sms / lisa_web / lisa_yelp (Lisa), outside_app (Lani, Hermes or a script); missing = made before this was tracked.',
     input_schema: {
       type: 'object',
       properties: { document_id: { type: 'string', description: 'e.g. EST1043 or INV0878' } },

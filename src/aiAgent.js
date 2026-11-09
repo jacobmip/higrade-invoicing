@@ -99,6 +99,9 @@ function docSummary(inv, calcTotals) {
     ...(firstVisit ? { scheduled: firstVisit } : {}),
     ...(inv.convertedToId ? { converted_to: inv.convertedToId } : {}),
     ...(inv.source ? { source: inv.source } : {}),
+    // How it was made (migration 113): see get_document's description.
+    ...(inv.createdVia ? { created_via: inv.createdVia } : {}),
+    ...(inv.createdFrom ? { created_from: inv.createdFrom } : {}),
   };
 }
 

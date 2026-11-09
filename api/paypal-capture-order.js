@@ -169,7 +169,7 @@ export default async function handler(req, res) {
       );
       const refRows = await refRes.json();
       if (Array.isArray(refRows) && refRows.length > 0 && refRows[0].type === 'estimate') {
-        const conv = await convertEstimateToInvoice(invoiceId);
+        const conv = await convertEstimateToInvoice(invoiceId, 'paypal_deposit');
         if (conv && conv.invoiceId) {
           targetInvoiceId = conv.invoiceId;
           convertedFromEstimateId = invoiceId;

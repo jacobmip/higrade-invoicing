@@ -1,5 +1,16 @@
 # HI Grade Invoicing — Changelog
 
+## v1.60.0 — 2026-11-09
+
+**Every estimate and invoice now records how it was made.** History's first row says it in words, and the header AI can answer "how was INV1201 made?".
+
+- **Origins:** created in the app by hand (and by whom), by the invoice AI chat, by the AI assistant, from the Price Book, converted or duplicated from another document (named), created when the customer signed the estimate or paid its deposit, created by Lisa from a phone call, text, the website form or Yelp, or created outside the app (Lani, Hermes or a script).
+- The database fills this in for every new document, so even writers outside the app (Lisa, Lani, scripts) are covered; the app and the signing/deposit routes then record the exact path.
+- Older documents: Lisa's leads and conversions are filled in from what the records prove; anything else reads "created (before origin tracking)".
+- **Deleting and restoring are in History too** (deleted from the list, deleted by the AI, restored), so a document that goes missing can be explained.
+- **Needs migration 113.** Until it is applied everything works as before, and History reads "before origin tracking".
+- Tests: `test/e2e/new-doc.mjs` (new documents stamped), `test/e2e/estimate-co.mjs` (scenario `invoice`); migration 113 run on a local Postgres 16 (backfill, trigger for each kind of writer, safe to re-run).
+
 ## v1.59.4 — 2026-11-09
 
 **Fix: lines could still be added straight to an invoice from a signed estimate.** The invoice screen's +, Price Book and AI chat already made a change order, but two ways around it remained:

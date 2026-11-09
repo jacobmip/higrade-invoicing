@@ -36,7 +36,7 @@ function generateViewToken() {
 // the caller records the down-payment against the new invoice. Idempotent:
 // if the estimate has already been converted (converted_to_id set), we
 // just return that existing id.
-export async function convertEstimateToInvoice(estimateId) {
+export async function convertEstimateToInvoice(estimateId, via = 'customer_signed') {
   const { url, headers } = supabaseCfg();
 
   // Load the estimate row
@@ -172,6 +172,15 @@ export async function convertEstimateToInvoice(estimateId) {
     });
     if (!appRes.ok) console.error('[convert-estimate] apprentice clear failed:', await appRes.text());
   }
+
+  // How the invoice came to exist (migration 113, v1.60.0). A separate,
+  // best-effort PATCH so a database without the column still converts.
+  try {
+    const viaRes = await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(newId)}`, {
+      method: 'PATCH', headers, body: JSON.stringify({ created_via: via, created_from: estimateId }),
+    });
+    if (!viaRes.ok) console.warn('[convert-estimate] created_via not saved:', viaRes.status);
+  } catch (e) { console.warn('[convert-estimate] created_via not saved:', e.message || e); }
 
   // Belt-and-suspenders on ownership: if the BEFORE INSERT trigger clobbered
   // owner_id with a NULL auth.uid(), stamp it back on with a PATCH (which the

@@ -26,7 +26,7 @@ const db = {
 };
 db.invoices = [
   { id:'EST1300', type:'estimate', client_name:'Test Client', date:'2026-11-01', status:'converted', converted_to_id:'INV1300', signed_at:'2026-11-03T20:00:00Z', owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'tE', visits:null, updated_at: now, created_at: now, deleted_at:null },
-  { id:'INV1300', type:'invoice', client_name:'Test Client', date:'2026-11-03', due_date:'2026-11-03', status:'outstanding', converted_to_id:null, owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'t2', visits:[{ id:'v1', start:'2026-11-05T09:00', minutes:120, kind:'job' }], updated_at: now, created_at: now, deleted_at:null },
+  { id:'INV1300', type:'invoice', created_via:'customer_signed', created_from:'EST1300', client_name:'Test Client', date:'2026-11-03', due_date:'2026-11-03', status:'outstanding', converted_to_id:null, owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'t2', visits:[{ id:'v1', start:'2026-11-05T09:00', minutes:120, kind:'job' }], updated_at: now, created_at: now, deleted_at:null },
   { id:'EST1301', type:'estimate', client_name:'Test Client', date:'2026-11-07', status:'draft', converted_to_id:null, owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'tF', visits:null, updated_at: now, created_at: now, deleted_at:null },
 ];
 db.invoice_items = [
@@ -211,6 +211,7 @@ if (SCENARIO === 'send' || SCENARIO === 'invoice' || SCENARIO === 'nomigration')
     const h = await text();
     check('invoice history: the estimate\'s send and open say Estimate', /Estimate texted to \+18085551234 \(EST1300\)/.test(h) && /Estimate opened by client \(EST1300\)/.test(h) && !/Invoice texted|Invoice opened/.test(h), (h.match(/(Estimate|Invoice)[^\n]*/g) || []).join(' | '));
     check('invoice history: change order send says which change order', /INV1300-CO2 emailed to pat@example.com/.test(h));
+    check('invoice history: says how the invoice was made', /Invoice created when the customer signed EST1300/.test(h));
     await tab('Edit');
   }
   check('invoice: Job started is the invoice date; due follows', (await val('Job started')) === '2026-11-03' && (await page.getByLabel('Job completed').count()) === 1 && /Due on completion/.test(await hint()), await hint());
