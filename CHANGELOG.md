@@ -1,5 +1,28 @@
 # HI Grade Invoicing — Changelog
 
+## v1.63.0 — 2026-11-09
+
+**Lisa on Yelp knows who she is talking to, sees their appointments, and books visits.** Same booking rules as texting.
+
+- **Who:** `api/_lib/yelp-booking.js` matches a Yelp thread to a client by the phone number they type (verified), the service address they give (verified), or their Yelp name ("Javier D.") when exactly one client with that name has a visit coming up (name only: Lisa may confirm a day and time, reveals nothing else on file, and verifies before requesting a change). The link is kept in `yelp_threads` (migration 116).
+- **Appointments:** Lisa sees the client's next visits and can confirm them. If the visit time has passed or they say we are late, Jake gets an URGENT Telegram and Lisa says she is checking with the tech, never inventing an ETA. A same-day "On My Way" text is visible to her.
+- **Booking:** Lisa collects the address, a phone number (Yelp never gives one) and a time; the calendar is checked before anything is penciled, and a taken time gets the next opening. Booking goes through `create_estimate_from_lead()` with `lead_channel 'yelp'`, plus the calendar push, same as a text lead. One booking per thread.
+- **Reschedule / cancel:** recorded through `request_visit_change()` (114) when the customer is verified, otherwise sent to Jake. Lisa never says a change is confirmed.
+- Model moved from `claude-haiku-4-5` to `claude-opus-5-5` (effort low, no temperature) for reliable structured output, with server-side refusal fallback on. Reply is JSON parsed the same way as `sms-agent.js`.
+- Fixed: a reply opening "Mahalo, Sam." was held as empty; a closing "Mahalo, see you tomorrow." doubled the sign-off; "call or text" is no longer appended after a question.
+
+## v1.62.2 — 2026-11-09
+
+*(Pushed as "v1.60.3" by a parallel session that had not seen v1.61 to v1.62.1; renumbered here. src/version.js was not bumped on that push, which failed the release check.)*
+
+**Fix: a duplicated estimate linked back to the original's invoice.** EST1202, a copy of EST1200, opened INV1200 instead of converting.
+
+- **Cause.** Duplicate copied the original's conversion link (and, because it cleared the wrong field names, the customer's signature), so the copy looked already converted.
+- **Now:** a duplicate starts as a fresh draft: no conversion link, no signature, no decline, no completion date.
+- **Copies made before this fix repair themselves:** opening one clears the link (and a signature copied with it) and sets it back to Draft, so it converts as its own job. EST1202 is fixed the first time you open it.
+- An invoice claimed by both an estimate and a stale copy now always goes with its own-numbered estimate (INV1200 with EST1200), for the locked lines and change orders.
+- Test: `test/e2e/estimate-co.mjs` (scenario `dup`).
+
 ## v1.62.1 — 2026-11-09
 
 **Yelp quotes are always a range, and Zapier messages are treated as follow-ups.**
@@ -43,16 +66,6 @@
 - Dropped the raw Name box. First name is now required (blocked at save with an alert); last name stays optional but no longer says so.
 - `client.name` is still set automatically from first + last under the hood, since invoices match clients by name string and client creation depends on it being non-empty — nothing downstream changes.
 - Existing clients that predate the first/last split (name only, no first name) are grandfathered: editing one to change something else doesn't force a first-name backfill first.
-
-## v1.60.3 — 2026-11-09
-
-**Fix: a duplicated estimate linked back to the original's invoice.** EST1202, a copy of EST1200, opened INV1200 instead of converting.
-
-- **Cause.** Duplicate copied the original's conversion link (and, because it cleared the wrong field names, the customer's signature), so the copy looked already converted.
-- **Now:** a duplicate starts as a fresh draft: no conversion link, no signature, no decline, no completion date.
-- **Copies made before this fix repair themselves:** opening one clears the link (and a signature copied with it) and sets it back to Draft, so it converts as its own job. EST1202 is fixed the first time you open it.
-- An invoice claimed by both an estimate and a stale copy now always goes with its own-numbered estimate (INV1200 with EST1200), for the locked lines and change orders.
-- Test: `test/e2e/estimate-co.mjs` (scenario `dup`).
 
 ## v1.60.2 — 2026-11-09
 

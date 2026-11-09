@@ -1,0 +1,211 @@
+// Who is this Yelp customer, what is already on the calendar for them, and the
+// writes Lisa may make from a Yelp thread (v1.63.0). Used by ./yelp-agent.js.
+//
+// Yelp never gives us a phone number, so a thread is anonymous until matched:
+//   phone    the customer typed a number that is on a client record  (verified)
+//   address  the service address they gave matches one client       (verified)
+//   name     Yelp's "Javier D." matches exactly one client who has a visit
+//            coming up. Lisa may confirm a day and time, nothing else, and must
+//            verify before requesting a change.
+//
+// Booking goes through the same create_estimate_from_lead() RPC as phone and
+// text leads, so a Yelp booking is an ordinary penciled estimate plus the usual
+// owner alert. Reschedule and cancel go through request_visit_change() (114),
+// which only RECORDS a request: Jake makes the change.
+
+import { rpc, getSetting } from './sms.js';
+
+function supabaseUrl() {
+  return process.env.SUPABASE_URL || 'https://cwhgcxxszyvevjpbnnkc.supabase.co';
+}
+function sbHeaders() {
+  const k = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  return { 'Content-Type': 'application/json', apikey: k, Authorization: `Bearer ${k}` };
+}
+async function select(path) {
+  const r = await fetch(`${supabaseUrl()}/rest/v1/${path}`, { headers: sbHeaders() });
+  if (!r.ok) return [];
+  const j = await r.json().catch(() => []);
+  return Array.isArray(j) ? j : [];
+}
+
+// create_estimate_from_lead and lookup_client_by_phone check 'lead_secret',
+// NOT 'sms_webhook_secret'. They are different values (see sms-agent.js).
+async function leadSecret() {
+  return process.env.LEAD_SECRET || (await getSetting('lead_secret'));
+}
+
+/** Hawaii wall clock. The database runs UTC; every date Lisa says is Hawaii time. */
+export function hawaiiNow() {
+  const d = new Date(Date.now() - 10 * 3600 * 1000);
+  return {
+    iso: d.toISOString().slice(0, 10),
+    pretty: d.toISOString().replace('T', ' ').slice(0, 16),
+    weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()],
+  };
+}
+
+/** '2026-11-06T09:00' -> 'Friday Nov 6 at 9 AM' */
+export function speakVisit(t) {
+  const d = new Date(`${t.slice(0, 10)}T00:00:00Z`);
+  const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()];
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()];
+  if (t.length < 16) return `${day} ${mon} ${d.getUTCDate()}`;
+  const h = Number(t.slice(11, 13)), mm = t.slice(14, 16);
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${day} ${mon} ${d.getUTCDate()} at ${h12}${mm === '00' ? '' : ':' + mm} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** The client's next visits (today onward, Hawaii), soonest first. Same rule as migration 113. */
+export async function upcomingVisits(clientId) {
+  if (!clientId) return [];
+  const today = hawaiiNow().iso;
+  const docs = await select(
+    `invoices?client_id=eq.${encodeURIComponent(clientId)}&deleted_at=is.null&select=id,type,visits`);
+  const out = [];
+  for (const doc of docs) {
+    for (const v of Array.isArray(doc.visits) ? doc.visits : []) {
+      const start = String(v?.start || '');
+      if (start && start >= today) {
+        out.push({ start, what: String(v.label || v.kind || '').trim(), doc: doc.id, on_calendar: !!v.eventId });
+      }
+    }
+  }
+  return out.sort((a, b) => a.start.localeCompare(b.start)).slice(0, 5);
+}
+
+/** Time (Hawaii, '9:42 AM') of today's "On My Way" text for any of these documents, else null. */
+export async function onMyWayToday(docIds) {
+  const ids = [...new Set((docIds || []).filter(Boolean))];
+  if (!ids.length) return null;
+  // Midnight Hawaii is 10:00 UTC.
+  const since = `${hawaiiNow().iso}T10:00:00Z`;
+  const rows = await select(
+    `invoice_versions?invoice_id=in.(${ids.map(encodeURIComponent).join(',')})` +
+    `&event_type=eq.sms_sent&note=ilike.*on%20my%20way*&sent_at=gte.${since}&select=sent_at&order=sent_at.desc&limit=1`);
+  if (!rows[0]?.sent_at) return null;
+  const hst = new Date(Date.parse(rows[0].sent_at) - 10 * 3600 * 1000);
+  const h = hst.getUTCHours(), m = String(hst.getUTCMinutes()).padStart(2, '0');
+  return `${h % 12 === 0 ? 12 : h % 12}:${m} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+async function getClient(id) {
+  const rows = await select(
+    `clients?id=eq.${encodeURIComponent(id)}&select=id,name,first_name,last_name,phone,mobile,address1,address_unit&limit=1`);
+  return rows[0] || null;
+}
+
+/** "Javier D." -> { first: 'Javier', initial: 'D' } */
+function parseYelpName(display) {
+  const parts = String(display || '').trim().replace(/[^A-Za-z.'\- ]/g, '').split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  const first = parts[0].replace(/\.$/, '');
+  const initial = parts[1] ? parts[1][0].toUpperCase() : null;
+  return first.length >= 2 ? { first, initial } : null;
+}
+
+function lastInitialOf(c, first) {
+  const last = String(c.last_name || '').trim()
+    || String(c.name || '').trim().slice(first.length).trim();
+  return last ? last[0].toUpperCase() : null;
+}
+
+/**
+ * Best match for this Yelp customer. Strongest evidence wins, and a link that
+ * is already verified is never downgraded to a name guess.
+ * @returns {Promise<{client: object|null, level: 'phone'|'address'|'name'|null}>}
+ */
+export async function matchClient({ clientId, level, displayName, phone, address }) {
+  let current = null;
+  if (clientId) {
+    const c = await getClient(clientId);
+    if (c) current = { client: c, level };
+    if (current && level !== 'name') return current;
+  }
+
+  // Phone the customer typed: the same lookup Lisa's phone line uses.
+  if (phone) {
+    try {
+      const r = await rpc('lookup_client_by_phone', { p_secret: await leadSecret(), p_phone: phone });
+      if (r?.found && r.client_id) {
+        const c = await getClient(r.client_id);
+        if (c) return { client: c, level: 'phone' };
+      }
+    } catch (e) {
+      console.error('[yelp-booking] phone lookup failed:', e.message || e);
+    }
+  }
+
+  // Service address: house number plus first street word must match one client.
+  const m = String(address || '').match(/^\s*(\d+[A-Za-z]?)\s+([A-Za-z]{3,})/);
+  if (m) {
+    const rows = await select(
+      `clients?address1=ilike.${encodeURIComponent(`${m[1]} ${m[2]}*`)}&select=id&limit=3`);
+    if (rows.length === 1) {
+      const c = await getClient(rows[0].id);
+      if (c) return { client: c, level: 'address' };
+    }
+  }
+
+  if (current) return current;
+
+  // Yelp name: unique among clients who have a visit coming up. A common first
+  // name with no visit on the books is a new customer, not a match.
+  const n = parseYelpName(displayName);
+  if (!n) return { client: null, level: null };
+  const rows = await select(
+    `clients?or=(first_name.ilike.${encodeURIComponent(n.first)},name.ilike.${encodeURIComponent(n.first)},name.ilike.${encodeURIComponent(n.first + ' *')})` +
+    `&select=id,name,first_name,last_name,phone,mobile,address1,address_unit&limit=20`);
+  // A record with no last name (a quick-add like "Diane") cannot contradict the
+  // initial, so it stays a candidate; uniqueness below still has to hold.
+  const byInitial = rows.filter((c) => {
+    const li = lastInitialOf(c, n.first);
+    return !n.initial || !li || li === n.initial;
+  });
+  const withVisits = [];
+  for (const c of byInitial) {
+    if ((await upcomingVisits(c.id)).length) withVisits.push(c);
+    if (withVisits.length > 1) break;
+  }
+  return withVisits.length === 1 ? { client: withVisits[0], level: 'name' } : { client: null, level: null };
+}
+
+/**
+ * Pencil a visit: same RPC and calendar push as a text lead.
+ * @returns {Promise<string|null>} the new estimate id, or null
+ */
+export async function bookVisit({ name, phone, address, problem, appointment, urgency, services }) {
+  const filed = await rpc('create_estimate_from_lead', {
+    p_secret: await leadSecret(),
+    p_name: name || 'Yelp lead - no name given',
+    p_phone: phone,
+    p_caller_id: phone,
+    p_address: address,
+    p_problem: String(problem || '').slice(0, 500) || 'Yelp lead',
+    p_urgency: urgency || null,
+    p_services: Array.isArray(services) && services.length ? services : null,
+    p_appointment: appointment || null,
+    p_heard_from: 'yelp',
+    p_lead_channel: 'yelp',
+  });
+  const id = filed?.estimate_id || null;
+  if (id) {
+    // Synchronous calendar push on top of the insert trigger; a no-op if the
+    // trigger already created the event. Same belt and braces as sms-agent.js.
+    try { await rpc('push_invoice_to_calendar', { p_id: id }); }
+    catch (e) { console.error('[yelp-booking] calendar push failed (non-fatal):', e.message || e); }
+  }
+  return id;
+}
+
+/** Record a reschedule or cancel REQUEST. Jake makes the change. Keyed on the client's phone on file. */
+export async function requestChange({ phone, action, visitStart, newTime, reason }) {
+  return rpc('request_visit_change', {
+    p_secret: await leadSecret(),
+    p_phone: phone,
+    p_action: action,
+    p_visit_start: visitStart || null,
+    p_new_time: newTime || null,
+    p_reason: reason ? `Yelp: ${String(reason).slice(0, 300)}` : 'Requested on Yelp',
+  });
+}
