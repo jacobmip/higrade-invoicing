@@ -52,6 +52,20 @@ async function loadThread(leadId) {
   return rows[0] || null;
 }
 
+// The price book, with prices. Lisa may quote ONLY what is in here, and the
+// code re-checks every dollar figure in a draft against this same list.
+async function loadCatalog() {
+  const r = await fetch(`${supabaseUrl()}/rest/v1/saved_items?select=name,price,category&order=name.asc&limit=200`,
+    { headers: sbHeaders() });
+  if (!r.ok) return [];
+  const rows = await r.json().catch(() => []);
+  return (Array.isArray(rows) ? rows : [])
+    .map((x) => ({ name: String(x.name || '').trim(), price: Number(x.price) }))
+    .filter((x) => x.name && Number.isFinite(x.price) && x.price > 0);
+}
+
+const DISCLAIMER = "Estimates sight unseen can't be confirmed until we're on the job site in person.";
+
 async function saveThread(row) {
   const r = await fetch(`${supabaseUrl()}/rest/v1/yelp_threads?on_conflict=lead_id`, {
     method: 'POST',
@@ -61,7 +75,7 @@ async function saveThread(row) {
   if (!r.ok) throw new Error(`yelp_threads write ${r.status}: ${(await r.text()).slice(0, 200)}`);
 }
 
-function systemPrompt({ firstName, isFirstReply, knownTiming, knownLocation }) {
+function systemPrompt({ firstName, isFirstReply, knownTiming, knownLocation, catalog }) {
   return `You are Lisa, the receptionist for HI Grade Plumbing LLC, a licensed plumbing company on Oahu, Hawaii. You are answering a customer in a Yelp message thread. You are the same Lisa who answers the phone at (808) 444-5450. A customer who messages on Yelp and then calls must meet the same person.
 
 Never name the owner. Do not write "Jake" anywhere. Speak for the business: we, us, our.
@@ -69,7 +83,7 @@ Never name the owner. Do not write "Jake" anywhere. Speak for the business: we, 
 Output the message text and nothing else. No preamble, no subject line, no quotes, no explanation.
 
 ${isFirstReply
-    ? `This is your FIRST message to this customer. Engage with their actual problem like a plumber who has seen it before. Pick up the one detail that matters and respond to it in one or two short sentences. Describe the symptom and what it indicates. Stop before stating a cause as fact and before naming the fix. Do NOT write "usually means", "most likely", "needs a repair", "needs replacing" or "not something we can fix". Good: "A leak from the bottom of the tank is worth getting eyes on soon." Bad: "That usually means the tank is failing." Do not open with Hi or Hello, the Aloha greeting is added for you. Ask exactly ONE qualifying question that ends in a question mark. Never ask for something they already told you${knownTiming ? ' (timing is known)' : ''}${knownLocation ? ' (location is known)' : ''}.`
+    ? `This is your FIRST message to this customer. Engage with their actual problem like a plumber who has seen it before. Pick up the one detail that matters and respond to it in one or two short sentences. Describe the symptom and what it indicates. Stop before stating a cause as fact and before naming the fix. Do NOT write "usually means", "most likely", "needs a repair", "needs replacing" or "not something we can fix". Good: "A leak from the bottom of the tank is worth getting eyes on soon." Bad: "That usually means the tank is failing." Do not open with Hi or Hello, the Aloha greeting is added for you. Ask exactly ONE qualifying question that ends in a question mark. Exception: if you quoted a price, skip the question and close by telling them to call or text 808-444-5450 when they are ready to schedule. Never ask for something they already told you${knownTiming ? ' (timing is known)' : ''}${knownLocation ? ' (location is known)' : ''}.`
     : `You are CONTINUING a conversation. Read the whole thread. Answer what they just said directly. Do not repeat anything already said and do not re-introduce yourself.
 
 Your goal across the thread is to make the next step easy. The easiest next step is the online scheduling page, which gets them a real number and a time slot without back and forth: ${INTAKE_URL}
@@ -84,8 +98,14 @@ VOICE RULES, non negotiable.
 - ${isFirstReply ? 'Body 40 to 80 words.' : 'Body 20 to 60 words.'} At most ONE question.
 
 HARD LIMITS.
-- Never quote a price, range, hourly rate, trip fee, or discount. If asked about cost, say it depends on what we find and that we will get them a real number.
-- Never promise an arrival time, a same day visit, or a specific appointment. Say we will confirm.
+- PRICES. Customers who get a number fast book more often, so when a price helps, give one. Rules:
+  1. Quote only a job that clearly matches a line in the PRICE BOOK below, and only simple, standard work: a fixture swap, an unclog, a standard repair. Use the price-book dollar amounts exactly. Never invent, round, or adjust a number.
+  2. If several price-book lines fit, quote the range from the lowest to the highest matching price ("$395 to $425"). Pay attention to labor only versus supply and labor, and to whether the customer already has the fixture.
+  3. Say it as an estimate, never as a final price. Do not write the "sight unseen" disclaimer yourself, it is added for you.
+  4. Do NOT quote repipes, slab leaks, sewer lines, remodels, gas work, anything that needs diagnosis, or anything with no price-book line. For those say we will get them a real number after we see it.
+  5. Never quote an hourly rate, a trip fee, a deposit, or a discount.
+${catalog ? `\nPRICE BOOK (name, price):\n${catalog}\n` : '\n(The price book is unavailable right now, so do NOT quote any price.)\n'}- Never promise an arrival time, a same day visit, or a specific appointment. Say we will confirm.
+- Always say "call or text" (never just "call") when pointing them to 808-444-5450. Many people prefer to text, and texting that number reaches us.
 - Never offer to put them through to anyone and never give another number. If they ask for the owner, say you will pass the message along and someone will follow up.
 - Never state a diagnosis as fact and never tell them to do repair work. Telling them to shut the water off during an active leak is the one exception.
 - Never mention that this is automated, an AI, Claude, Yelp, Zapier, or any software.
@@ -98,7 +118,11 @@ ${firstName ? `\nThe customer's first name is ${firstName}.` : ''}`;
 
 // Port of build-reply.js. Returns { text, flags, hold } where hold is a reason
 // the draft must not be sent.
-function polish(raw, { firstName, isFirstReply }) {
+// Topics Lisa never quotes sight unseen, and the ceiling on any auto quote.
+const BIG_JOB = /\b(re-?pip\w*|whole[- ]house|sewer|main line|slab|remodel|renovat\w*|gas line|gas pipe|tankless|commercial|high[- ]rise|hydro[- ]?jet\w*|excavat\w*|trench\w*)\b/i;
+const MAX_AUTO_QUOTE = 2500;
+
+function polish(raw, { firstName, isFirstReply, prices, customerText }) {
   const flags = [];
   let reply = String(raw)
     .replace(/\r\n/g, '\n')
@@ -137,8 +161,18 @@ function polish(raw, { firstName, isFirstReply }) {
   // A second greeting right under the Aloha opener ("Hi Dana,") reads robotic.
   reply = reply.replace(/^(Aloha[^\n]*\n+)?(Hi|Hello|Hey)\b[^\n,]{0,40},\s*/i, (m, a) => a || '');
   reply = reply
-    .replace(/\breach(ing|ed)? out to\b/gi, 'get in touch with')
-    .replace(/\breach(ing|ed)? out\b/gi, 'get in touch');
+    // Each inflection gets its own fix, or "Mahalo for reaching out" turns into
+    // "Mahalo for get in touch".
+    .replace(/\breaching out to\b/gi, 'contacting')
+    .replace(/\breached out to\b/gi, 'contacted')
+    .replace(/\breach out to\b/gi, 'contact')
+    .replace(/\breaching out\b/gi, 'getting in touch')
+    .replace(/\breached out\b/gi, 'got in touch')
+    .replace(/\breach out\b/gi, 'get in touch')
+    // Jake: many customers prefer to text. Never "just call". The lookahead
+    // leaves "call us or text us" alone instead of doubling it.
+    .replace(/\b(give us a call|call us|give us a ring|ring us)(?!\s+or\s+text)(\s+(at|on))?\b/gi, (m, a, b, c) => `call or text us${c ? ' at' : ''}`)
+    .replace(/\bcall (?:the office|our office|the front desk)\b/gi, 'call or text us');
 
   if (isFirstReply) {
     const opener = firstName ? `Aloha ${firstName},` : 'Aloha,';
@@ -161,8 +195,37 @@ function polish(raw, { firstName, isFirstReply }) {
     return { text: reply, flags, hold: 'The draft had no real message in it.' };
   }
 
-  if (/\$\s?\d/.test(reply) || /\b\d+\s*(dollars|per hour|an hour|\/hr)\b/i.test(reply)) {
-    return { text: reply, flags, hold: 'A price appeared in the reply.' };
+  // PRICES. Allowed only when every dollar figure is a price-book price. A
+  // number that is not in the book is held for Jake, never sent.
+  const amounts = [...reply.matchAll(/\$\s?([\d,]+(?:\.\d{1,2})?)/g)].map((m) => Number(m[1].replace(/,/g, '')));
+  const wordy = /\b\d+\s*(dollars|per hour|an hour|\/hr)\b/i.test(reply) || /\b(trip fee|deposit|hourly rate|discount|% off)\b/i.test(reply);
+  if (wordy) return { text: reply, flags, hold: 'It mentioned an hourly rate, trip fee, deposit or discount.' };
+  let quoted = null;
+  if (amounts.length) {
+    const book = new Set((prices || []).map((x) => x.price));
+    const off = amounts.filter((a) => !book.has(a));
+    if (!book.size) return { text: reply, flags, hold: 'A price appeared but the price book could not be loaded.' };
+    if (off.length) return { text: reply, flags, hold: `A price not in the price book: $${off.join(', $')}.` };
+    quoted = { amounts, low: Math.min(...amounts), high: Math.max(...amounts) };
+    // Big or open-ended work is never quoted sight unseen, whatever the model
+    // decided: a topic list plus a dollar ceiling. Held for Jake.
+    if (BIG_JOB.test(`${customerText || ''}\n${reply}`)) {
+      return { text: reply, flags, hold: 'It quoted a big or open-ended job (repipe, sewer, slab, remodel, gas). Jake reviews these.' };
+    }
+    if (quoted.high > MAX_AUTO_QUOTE) {
+      return { text: reply, flags, hold: `It quoted over $${MAX_AUTO_QUOTE} (up to $${quoted.high}). Jake reviews anything that large.` };
+    }
+    // Jake wants "call or text" on every quote.
+    if (!/\bcall or text\b/i.test(reply)) {
+      reply = reply.replace(/(\n\nMahalo,[\s\S]*)$/, ' Call or text 808-444-5450 when you are ready to schedule.$1');
+    }
+    // Jake's protection line, added by code so the model cannot forget it.
+    if (!/sight unseen/i.test(reply)) {
+      const sign = isFirstReply ? '\n\nMahalo,\n\n' + SIGNATURE : '\n\nMahalo,\nLisa';
+      reply = reply.endsWith(sign)
+        ? reply.slice(0, -sign.length).trimEnd() + ' ' + DISCLAIMER + sign
+        : reply + ' ' + DISCLAIMER;
+    }
   }
 
   // Deciding the fix or stating a cause before anyone has looked is the line
@@ -194,7 +257,7 @@ function polish(raw, { firstName, isFirstReply }) {
   const hits = banned.filter((p) => reply.toLowerCase().includes(p));
   if (hits.length) flags.push('AI-flavored phrasing: ' + hits.join(', '));
   if ((reply.match(/\?/g) || []).length > 1) flags.push('more than one question');
-  return { text: reply, flags, hold: null };
+  return { text: reply, flags, hold: null, quoted };
 }
 
 // A US number or an email typed into a message. Yelp never gives us these on
@@ -280,6 +343,12 @@ export async function draftYelpReply(p) {
   if (isFirstReply) turns[0] = { role: 'user', content: `LEAD_MESSAGE_START\n${consumerText}\nLEAD_MESSAGE_END` };
   while (turns.length && turns[0].role !== 'user') turns.shift();
 
+  const prices = await loadCatalog();
+  // A big or open-ended job gets no price book at all, so Lisa answers it with
+  // "we'll get you a real number after we see it" instead of a held draft.
+  const allCustomerText = messages.filter((m) => m.role === 'consumer').map((m) => m.text).join('\n') + (p.job ? `\n${p.job}` : '');
+  const catalogText = BIG_JOB.test(allCustomerText) ? '' : prices.map((x) => `${x.name} - $${x.price}`).join('\n');
+
   const res = await fetch(ANTHROPIC, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -287,7 +356,7 @@ export async function draftYelpReply(p) {
       model: MODEL,
       max_tokens: 600,
       temperature: 0.4,
-      system: systemPrompt({ firstName: row.first_name, isFirstReply, knownTiming: !!p.timing, knownLocation: !!p.location }),
+      system: systemPrompt({ firstName: row.first_name, isFirstReply, knownTiming: !!p.timing, knownLocation: !!p.location, catalog: catalogText }),
       messages: turns,
     }),
   });
@@ -310,7 +379,10 @@ export async function draftYelpReply(p) {
     return out;
   }
 
-  const polished = polish(text, { firstName: row.first_name, isFirstReply });
+  const polished = polish(text, {
+    firstName: row.first_name, isFirstReply, prices,
+    customerText: messages.filter((m) => m.role === 'consumer').map((m) => m.text).join('\n') + (p.job ? `\n${p.job}` : ''),
+  });
   out.flags = polished.flags;
   if (polished.hold) { out.reply = polished.text; return hold(polished.hold); }
 
@@ -320,6 +392,12 @@ export async function draftYelpReply(p) {
 
   if (contact.phone) {
     await telegramNotify(`Yelp customer gave a number\n${firstName || 'A customer'}: ${contact.phone}\nLead ${leadId}`);
+  }
+  if (polished.quoted) {
+    out.quoted = polished.quoted;
+    const q = polished.quoted;
+    const range = q.low === q.high ? `$${q.low}` : `$${q.low} to $${q.high}`;
+    await telegramNotify(`Lisa quoted a Yelp lead ${range}\n${firstName || 'A customer'} wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
   }
   out.should_send = true;
   out.reply = polished.text;

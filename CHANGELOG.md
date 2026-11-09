@@ -1,5 +1,16 @@
 # HI Grade Invoicing — Changelog
 
+## v1.62.0 — 2026-11-09
+
+**Lisa quotes simple jobs on Yelp, and says "call or text".** Jake's call: leads close more when they get a number fast. Applies to the Zapier path (`yelp_reply`); the Gmail first-reply path still quotes nothing.
+
+- Quotes come only from the price book (`saved_items`), at the book's exact dollar amounts, as a range when several lines fit. Code re-checks every `$` figure and holds any number that is not in the book.
+- "Estimates sight unseen can't be confirmed until we're on the job site in person." is appended by code to every quote.
+- Repipes, sewer, slab, remodel, gas, tankless and commercial work never see the price book. Any quote over $2,500 is held for Jake. Hourly rates, trip fees, deposits and discounts are still held.
+- "Call us" becomes "call or text us" everywhere, and a quote always closes with "Call or text 808-444-5450 when you are ready to schedule."
+- Jake gets a one-line Telegram FYI for each quote.
+- Fixed grammar from the banned-phrase rewrites ("Mahalo for get in touch").
+
 ## v1.61.1 — 2026-11-09
 
 **Yelp reply: fixed an empty-message bug caught on the first Zapier test.** When the model wrote "Aloha Andrew. We can handle it." on one line, the opener cleanup deleted the whole line and the draft came back as greeting plus sign-off with `should_send: true`.
