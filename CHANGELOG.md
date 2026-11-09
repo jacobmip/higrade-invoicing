@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.64.0 — 2026-11-09
+
+- Invoices from a signed estimate are no longer locked. Every line can be edited or deleted, and +, Price Book and both AI chats add lines straight to the invoice again (for a verbal OK). Lines keep their labels: From estimate, Change order, Not on the estimate.
+- Change orders are now optional: use + Change order on the invoice when the customer should approve in writing. The signed estimate itself stays as the customer approved it.
+- Removed the "Make it a change order" banner and the lock messages. The line editor's delete button has a label.
+- Tests: `SCENARIO=lock` and `SCENARIO=globaladd` in `test/e2e/estimate-co.mjs` now check free editing.
+
 ## v1.63.3 — 2026-11-09
 
 **Yelp first replies come through Zapier too (the Gmail path is being retired).**

@@ -23,7 +23,7 @@ import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
 import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
-import { runChangeOrderAction, jobInvoiceId, signedEstimateFor } from './ChangeOrders.jsx';
+import { runChangeOrderAction, jobInvoiceId } from './ChangeOrders.jsx';
 
 const MAX_STEPS = 12;            // model calls per message
 const MAX_RESULT_CHARS = 12000;  // per tool result sent back to the model
@@ -510,11 +510,11 @@ async function addLineItems(input, ctx) {
   if (error) return { error };
   const items = normalizeItems(input.items);
   if (!items.length) return { error: 'No items to add.' };
-  // v1.59.4: an invoice from a signed estimate takes new lines only through a
-  // change order, and so does the estimate itself once signed.
-  const est = signedEstimateFor(inv, ctx.getData().invoices);
-  if (est || (inv.type === 'estimate' && jobInvoiceId(inv, ctx.getData().invoices))) {
-    return { error: `${inv.id} ${est ? `came from the signed estimate ${est.id}` : 'is a signed estimate'}, so its lines are locked. New work goes in a change order: call draft_change_order with document_id ${inv.id} and these items (send "none" unless Jake asked to send it).` };
+  // A signed estimate is the customer's approved record: new work on it goes in
+  // a change order. Its invoice takes lines directly since v1.64.0 (Jake often
+  // has a verbal OK); a change order there is only when he asks for one.
+  if (inv.type === 'estimate' && jobInvoiceId(inv, ctx.getData().invoices)) {
+    return { error: `${inv.id} is a signed estimate, so its lines stay as the customer approved them. Add the work to its invoice ${jobInvoiceId(inv, ctx.getData().invoices)} instead, or call draft_change_order with document_id ${inv.id} if Jake wants the customer to approve it (send "none" unless Jake asked to send it).` };
   }
   const updated = await ctx.onAction({ action: 'add_items', invoiceId: inv.id, items });
   return {

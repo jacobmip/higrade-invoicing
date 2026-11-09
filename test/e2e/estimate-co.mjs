@@ -97,8 +97,7 @@ await page.route('**/*', async route => {
         const n = aiPrompts.filter(x => x.mode === 'agent').length;
         if (SCENARIO === 'globaladd') {
           if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'add_line_items', input: { document_id: 'INV1300', items: [{ name: 'Shower valve', qty: 1, price: 240 }] } }] });
-          if (n === 2) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu2', name: 'draft_change_order', input: { document_id: 'INV1300', items: [{ name: 'Shower valve', qty: 1, price: 240 }], send: 'none' } }] });
-          return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Change order drafted.' }] });
+          return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Added.' }] });
         }
         if (n === 1 && SCENARIO === 'globalco') return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'draft_change_order', input: { document_id: 'INV1300', items: [{ name: 'Replace angle stop', qty: 1, price: 95 }], send: 'auto' } }] });
         if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'send_sms', input: { phone: '8085551234', message: 'Aloha Pat, just checking in on the water heater. Mahalo!' } }] });
@@ -268,39 +267,36 @@ if (SCENARIO === 'send' || SCENARIO === 'customer') {
   check('customer estimate page: Sent and Approved dates', /SENT\s*11\/01\/2026/i.test(tx) && /APPROVED\s*11\/03\/2026/i.test(tx));
 }
 if (SCENARIO === 'lock') {
-  // ── v1.59.0: invoice from a signed estimate: lines locked, additions are change orders ──
+  // ── v1.64.0: invoice from a signed estimate: lines labelled, but all edit freely ──
   await open('INV1300');
-  const kinds = await page.evaluate(() => [...document.querySelectorAll('[data-line-kind]')].map(e => e.getAttribute('data-line-kind') + ':' + e.textContent.slice(0, 14)));
-  check('lines marked: estimate, change order, not on the estimate', kinds.length === 3 && /^estimate:Water heater/.test(kinds[0]) && /^co:Add shutoff/.test(kinds[1]) && /^loose:Loose fix/.test(kinds[2]), JSON.stringify(kinds));
+  const kindsNow = () => page.evaluate(() => [...document.querySelectorAll('[data-line-kind]')].map(e => e.getAttribute('data-line-kind') + ':' + e.textContent.slice(0, 14)));
+  const kinds = await kindsNow();
+  check('lines labelled: estimate, change order, not on the estimate', kinds.length === 3 && /^estimate:Water heater/.test(kinds[0]) && /^co:Add shutoff/.test(kinds[1]) && /^loose:Loose fix/.test(kinds[2]), JSON.stringify(kinds));
   let tx = await text();
-  check('locked note and loose-line banner shown', /Lines from the signed estimate EST1300 are locked/.test(tx) && /1 line was added after the estimate was signed/.test(tx));
-  await page.locator('[data-line-kind="estimate"]').click(); await page.waitForTimeout(500);
-  tx = await text();
-  check('tapping a locked line explains, opens no editor', /on the signed estimate EST1300, so it is locked/.test(tx) && !/Save to My Items/.test(tx), (tx.match(/[^\n]*locked[^\n]*/g) || []).join(' | '));
-  // Price Book on this invoice starts a change order instead of adding a line.
-  const savesBefore = saves.length;
+  check('labels say From estimate / Change order, no "locked"', /From estimate/.test(tx) && /Change order\b/.test(tx) && !/locked/i.test(tx), (tx.match(/[^\n]*locked[^\n]*/gi) || []).join(' | '));
+  // Edit a line that came from the estimate.
+  await page.locator('[data-line-kind="estimate"]').click(); await page.waitForTimeout(600);
+  await page.getByPlaceholder('e.g. Drain Clean – Snake').fill('Water heater 50 gal'); await page.waitForTimeout(200);
+  await page.getByRole('button', { name: 'Done', exact: true }).last().click(); await page.waitForTimeout(2500);
+  let last = saves.filter(s => s.id === 'INV1300').pop();
+  check('an estimate line can be edited', last && last.items.some(i => /^Water heater 50 gal\|/.test(i)), JSON.stringify(last && last.items));
+  // Delete the change order line.
+  await page.locator('[data-line-kind="co"]').click(); await page.waitForTimeout(600);
+  await page.getByRole('button', { name: 'Delete line item' }).last().click(); await page.waitForTimeout(2500);
+  last = saves.filter(s => s.id === 'INV1300').pop();
+  check('a change order line can be deleted', last && !last.items.some(i => /^Add shutoff valve/.test(i)), JSON.stringify(last && last.items));
+  // Price Book adds straight to the invoice, no change order.
+  const coBefore = db.change_orders.length;
   await page.getByRole('button', { name: 'Price Book' }).dispatchEvent('click'); await page.waitForTimeout(500);
   await page.getByRole('button', { name: 'Add Angle stop replacement' }).dispatchEvent('click'); await page.waitForTimeout(2500);
+  last = saves.filter(s => s.id === 'INV1300').pop();
   tx = await text();
-  const draft = db.change_orders.find(c => c.status === 'draft' && (c.items || []).some(i => i.name === 'Angle stop replacement'));
-  check('Price Book line became a change order draft on INV1300', /Building change order/.test(tx) && draft && draft.invoice_id === 'INV1300', JSON.stringify(draft && { inv: draft.invoice_id, st: draft.status }));
-  check('nothing added straight to the invoice', !saves.slice(savesBefore).some(s => s.id === 'INV1300' && s.items.some(i => /^Angle stop replacement\|(?!Change order)/.test(i))), JSON.stringify(saves.slice(savesBefore).map(s => s.items)));
-  // Add it without the customer's approval.
-  await page.getByRole('button', { name: 'Review & send' }).dispatchEvent('click'); await page.waitForTimeout(1200);
-  await page.getByRole('button', { name: 'Add to invoice without approval' }).click(); await page.waitForTimeout(3000);
-  check('marked approved by HI Grade, applied', draft.status === 'approved' && draft.approved_via == null && !!draft.applied_at, JSON.stringify({ st: draft.status, via: draft.approved_via, applied: draft.applied_at }));
-  const last = saves.filter(s => s.id === 'INV1300').pop();
-  check('its line saved on the invoice with the change order mark', last && last.items.some(i => /^Angle stop replacement\|Change order #\d+, approved /.test(i)), JSON.stringify(last && last.items));
-  const kinds2 = await page.evaluate(() => [...document.querySelectorAll('[data-line-kind]')].map(e => e.getAttribute('data-line-kind') + ':' + e.textContent.slice(0, 14)));
-  check('new line shows as a locked change order line', kinds2.some(k => /^co:Angle stop/.test(k)), JSON.stringify(kinds2));
-  // The loose line: one tap moves it into a change order.
-  await page.getByRole('button', { name: 'Make it a change order' }).click(); await page.waitForTimeout(3000);
-  tx = await text();
-  const moved = db.change_orders.find(c => c.status === 'draft' && (c.items || []).some(i => i.name === 'Loose fix'));
-  check('loose line moved into a change order draft', /Building change order/.test(tx) && moved && moved.invoice_id === 'INV1300', JSON.stringify(db.change_orders.map(c => [c.seq, c.status, (c.items || []).map(i => i.name)])));
-  await page.getByRole('button', { name: 'Done for now' }).click(); await page.waitForTimeout(2500);
-  const last2 = saves.filter(s => s.id === 'INV1300').pop();
-  check('loose line no longer on the invoice', last2 && !last2.items.some(i => /^Loose fix/.test(i)), JSON.stringify(last2 && last2.items));
+  check('Price Book line added straight to the invoice', last && last.items.some(i => /^Angle stop replacement\|$/.test(i)) && !/Building change order/.test(tx), JSON.stringify(last && last.items));
+  check('no change order created for it', db.change_orders.length === coBefore, JSON.stringify(db.change_orders.map(c => [c.seq, c.status])));
+  // + adds a line to the invoice.
+  await page.getByRole('button', { name: 'Add line item' }).click(); await page.waitForTimeout(800);
+  check('+ opens a new invoice line, not a change order', !/Building change order/.test(await text()) && db.change_orders.length === coBefore);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click().catch(() => {}); await page.waitForTimeout(800);
 }
 if (SCENARIO === 'estsent') {
   // ── v1.59.2: a sent estimate says Sent ──
@@ -320,7 +316,7 @@ if (SCENARIO === 'estsent') {
   check('its label says Sent', /\bSENT\b/.test(tx.replace(/SENT\s*\d\d\/\d\d\/\d{4}/g, '')), (tx.match(/EST1301[\s\S]{0,200}/) || [''])[0].replace(/\n/g, ' '));
 }
 if (SCENARIO === 'globaladd') {
-  // ── v1.59.4: the header AI cannot add a line straight to an invoice from a signed estimate ──
+  // ── v1.64.0: the header AI adds lines straight to an invoice from a signed estimate ──
   await page.goto(BASE + '/'); await page.waitForTimeout(2500);
   const before = saves.length;
   await page.getByRole('button', { name: 'AI assistant' }).click(); await page.waitForTimeout(800);
@@ -329,9 +325,9 @@ if (SCENARIO === 'globaladd') {
   await page.waitForTimeout(5000);
   const agentCalls = aiPrompts.filter(x => x.mode === 'agent');
   const toolResult = JSON.stringify(agentCalls[1] || {});
-  check('add_line_items refused: lines are locked, use a change order', /signed estimate EST1300/.test(toolResult) && /draft_change_order/.test(toolResult));
-  check('no line written straight to INV1300', !saves.slice(before).some(x => x.id === 'INV1300' && x.items.some(i => /Shower valve/.test(i))) && !db.invoice_items.some(i => i.invoice_id === 'INV1300' && i.name === 'Shower valve'));
-  check('the line went into a change order draft', db.change_orders.some(c => c.invoice_id === 'INV1300' && c.status === 'draft' && (c.items || []).some(i => i.name === 'Shower valve')), JSON.stringify(db.change_orders.map(c => [c.seq, c.status])));
+  check('add_line_items accepted on the invoice', /\\"ok\\":true|"ok":true/.test(toolResult) && !/locked/.test(toolResult), toolResult.slice(0, 300));
+  check('the line went straight onto INV1300', saves.slice(before).some(x => x.id === 'INV1300' && x.items.some(i => /Shower valve/.test(i))), JSON.stringify(saves.slice(before).map(x => x.items)));
+  check('no change order made for it', !db.change_orders.some(c => (c.items || []).some(i => i.name === 'Shower valve')));
 }
 if (SCENARIO === 'collide') {
   // ── v1.60.1: converting never overwrites an existing document ──
@@ -348,6 +344,7 @@ if (SCENARIO === 'collide') {
 if (SCENARIO === 'sign') {
   // ── v1.60.2: change order signed in person on the phone ──
   await open('INV1300');
+  await page.getByRole('button', { name: '+ Change order' }).click(); await page.waitForTimeout(800);
   await page.getByRole('button', { name: 'Price Book' }).dispatchEvent('click'); await page.waitForTimeout(500);
   await page.getByRole('button', { name: 'Add Angle stop replacement' }).dispatchEvent('click'); await page.waitForTimeout(2500);
   await page.getByRole('button', { name: 'Review & send' }).dispatchEvent('click'); await page.waitForTimeout(1200);

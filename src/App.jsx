@@ -1123,7 +1123,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         let coList = null;
         try { coList = await listChangeOrders(coInvoiceId); } catch { coList = null; }
         if (coList) invoiceContext += changeOrdersPromptBlock(coInvoiceId, coList, currentInvoice.tax, coContact);
-        if (currentInvoice?.lockedFromEstimate) invoiceContext += `\n\nThis invoice came from the signed estimate ${currentInvoice.lockedFromEstimate}. Its lines from that estimate and from approved change orders are LOCKED: never update_item or remove_item them. Any new work Jake asks for becomes a change order: use create_change_order (add_items is also turned into a change order by the app).`;
+        if (currentInvoice?.lockedFromEstimate) invoiceContext += `\n\nThis invoice came from the signed estimate ${currentInvoice.lockedFromEstimate}. Jake may add, edit and remove lines on it freely (a verbal OK from the customer is enough). Only make a change order when he asks for one or wants the customer to approve in writing.`;
         if (currentInvoice?.type === "estimate") invoiceContext += `\n\nThis is the ESTIMATE for job ${coInvoiceId}. Its own line items are frozen: they are what the customer signed. Extra work goes in a change order (the actions above), never add_items on this estimate. Approved change orders show on both this estimate and invoice ${coInvoiceId}, and their lines are added to the invoice.`;
       } else if (currentInvoice?.type === "estimate" && !readOnly) {
         invoiceContext += "\n\nThis is an ESTIMATE the customer has not approved yet. Change orders start once it is approved and converted: if Jake asks for one, tell him that, or edit the estimate's own lines instead (do not emit a change order action).";
@@ -3244,7 +3244,7 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
         </div>
 
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onDelete} style={{ width: 44, height: 44, background: "#fff0ee", border: "1.5px solid #ffd5cc", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="trash" size={17} color="#cc4444" /></button>
+          <button onClick={onDelete} aria-label="Delete line item" style={{ width: 44, height: 44, background: "#fff0ee", border: "1.5px solid #ffd5cc", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="trash" size={17} color="#cc4444" /></button>
           <button onClick={onClose} style={{ ...S.btn("ghost"), flex: 1 }}>Cancel</button>
           <button onClick={handleDone} style={{ ...S.btn("primary"), flex: 2 }}>Done</button>
         </div>
@@ -3724,12 +3724,10 @@ function ClientPickerModal({ clients, selectedName, onClose, onSelect, onSave, o
 // press = confirm + remove. Long-press is disabled while reordering so it
 // doesn't conflict with the drag handles.
 function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem, moveItem, removeItem, descPreview, itemsLength, kind }) {
-  // kind (v1.59.0, invoices from a signed estimate): "estimate" / "co" lines
-  // are locked, "loose" lines were added straight to the invoice.
-  const locked = kind === "estimate" || kind === "co";
+  // kind (invoices from a signed estimate): a label only since v1.64.0.
+  // "estimate" / "co" / "loose" say where the line came from; every line edits.
   const longPress = useLongPress(() => {
     if (reordering) return;
-    if (locked) { removeItem(i); return; }
     if (confirm("Delete this line item?")) removeItem(i);
   });
   // Only attach the long-press handlers when not reordering, so the drag
@@ -3757,8 +3755,8 @@ function LineItemRow({ item, i, reordering, dragIdx, setDragIdx, setEditingItem,
         <div style={{ fontSize: 12, color: "#aaa", marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
           <span>{item.qty > 1 ? `${item.qty} × ${fmt(item.price)}` : `${fmt(item.price)}${item.unit && item.unit !== "ea" ? " / " + item.unit : ""}`}</span>
           {item.discount > 0 && <span style={{ color: "#e74c3c", fontSize: 11 }}>{item.discountType === "%" ? `−${item.discount}%` : `−${fmt(item.discount)}`}</span>}
-          {kind === "estimate" && <span style={{ fontSize: 10.5, color: "#6677aa", fontWeight: 700 }}>Estimate · locked</span>}
-          {kind === "co" && <span style={{ fontSize: 10.5, color: "#27ae60", fontWeight: 700 }}>Change order · locked</span>}
+          {kind === "estimate" && <span style={{ fontSize: 10.5, color: "#6677aa", fontWeight: 700 }}>From estimate</span>}
+          {kind === "co" && <span style={{ fontSize: 10.5, color: "#27ae60", fontWeight: 700 }}>Change order</span>}
           {kind === "loose" && <span style={{ fontSize: 10.5, color: ORANGE, fontWeight: 700 }}>Not on the estimate</span>}
         </div>
       </div>
@@ -4623,15 +4621,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     if (editNew && extra.length) setCoEditing(base.length + extra.length - 1);
     afterPaint(() => scrollUnderHeader(aiSectionRef.current));
   };
-  // A line added to an invoice from a signed estimate goes into a change
-  // order (v1.59.0): the one still being drafted, else a new one.
-  const addToChangeOrder = async (items, { editNew = false } = {}) => {
-    const invId = coInvIdRef.current;
-    if (!invId) return;
-    let draft = null;
-    try { draft = (await listChangeOrders(invId)).filter(c => c.status === 'draft').pop() || null; } catch { /* start a new one */ }
-    await startChangeOrder(draft, items, editNew);
-  };
   // Jake puts a change order on the invoice himself, no customer sign-off
   // (v1.59.0). The form adds the lines and saves them; nothing races it.
   const [coSignFor, setCoSignFor] = useState(null); // v1.60.2: in-person signature for the change order being built
@@ -4653,17 +4642,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     announceChangeOrders(coInvIdRef.current);
     setCoSheet(false);
     leaveChangeOrderMode();
-  };
-  // Lines added straight to the invoice after the estimate was signed (before
-  // v1.59.0 that was the only way): move them into a change order.
-  const moveLooseToChangeOrder = async () => {
-    if (!lineKinds) return;
-    const loose = form.items.filter((_, i) => lineKinds[i] === "loose");
-    if (!loose.length) return;
-    const build = (f) => ({ ...f, items: f.items.filter((_, i) => lineKinds[i] !== "loose") });
-    setForm(build);
-    snapshotEvent('line_item_deleted', "Lines moved into a change order", build(formRef.current));
-    await addToChangeOrder(loose.map(it => ({ ...blankItem, ...it })));
   };
   // Back to the invoice: land on the Change orders card, where the one just
   // built now shows, instead of wherever the shorter page left the scroll.
@@ -4698,11 +4676,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       setShowAI(false);
       return;
     }
-    if (lockedEst) {
-      setShowAI(false);
-      addToChangeOrder(items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty ?? 1, price: it.price ?? 0, ...(typeof it.taxable === "boolean" ? { taxable: it.taxable } : {}) })));
-      return;
-    }
     const build = (f) => ({ ...f, items: [...f.items.filter(it => it.name || it.desc || it.price), ...items.map(it => ({ ...blankItem, name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty, price: it.price }))], notes: notes ? (f.notes ? f.notes + "\n" + notes : notes) : f.notes });
     setForm(build);
     if (items.length) snapshotEvent('line_item_added', "Line item added", build(formRef.current));
@@ -4728,11 +4701,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
         ...(typeof c.price === "number" ? { price: c.price } : {}),
         ...(typeof c.taxable === "boolean" ? { taxable: c.taxable } : {}),
       } : it));
-      return true;
-    }
-    // Locked lines on an invoice from a signed estimate (v1.59.0).
-    if (!coModeRef.current && (a.action === "remove_item" || a.action === "update_item") && lockedLine((a.itemIndex || 0) - 1)) {
-      showLockNote((a.itemIndex || 0) - 1);
       return true;
     }
     switch (a.action) {
@@ -5109,9 +5077,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.invoices, isEstimate, form.id, form.convertedToId, form.downPaymentInvoiceId]);
 
-  // v1.59.0: an invoice that came from a signed estimate. The estimate's lines
-  // (and approved change orders) are locked on it, and every new line becomes
-  // a change order, so the estimate and invoice never drift apart.
+  // v1.59.0: an invoice that came from a signed estimate. Since v1.64.0 its
+  // lines are only labelled (from estimate / change order / added after
+  // signing); Jake edits them freely and sends a change order when he wants one.
   // v1.60.3: an estimate opened with a conversion link it only copied from the
   // estimate it was duplicated from: drop the link (and the copied signature),
   // so it converts as its own job. Saved straight away.
@@ -5146,15 +5114,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       return (it.name || it.desc || Number(it.price)) ? "loose" : "blank";
     });
   }, [lockedEst, form.items]);
-  const [lockNote, setLockNote] = useState("");
-  const lockedLine = (i) => !!lineKinds && (lineKinds[i] === "estimate" || lineKinds[i] === "co");
-  const showLockNote = (i) => {
-    setLockNote(lineKinds?.[i] === "co"
-      ? "This line came from an approved change order, so it is locked."
-      : `This line is on the signed estimate ${lockedEst?.id || ""}, so it is locked. New or changed work goes in a change order.`);
-    setTimeout(() => setLockNote(""), 5000);
-  };
-
   // Flush any pending auto-save before swapping the form over, otherwise the
   // in-flight edit would be written against the doc we just navigated away from.
   const handleOpenLinked = async () => {
@@ -5501,11 +5460,6 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             if (coModeRef.current) {
               coSetItems(xs => [...xs.filter(coMeaningful), { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }]);
               setShowPriceBook(false);
-              return;
-            }
-            if (lockedEst) {
-              setShowPriceBook(false);
-              addToChangeOrder([{ ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }]);
               return;
             }
             const add = (f) => ({ ...f, items: [...f.items, { ...blankItem, name: item.name, desc: item.desc || "", price: item.price, taxable: item.taxable ?? true }] });
@@ -6047,7 +6001,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     aiInputRef.current?.focus();
                   }} style={{ ...S.btn(showAI ? "primary" : "ghost"), fontSize: 12, padding: "6px 10px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}><Icon name="ai" size={13} color={showAI ? "#fff" : "#444"} /> AI</button>
                   <button onClick={() => { setShowPriceBook(!showPriceBook); setShowAI(false); }} style={{ ...S.btn(showPriceBook ? "navy" : "ghost"), fontSize: 12, padding: "6px 12px", flexShrink: 0 }}>Price Book</button>
-                  <button onClick={() => (coMode ? coSetItems(xs => [...xs, { ...blankItem }]) : lockedEst ? addToChangeOrder([{ ...blankItem }], { editNew: true }) : addItem())} aria-label={coMode || lockedEst ? "Add change order line" : "Add line item"} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
+                  <button onClick={() => (coMode ? coSetItems(xs => [...xs, { ...blankItem }]) : addItem())} aria-label={coMode ? "Add change order line" : "Add line item"} style={{ ...S.btn("primary"), padding: "6px 10px", flexShrink: 0 }}><Icon name="plus" size={16} color="#fff" /></button>
                 </>}
               </div>
             </div>
@@ -6101,21 +6055,13 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             ))}</div>}
             {coMode && <div aria-hidden="true" style={{ height: 84 }} />}
 
-            {/* v1.59.0: an invoice from a signed estimate. */}
+            {/* An invoice from a signed estimate: lines are labelled by where they
+                came from, but all of them edit freely (v1.64.0). */}
             {!coMode && lockedEst && (
               <div data-locked-note style={{ fontSize: 12, color: "#6677aa", margin: "0 2px 8px", lineHeight: 1.4 }}>
-                Lines from the signed estimate {lockedEst.id} are locked. Anything you add (+, Price Book or AI) becomes a change order you can send for approval or add without it.
+                Labels show what was on the signed estimate {lockedEst.id}. Edit, delete or add lines freely; use + Change order below when you want the customer to approve in writing.
               </div>
             )}
-            {!coMode && lineKinds && lineKinds.filter(k => k === "loose").length > 0 && (
-              <div data-loose-banner style={{ background: "#fff4ec", border: `1.5px solid ${ORANGE}`, borderRadius: 10, padding: "9px 12px", marginBottom: 10 }}>
-                <div style={{ fontSize: 13, color: "#1a1a1a", lineHeight: 1.4 }}>
-                  {(() => { const n = lineKinds.filter(k => k === "loose").length; return `${n} line${n === 1 ? " was" : "s were"} added after the estimate was signed and ${n === 1 ? "is" : "are"} not on a change order, so the estimate does not show ${n === 1 ? "it" : "them"}.`; })()}
-                </div>
-                <button onClick={moveLooseToChangeOrder} style={{ ...S.btn("primary"), fontSize: 13, padding: "8px 12px", marginTop: 8 }}>Make it a change order</button>
-              </div>
-            )}
-            {!coMode && lockNote && <div role="status" style={{ fontSize: 12, color: "#a16f1a", background: "#fff8ef", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>{lockNote}</div>}
             {/* Item rows */}
             {!coMode && form.items.map((item, i) => {
               const descPreview = item.desc?.replace(/\n/g, " · ") || "";
@@ -6128,9 +6074,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   reordering={reordering}
                   dragIdx={dragIdx}
                   setDragIdx={setDragIdx}
-                  setEditingItem={lockedLine(i) ? showLockNote : setEditingItem}
+                  setEditingItem={setEditingItem}
                   moveItem={moveItem}
-                  removeItem={lockedLine(i) ? showLockNote : removeItem}
+                  removeItem={removeItem}
                   descPreview={descPreview}
                   itemsLength={form.items.length}
                 />
@@ -13370,16 +13316,6 @@ export default function App() {
     }
     if (parsed.action === "add_items") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
-      // v1.59.4: an invoice from a signed estimate takes new lines only
-      // through a change order (the draft in progress, else a new one).
-      const est = inv ? signedEstimateFor(inv, dataRef.current?.invoices || data.invoices) : null;
-      if (inv && est) {
-        const items = (parsed.items || []).map(it => ({ name: it.name || it.desc || "", desc: it.name ? it.desc || "" : "", qty: it.qty ?? 1, price: it.price ?? 0, taxable: it.taxable !== false }));
-        const draft = (await listChangeOrders(inv.id)).filter(c => c.status === "draft").pop() || null;
-        const row = await saveChangeOrder({ row: draft, invoiceId: inv.id, items: [...(draft?.items || []), ...items], note: draft?.note, photos: draft?.photos });
-        announceChangeOrders(inv.id);
-        return { ...inv, changeOrderDraft: `${inv.id}-CO${row.seq}` };
-      }
       if (inv) {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
         setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
