@@ -44,6 +44,16 @@
 - `client.name` is still set automatically from first + last under the hood, since invoices match clients by name string and client creation depends on it being non-empty — nothing downstream changes.
 - Existing clients that predate the first/last split (name only, no first name) are grandfathered: editing one to change something else doesn't force a first-name backfill first.
 
+## v1.60.3 — 2026-11-09
+
+**Fix: a duplicated estimate linked back to the original's invoice.** EST1202, a copy of EST1200, opened INV1200 instead of converting.
+
+- **Cause.** Duplicate copied the original's conversion link (and, because it cleared the wrong field names, the customer's signature), so the copy looked already converted.
+- **Now:** a duplicate starts as a fresh draft: no conversion link, no signature, no decline, no completion date.
+- **Copies made before this fix repair themselves:** opening one clears the link (and a signature copied with it) and sets it back to Draft, so it converts as its own job. EST1202 is fixed the first time you open it.
+- An invoice claimed by both an estimate and a stale copy now always goes with its own-numbered estimate (INV1200 with EST1200), for the locked lines and change orders.
+- Test: `test/e2e/estimate-co.mjs` (scenario `dup`).
+
 ## v1.60.2 — 2026-11-09
 
 **Change orders: get the customer's signature in person.** Review & send on a change order now offers three ways to approve it: send it (email and/or text), **Get signature now (in person)**, or Add to invoice without approval.

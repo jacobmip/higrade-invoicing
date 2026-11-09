@@ -16,7 +16,7 @@ import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
 import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
-import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals, jobInvoiceId, ChangeOrderAddenda, CO_MARK_RE, coInvoiceLines, approveChangeOrderInApp, announceChangeOrders, signedEstimateFor } from './ChangeOrders.jsx';
+import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals, jobInvoiceId, ChangeOrderAddenda, CO_MARK_RE, coInvoiceLines, approveChangeOrderInApp, announceChangeOrders, signedEstimateFor, staleConversionLink } from './ChangeOrders.jsx';
 import SendDraftCard, { ChangeOrderSendSheet } from './SendDraftCard.jsx';
 import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
@@ -5112,6 +5112,25 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // v1.59.0: an invoice that came from a signed estimate. The estimate's lines
   // (and approved change orders) are locked on it, and every new line becomes
   // a change order, so the estimate and invoice never drift apart.
+  // v1.60.3: an estimate opened with a conversion link it only copied from the
+  // estimate it was duplicated from: drop the link (and the copied signature),
+  // so it converts as its own job. Saved straight away.
+  const healedLinkRef = useRef(false);
+  useEffect(() => {
+    if (healedLinkRef.current || !isEstimate || lockedView || !form.convertedToId) return;
+    const all = data?.invoices || [];
+    if (!staleConversionLink({ ...form, id: form.id || autoSavedId }, all)) return;
+    healedLinkRef.current = true;
+    const src = all.find(d => d.id === form.createdFrom);
+    const copiedSig = !!(src && form.signedAt && src.signedAt === form.signedAt);
+    const fixed = { ...formRef.current, convertedToId: null, downPaymentInvoiceId: formRef.current.downPaymentInvoiceId === form.convertedToId ? null : formRef.current.downPaymentInvoiceId,
+      status: ["converted", "approved"].includes(formRef.current.status) ? "draft" : formRef.current.status,
+      ...(copiedSig ? { signatureData: null, signedAt: null } : {}) };
+    console.warn(`[link] ${fixed.id} carried ${form.convertedToId}'s link from a duplicate; cleared.`);
+    setForm(fixed);
+    onPartialSave?.(fixed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.convertedToId, data?.invoices]);
   const lockedEst = (!isEstimate && isAdmin && !lockedView) ? signedEstimateFor({ ...form, id: form.id || autoSavedId }, data?.invoices || []) : null;
   // Per invoice line: "estimate" (on the signed estimate), "co" (added by an
   // approved change order), "loose" (added straight to the invoice since), "blank".
@@ -13841,8 +13860,20 @@ export default function App() {
       year: new Date().getFullYear(),
       payments: [],
       viewToken: undefined,
-      signature: undefined,
-      signatureDate: undefined,
+      // A duplicate is a new, unsigned, unconverted document (v1.60.3). It used
+      // to keep the source's conversion link (so EST1202, a copy of EST1200,
+      // jumped to INV1200 instead of converting) and its customer signature:
+      // the fields are signatureData / signedAt, not signature / signatureDate.
+      convertedToId: null,
+      downPaymentInvoiceId: null,
+      signatureData: null,
+      signedAt: null,
+      declinedAt: null,
+      declinedReason: null,
+      jobCompletedOn: null,
+      createdAt: null,
+      createdBy: null,
+      updatedAt: null,
       // A duplicate starts unscheduled. Carrying the schedule over also carried
       // the Google event ids, so both documents pointed at the same events and
       // unscheduling either one deleted the other's appointments.

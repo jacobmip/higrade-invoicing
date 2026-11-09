@@ -698,6 +698,7 @@ Rules:
 export function jobInvoiceId(doc, docs = []) {
   if (!doc) return null;
   if (doc.type !== 'estimate') return doc.id || null;
+  if (staleConversionLink(doc, docs)) return null;
   const isInv = (id) => !!id && docs.some(d => d.id === id && d.type !== 'estimate' && !d.deletedAt);
   if (isInv(doc.convertedToId)) return doc.convertedToId;
   const n = parseInt((/^EST(\d+)$/.exec(doc.id || '') || [])[1], 10);
@@ -848,12 +849,32 @@ export async function approveChangeOrderInApp(row, { signature, name } = {}) {
 // the header AI, so no path adds a line straight to the invoice.
 export function signedEstimateFor(inv, docs = []) {
   if (!inv || inv.type === 'estimate' || !inv.id) return null;
-  const live = docs.filter(d => d.type === 'estimate' && !d.deletedAt);
-  let est = live.find(d => d.convertedToId === inv.id || d.downPaymentInvoiceId === inv.id) || null;
+  const live = docs.filter(d => d.type === 'estimate' && !d.deletedAt && !staleConversionLink(d, docs));
+  // The same-number estimate first: a copied link must never win (v1.60.3).
+  const claims = live.filter(d => d.convertedToId === inv.id || d.downPaymentInvoiceId === inv.id);
+  let est = claims.find(d => numOf(d.id) === numOf(inv.id)) || claims[0] || null;
   if (!est) {
     const n = parseInt((/^INV(\d+)$/.exec(inv.id) || [])[1], 10);
     if (Number.isFinite(n) && n >= 1000) est = live.find(d => d.id === 'EST' + String(n).padStart(4, '0') && (!d.convertedToId || d.convertedToId === inv.id)) || null;
   }
   if (!est) return null;
   return (est.convertedToId === inv.id || ['approved', 'converted'].includes(est.status) || est.signedAt) ? est : null;
+}
+
+// v1.60.3: a conversion link an estimate only has because it was duplicated
+// from a converted one (duplicates copied converted_to_id until v1.60.3), so
+// EST1202, a copy of EST1200, opened INV1200 instead of converting. Stale when
+// the estimate was duplicated from a document with the same link, or when
+// another estimate whose number matches the invoice claims that invoice while
+// this one's number does not.
+const numOf = (id) => parseInt((/^(?:EST|INV)(\d+)$/.exec(id || '') || [])[1], 10);
+export function staleConversionLink(est, docs = []) {
+  if (!est || est.type !== 'estimate' || !est.convertedToId) return false;
+  if (est.createdVia === 'app_duplicate' && est.createdFrom) {
+    const src = docs.find(d => d.id === est.createdFrom);
+    if (src && src.convertedToId === est.convertedToId) return true;
+  }
+  const invNum = numOf(est.convertedToId);
+  if (!Number.isFinite(invNum) || invNum < 1000 || numOf(est.id) === invNum) return false;
+  return docs.some(d => d.id !== est.id && d.type === 'estimate' && !d.deletedAt && d.convertedToId === est.convertedToId && numOf(d.id) === invNum);
 }

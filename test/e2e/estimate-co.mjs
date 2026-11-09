@@ -43,6 +43,11 @@ if (SCENARIO === 'estsent') {
   db.invoice_items.push({ id:'g1', invoice_id:'EST1302', name:'Toilet rebuild', description:'', qty:1, price:220, unit:'ea', taxable:true, sort_order:0 });
   db.invoice_events.push({ id:'ev2', invoice_id:'EST1302', kind:'sent', created_at:'2026-11-08T20:00:00Z' });
 }
+// v1.60.3: EST1310 is a copy of EST1300 made before the duplicate fix: it kept EST1300's link and signature.
+if (SCENARIO === 'dup') {
+  db.invoices.push({ id:'EST1310', type:'estimate', created_via:'app_duplicate', created_from:'EST1300', client_name:'Test Client', date:'2026-11-09', status:'converted', converted_to_id:'INV1300', signed_at:'2026-11-03T20:00:00Z', signature_data:'data:image/png;base64,AAA', owner_id:JAKE, assigned_tech_id:JAKE, tax:4.712, discount:0, notes:'', view_token:'tH', visits:null, updated_at: now, created_at: now, deleted_at:null });
+  db.invoice_items.push({ id:'h1', invoice_id:'EST1310', name:'Water heater', description:'40 gal', qty:1, price:1800, unit:'ea', taxable:true, sort_order:0 });
+}
 if (SCENARIO === 'lock') db.invoice_items.push({ id:'i3', invoice_id:'INV1300', name:'Loose fix', description:'added after signing', qty:1, price:80, unit:'ea', taxable:true, sort_order:2 });
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
@@ -132,7 +137,7 @@ await page.route('**/*', async route => {
   if (url.pathname === '/rest/v1/rpc/save_invoice_with_items') {
     const body = req.postDataJSON(); const inv = body.inv;
     log('RPC save', inv.id, 'status=', inv.status, 'converted_to_id=', inv.converted_to_id, 'payments=', (body.payments||[]).length);
-    saves.push({ at: Date.now()-t0, id: inv.id, status: inv.status, items: (body.items||[]).map(i => i.name + '|' + i.description) });
+    saves.push({ at: Date.now()-t0, id: inv.id, status: inv.status, conv: inv.converted_to_id, signed: inv.signed_at || null, items: (body.items||[]).map(i => i.name + '|' + i.description) });
     await new Promise(r => setTimeout(r, saveDelayMs));
     const row = db.invoices.find(r => r.id === inv.id);
     const upd = new Date().toISOString();
@@ -360,6 +365,22 @@ if (SCENARIO === 'sign') {
   const last = saves.filter(x => x.id === 'INV1300').pop();
   check('its line is on the invoice with the change order mark', last && last.items.some(i => /^Angle stop replacement\|Change order #\d+, approved /.test(i)), JSON.stringify(last && last.items));
   check('no confirm "without approval" was asked', !dialogs.some(d => /without the customer/.test(d)), JSON.stringify(dialogs));
+}
+if (SCENARIO === 'dup') {
+  // ── v1.60.3: a duplicated estimate converts as its own job ──
+  await open('EST1310'); await page.waitForTimeout(1500);
+  const healed = saves.filter(x => x.id === 'EST1310').pop();
+  check('opening the old copy clears the copied link and signature', healed && healed.conv == null && healed.status === 'draft' && !healed.signed, JSON.stringify(healed && { conv: healed.conv, st: healed.status, signed: healed.signed }));
+  const btns = await page.evaluate(() => [...document.querySelectorAll('button')].map(b => b.innerText.replace(/\s+/g, ' ').trim()).filter(t => /INV1300|Invoice/.test(t)));
+  check('its button converts instead of opening INV1300', !btns.some(t => /INV1300/.test(t)), JSON.stringify(btns));
+  await page.getByRole('button', { name: /^Done$/ }).first().click({ force: true }).catch(() => {}); await page.waitForTimeout(1500);
+  // A fresh duplicate of the converted EST1300.
+  await page.getByRole('button', { name: /^Estimates/ }).first().click().catch(() => {}); await page.waitForTimeout(800);
+  const card = page.getByText('EST1300').first(); const bb = await card.boundingBox();
+  await page.mouse.move(bb.x + 20, bb.y + 5); await page.mouse.down(); await page.waitForTimeout(900); await page.mouse.up(); await page.waitForTimeout(600);
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click(); await page.waitForTimeout(3000);
+  const dup = saves.find(x => x.id.startsWith('EST') && !['EST1300', 'EST1301', 'EST1310'].includes(x.id));
+  check('a new duplicate starts unconverted and unsigned', dup && dup.conv == null && dup.status === 'draft' && !dup.signed, JSON.stringify(dup && { id: dup.id, conv: dup.conv, st: dup.status, signed: dup.signed }));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();
