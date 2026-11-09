@@ -217,7 +217,7 @@ Nothing below is duplicated in `CLAUDE.md`; see hard rule 14.
 - **`NATIVE.md`**, **`DEV.md`**, **`PUSH_SETUP.md`** — native builds, local dev, APNs.
 - **`local-mirror/README.md`** — optional local Postgres replica.
 
-## Database schema (current through migration 113, which is written but NOT yet applied; migration 074 was a concurrent session's — see its own commit)
+## Database schema (current through migration 113; migration 074 was a concurrent session's — see its own commit)
 Most tables carry `owner_id uuid references auth.users(id)` with RLS scoped to
 `owner_id = auth.uid() OR is_admin()`.
 
@@ -429,7 +429,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **113** — **applied and verified 2026-11-08.** `lookup_client_by_phone` now also returns `appointments`: the caller's next 5 visits from `invoices.visits` (today in Hawaii onward, non-deleted invoices and estimates, with start, minutes, what, on_calendar, document). Everything else in the return object is unchanged. Added after Lisa could not tell Javier De la Cuba his 9am visit existed. Verified read-only by replaying the query as of 2026-11-06 (returned INV1084, skipped deleted EST1058). Lisa's prompt got an "[Existing appointments]" section the same day. Next migration is 114.
 
-- **113** — **written 2026-11-09, NOT applied.** `invoices.created_via` / `created_from` / `created_by` and the `aa_invoices_stamp_origin` trigger, see the schema entry. Backfills `lisa_*` from `source`/`lead_channel` and `app_conversion` from conversion links (direction by `created_at`); everything else stays null. Tested on local Postgres 16: backfill, trigger for service-role / logged-in / Lisa web / writer-supplied inserts, re-run safe. Hermes prompt: `docs/hermes-migration-113.md`.
+- **113** — **applied and verified 2026-11-09.** `invoices.created_via` / `created_from` / `created_by` and the `aa_invoices_stamp_origin` BEFORE INSERT trigger (`stamp_document_origin()`), see the schema entry. Backfills `lisa_*` from `source`/`lead_channel` and `app_conversion` from conversion links. Dry-run clean; columns confirmed (text/uuid); service-role insert → `outside_app`, Jake insert → `app` + correct uuid, both rolled back. Counts: 840 null (pre-tracking), 166 `app_conversion`, 26 `lisa_phone`, 5 `lisa_web`, 2 `lisa_sms`. *(Note: two separate changes share the number 113 in this file — the lookup_client_by_phone appointments entry above and this schema migration. Next migration is 114.)*
 
 Next migration is `114_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
