@@ -273,8 +273,9 @@ function hiDay(v) {
 // started falls back to the first scheduled visit until it is set.
 function docDates(form) {
   if (form.type === "estimate") return [["Date", form.date], ["Sent", hiDay(form.sentAt)], ["Approved", hiDay(form.signedAt)]];
-  const firstVisit = (form.visits || []).map(v => String(v.start || "").slice(0, 10)).filter(Boolean).sort()[0] || null;
-  return [["Date", form.date], ["Due", form.dueDate], ["Job started", form.jobStartedOn || firstVisit], ["Job completed", form.jobCompletedOn]];
+  // v1.59.1: the invoice date IS the job start, and the due date follows job
+  // completed (or completed + 30 for Net 30), so Due shows only when it differs.
+  return [["Job started", form.date], ["Job completed", form.jobCompletedOn], ["Due", form.jobCompletedOn && form.dueDate === form.jobCompletedOn ? null : form.dueDate]];
 }
 
 // Fuzzy client lookup for natural-language AI scheduling ("Karen" → "Karen
@@ -4180,7 +4181,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // it is still blank.
   const afterFirstSend = () => {
     if (isEstimateDoc(formRef.current)) { setEstSentAt(v => v || new Date().toISOString()); return; }
-    if (!formRef.current.jobCompletedOn) setJobDate("completedOn", today());
+    if (!formRef.current.jobCompletedOn) setCompleted(today());
   };
   // Job dates on an invoice (migration 112). Saved straight away, on their own.
   const [jobDateErr, setJobDateErr] = useState("");
@@ -4190,6 +4191,29 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     if (!id) return;
     try { await db.setInvoiceJobDates(id, { [key]: value || null }); setJobDateErr(""); }
     catch (e) { setJobDateErr(/job_(started|completed)_on/.test(e?.message || "") ? "Job dates need database update 112 before they save." : "Job date not saved: " + (e?.message || e)); }
+  };
+  // v1.59.1: three invoice dates, not four. Job started is the invoice date;
+  // the due date follows Job completed (completed + 30 on Net 30) until Jake
+  // types his own.
+  const addDays = (d, n) => { const x = new Date(d + "T00:00:00"); x.setDate(x.getDate() + n); return x.toLocaleDateString("en-CA"); };
+  const dueFor = (base, status) => (base ? (status === "net30" ? addDays(base, 30) : base) : "");
+  const dueBase = (f) => f.jobCompletedOn || f.date;
+  const dueFollows = (f) => !f.dueDate || f.dueDate === f.date || f.dueDate === dueBase(f) || f.dueDate === dueFor(dueBase(f), f.status) || f.dueDate === dueFor(f.date, f.status);
+  const setCompleted = (v) => {
+    const f = formRef.current;
+    if (v && dueFollows(f)) setForm(x => ({ ...x, jobCompletedOn: v, dueDate: dueFor(v, x.status) }));
+    setJobDate("completedOn", v);
+  };
+  // Sending an invoice means the work is done: stamp Job completed (if blank)
+  // and the due date that follows it, before the email/text is built.
+  const stampCompletionOnSend = () => {
+    const f = formRef.current;
+    if (isEstimateDoc(f) || !["outstanding", "partial", "net30"].includes(f.status)) return;
+    const done = f.jobCompletedOn || today();
+    const next = { ...f, jobCompletedOn: done, dueDate: dueFollows(f) ? dueFor(done, f.status) : f.dueDate };
+    setForm(next);
+    onPartialSave?.(next);
+    if (!f.jobCompletedOn) setJobDate("completedOn", done);
   };
   const linkedKey = linkedIds.join(',');
   const photoIds = () => [form.id || autoSavedId, ...linkedIds].filter(Boolean);
@@ -4821,7 +4845,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // from Lisa's Twilio number through /api/sms-inbound, which logs it to
   // client_messages. We mint/reuse the view token first so the link works.
   const sendViaText = async (kind) => {
-    autoUpdateDueDate(form, setForm, onPartialSave);
+    stampCompletionOnSend();
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}) };
     const phone = (client?.phone || "").replace(/[^0-9+]/g, "");
     if (!phone) {
@@ -4886,7 +4910,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
   // customer signs (0 = none). We persist it on the estimate row before
   // sending so submit-signature.js can read it back when the customer signs.
   const handleConfirmedSend = async ({ name, toAddresses = [], ccAdmin = true, message, downPaymentPct }) => {
-    autoUpdateDueDate(form, setForm, onPartialSave);
+    if (isEstimate) autoUpdateDueDate(form, setForm, onPartialSave); else stampCompletionOnSend();
     const primaryEmail = toAddresses[0] || "";
     const client = { ...(selectedClient || {}), ...(effectiveClientInfo || {}), email: primaryEmail, name };
     setSending(true);
@@ -5750,29 +5774,40 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           {/* Dates — estimates have no due date by default. Show a single full-width */}
           {/* date picker for estimates and the usual two-column grid for invoices. */}
           <div style={{ padding: "12px 16px 0", display: "grid", gridTemplateColumns: isEstimate ? "1fr" : "1fr 1fr", gap: 10 }}>
-            <div style={{ minWidth: 0 }}><label style={S.label}>{isEstimate ? "Estimate Date" : "Invoice Date"}</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>
-            {!isEstimate && (
-              <div style={{ minWidth: 0 }}><label style={S.label}>Due Date</label><input type="date" style={S.input} value={form.dueDate} onChange={e => setField("dueDate", e.target.value)} /></div>
-            )}
-            {/* v1.58.0: the estimate marks when it was sent and approved; the */}
-            {/* invoice marks when the job started and was completed. */}
+            {isEstimate && <div style={{ minWidth: 0 }}><label style={S.label}>Estimate Date</label><input type="date" style={S.input} value={form.date} onChange={e => setField("date", e.target.value)} /></div>}
+            {/* v1.58.0: the estimate marks when it was sent and approved. */}
             {isEstimate && (estSentAt || form.signedAt) && (
               <div data-est-dates style={{ fontSize: 12, color: "#6677aa", marginTop: -2 }}>
                 {[estSentAt && `Sent ${fmtDate(hiDay(estSentAt))}`, form.signedAt && `Approved ${fmtDate(hiDay(form.signedAt))}`].filter(Boolean).join(" · ")}
               </div>
             )}
+            {/* v1.59.1: an invoice has three dates. Job Started is the invoice */}
+            {/* date; the due date follows Job Completed unless Jake changes it. */}
             {!isEstimate && (
               <div style={{ minWidth: 0 }}>
                 <label style={S.label}>Job Started</label>
-                <input aria-label="Job started" type="date" style={S.input} value={form.jobStartedOn || ""} onChange={e => setJobDate("startedOn", e.target.value)} />
-                {!form.jobStartedOn && docDates(form)[2][1] && <div style={{ fontSize: 11, color: "#999", marginTop: 3 }}>Blank shows the first visit, {fmtDate(docDates(form)[2][1])}</div>}
+                <input aria-label="Job started" type="date" style={S.input} value={form.date || ""} onChange={e => {
+                  const v = e.target.value;
+                  setForm(f => ({ ...f, date: v, ...(!f.jobCompletedOn && dueFollows(f) ? { dueDate: dueFor(v, f.status) } : {}) }));
+                }} />
               </div>
             )}
             {!isEstimate && (
               <div style={{ minWidth: 0 }}>
                 <label style={S.label}>Job Completed</label>
-                <input aria-label="Job completed" type="date" style={S.input} value={form.jobCompletedOn || ""} onChange={e => setJobDate("completedOn", e.target.value)} />
-                {!form.jobCompletedOn && <button type="button" onClick={() => setJobDate("completedOn", today())} style={{ background: "none", border: "none", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "4px 0 0", cursor: "pointer" }}>Done today</button>}
+                <input aria-label="Job completed" type="date" style={S.input} value={form.jobCompletedOn || ""} onChange={e => setCompleted(e.target.value)} />
+                {!form.jobCompletedOn && <button type="button" onClick={() => setCompleted(today())} style={{ background: "none", border: "none", color: ORANGE, fontSize: 12, fontWeight: 700, padding: "4px 0 0", cursor: "pointer" }}>Done today</button>}
+              </div>
+            )}
+            {!isEstimate && (
+              <div style={{ minWidth: 0, gridColumn: "1 / -1" }}>
+                <label style={S.label}>Due Date</label>
+                <input aria-label="Due date" type="date" style={S.input} value={form.dueDate || ""} onChange={e => setField("dueDate", e.target.value)} />
+                <div data-due-hint style={{ fontSize: 11.5, color: "#888", marginTop: 3 }}>
+                  {form.dueDate && form.dueDate === dueFor(dueBase(form), form.status)
+                    ? (form.status === "net30" ? `Net 30: 30 days after the job ${form.jobCompletedOn ? "was completed" : "started"}.` : form.jobCompletedOn ? "Due on completion (follows Job Completed)." : "Due on completion: follows Job Completed once it is set.")
+                    : <>Custom due date. <button type="button" onClick={() => setField("dueDate", dueFor(dueBase(form), form.status))} style={{ background: "none", border: "none", color: ORANGE, fontSize: 11.5, fontWeight: 700, padding: 0, cursor: "pointer" }}>{form.status === "net30" ? "Use Net 30" : "Use completion date"}</button></>}
+                </div>
               </div>
             )}
             {!isEstimate && jobDateErr && <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "#c0392b" }}>{jobDateErr}</div>}
@@ -6172,8 +6207,12 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   // Selecting Net 30 also bumps the due date to invoice date + 30 days.
                   // We only auto-set when transitioning INTO net30 so users who tweaked
                   // the due date manually after selecting net30 don't get clobbered.
+                  if (s !== "net30" && form.status === "net30" && dueFollows(form)) {
+                    setForm(f => ({ ...f, status: s, dueDate: dueFor(dueBase(f), s) }));
+                    return;
+                  }
                   if (s === "net30" && form.status !== "net30") {
-                    const base = form.date ? new Date(form.date + "T00:00:00") : new Date();
+                    const base = dueBase(form) ? new Date(dueBase(form) + "T00:00:00") : new Date();
                     if (!isNaN(base)) {
                       base.setDate(base.getDate() + 30);
                       const yyyy = base.getFullYear();

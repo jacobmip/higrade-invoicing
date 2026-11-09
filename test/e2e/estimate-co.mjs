@@ -193,17 +193,33 @@ if (SCENARIO === 'send' || SCENARIO === 'invoice' || SCENARIO === 'nomigration')
   // ── The invoice: job dates ──
   await open('INV1300');
   let tx = await text();
-  check('invoice: job date fields, start falls back to the first visit', await page.getByLabel('Job started').count() === 1 && /Blank shows the first visit, 11\/05\/2026/.test(tx));
+  const val = (l) => page.getByLabel(l).inputValue();
+  const hint = () => page.locator('[data-due-hint]').innerText();
+  check('invoice: Job started is the invoice date; due follows', (await val('Job started')) === '2026-11-03' && (await page.getByLabel('Job completed').count()) === 1 && /Due on completion/.test(await hint()), await hint());
   await page.getByLabel('Job completed').fill('2026-11-08'); await page.waitForTimeout(800);
+  check('invoice: due date follows Job completed', (await val('Due date')) === '2026-11-08' && /follows Job Completed/.test(await hint()), (await val('Due date')) + ' ' + await hint());
   const p = patches.find(x => 'job_completed_on' in x.b);
   check('invoice: Job completed saved on its own', p && p.b.job_completed_on === '2026-11-08' && /INV1300/.test(p.q), JSON.stringify(p));
+  if (SCENARIO !== 'nomigration') {
+    await page.getByRole('button', { name: 'Net 30', exact: true }).click(); await page.waitForTimeout(500);
+    check('invoice: Net 30 = 30 days after completion', (await val('Due date')) === '2026-12-08' && /Net 30/.test(await hint()), await val('Due date'));
+    await page.getByRole('button', { name: 'Outstanding', exact: true }).click(); await page.waitForTimeout(500);
+    check('invoice: back to Outstanding, due on completion again', (await val('Due date')) === '2026-11-08', await val('Due date'));
+    await page.getByLabel('Due date').fill('2026-11-20'); await page.waitForTimeout(400);
+    check('invoice: a typed due date stays custom', /Custom due date/.test(await hint()));
+    await page.getByLabel('Job completed').fill('2026-11-09'); await page.waitForTimeout(600);
+    check('invoice: custom due date not moved by Job completed', (await val('Due date')) === '2026-11-20');
+    await page.getByRole('button', { name: 'Use completion date' }).click(); await page.waitForTimeout(400);
+    check('invoice: Use completion date puts it back', (await val('Due date')) === '2026-11-09');
+    await page.getByLabel('Job completed').fill('2026-11-08'); await page.waitForTimeout(800);
+  }
   if (SCENARIO === 'nomigration') {
     tx = await text();
     check('before migration 112: says so, nothing breaks', /Job dates need database update 112/.test(tx));
   } else {
     await tab('Preview');
     tx = await text();
-    check('invoice preview: Job started (first visit) and Job completed', /JOB STARTED\s*11\/05\/2026/i.test(tx) && /JOB COMPLETED\s*11\/08\/2026/i.test(tx));
+    check('invoice preview: Job started and Job completed, no separate Due when equal', /JOB STARTED\s*11\/03\/2026/i.test(tx) && /JOB COMPLETED\s*11\/08\/2026/i.test(tx) && !/\bDUE\s*11\/08\/2026/i.test(tx.replace(/BALANCE DUE|TOTAL DUE/g, '')), (tx.match(/JOB STARTED[\s\S]{0,80}/) || [''])[0]);
     check('invoice preview: no estimate add-on section', !/Original estimate/.test(tx));
   }
 }

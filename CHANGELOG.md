@@ -1,5 +1,15 @@
 # HI Grade Invoicing — Changelog
 
+## v1.59.1 — 2026-11-09
+
+**Invoice dates: three, not four.** The invoice date and Job started were the same thing, and so were Job completed and the due date.
+
+- **Job Started** is now the invoice date (one field).
+- **Job Completed**: set it, tap Done today, or it fills in the first time the invoice is sent.
+- **Due Date follows Job Completed** (due on completion). Pick **Net 30** and it moves to 30 days after completion; switch back and it follows completion again. Type your own due date and it stays put ("Custom due date"), with a one-tap **Use completion date** to go back.
+- Preview, PDF and the customer link show Job started and Job completed, and Due only when it differs from completion (Net 30 or custom).
+- The separate `job_started_on` column from migration 112 is no longer used; the invoice date holds the start.
+
 ## v1.59.0 — 2026-11-09
 
 **An invoice from a signed estimate: the estimate's lines are locked, and anything added becomes a change order.** So the estimate and invoice can no longer drift apart (the INV1199 case).

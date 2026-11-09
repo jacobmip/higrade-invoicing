@@ -59,8 +59,7 @@ function hiDay(v) {
 // Mirrors docDates() in App.jsx.
 function pdfDates(form) {
   if (form.type === "estimate") return [["Date", form.date], ["Sent", hiDay(form.sentAt)], ["Approved", hiDay(form.signedAt)]];
-  const firstVisit = (form.visits || []).map(v => String(v.start || "").slice(0, 10)).filter(Boolean).sort()[0] || null;
-  return [["Date", form.date], ["Due", form.dueDate], ["Job started", form.jobStartedOn || firstVisit], ["Job completed", form.jobCompletedOn]];
+  return [["Job started", form.date], ["Job completed", form.jobCompletedOn], ["Due", form.jobCompletedOn && form.dueDate === form.jobCompletedOn ? null : form.dueDate]];
 }
 function calcItemTotal(item) {
   const qty = Number(item.qty) || 0;
