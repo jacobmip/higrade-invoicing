@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.68.2 — 2026-11-09
+
+**Fix: a client's phone number could look like it had vanished when editing.** Diane M's number appeared blank in the client edit form; Jake had to retype it.
+
+- **Cause:** phone numbers live in one of two columns, `mobile` or `phone`, depending on how the client was created (Lisa/lead intake writes `mobile`; a manual quick-add writes `phone`). Every other part of the app falls back from one to the other when displaying a number, but the client edit form only ever showed and edited `phone` — so a client whose number lived only in `mobile` (215 of them, checked 2026-11-09) looked empty on edit even though the number was never touched.
+- **Fix:** both places that open the client editor (`ClientsTab.startEdit`, the invoice's inline "Edit Client") now seed the Phone box with `phone || mobile`, matching the fallback used everywhere else. No data was lost or changed; this only fixes what the form shows. Saving now also converges the two columns for any record touched this way.
+
 ## v1.68.1 — 2026-11-09
 
 - **Fix: Lisa's bookings no longer double up on the calendar.** Each Lisa booking (Yelp, text, phone) sent two calendar pushes at once, and both got through before Google's answer came back, so the job showed twice (Dan, EST1204). Migration 119: `push_invoice_to_calendar()` now claims the job first and skips a second push while one is in flight; the insert trigger fires at commit, so the event carries the real job title and scope instead of "Plumbing". App-scheduled visits were not affected.
