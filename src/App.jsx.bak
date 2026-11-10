@@ -15,7 +15,7 @@ import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
 import * as backup from './backup.js';
 import JobPhotos, { fetchInvoicePhotos } from './JobPhotos.jsx';
-import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual } from './docLinks.js';
+import { linkedDocIds, syncPartner, sharedPatch, syncPatch, syncEqual, itemSyncTarget, applyItemDiff, sameItems } from './docLinks.js';
 import { ChangeOrdersCard, ChangeOrderPage, mergeChangeOrderLines, listChangeOrders, changeOrdersPromptBlock, runChangeOrderAction, saveChangeOrder, coTotals, jobInvoiceId, ChangeOrderAddenda, CO_MARK_RE, coInvoiceLines, approveChangeOrderInApp, announceChangeOrders, signedEstimateFor, staleConversionLink } from './ChangeOrders.jsx';
 import SendDraftCard, { ChangeOrderSendSheet } from './SendDraftCard.jsx';
 import OnMyWay from './OnMyWay.jsx';
@@ -4621,6 +4621,27 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     if (editNew && extra.length) setCoEditing(base.length + extra.length - 1);
     afterPaint(() => scrollUnderHeader(aiSectionRef.current));
   };
+  // v1.64.1: a deleted change order takes its marked lines off the invoice.
+  // On the invoice that is this form; from the estimate it is a write to the
+  // invoice (not open), through the app's own action so the local copy follows.
+  const removeChangeOrderLines = async (c) => {
+    const invId = coInvIdRef.current;
+    const mine = (it) => { const m = CO_MARK_RE.exec(it?.desc || ""); return !!m && Number(m[1]) === Number(c.seq); };
+    try { await db.recordInvoiceEvent(invId, 'change_order_deleted', null, { seq: c.seq, label: `${invId}-CO${c.seq}`, status: c.status }); }
+    catch (e) { console.warn('history event failed:', e); }
+    if (!(c.status === 'approved' && c.applied_at)) return;
+    if (!isEstimate) {
+      const next = { ...formRef.current, items: formRef.current.items.filter(it => !mine(it)) };
+      if (next.items.length === formRef.current.items.length) return;
+      setForm(f => ({ ...f, items: f.items.filter(it => !mine(it)) }));
+      snapshotEvent('line_item_deleted', `Change order ${c.seq} deleted`, next);
+      return;
+    }
+    const fresh = await db.loadInvoiceWithItems(invId).catch(() => null);
+    if (!fresh) return;
+    const items = (fresh.items || []).filter(it => !mine(it));
+    if (items.length !== (fresh.items || []).length) await onAIAction?.({ action: "set_items", invoiceId: invId, items, base: fresh });
+  };
   // Jake puts a change order on the invoice himself, no customer sign-off
   // (v1.59.0). The form adds the lines and saves them; nothing races it.
   const [coSignFor, setCoSignFor] = useState(null); // v1.60.2: in-person signature for the change order being built
@@ -5232,6 +5253,10 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           amount: m.total ?? null,
           sortKey: new Date(when).getTime(),
         };
+      }
+      if (ev.kind === 'change_order_deleted') {
+        const m = ev.meta || {};
+        return { date: when, label: `${m.label || 'Change order'} deleted${m.status === 'approved' ? ', its lines taken off the invoice' : ''}`, type: 'opened', amount: null, sortKey: new Date(when).getTime() };
       }
       if (ev.kind === 'deleted' || ev.kind === 'restored') {
         const m = ev.meta || {};
@@ -6099,6 +6124,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                   onBuild={startChangeOrder}
                   building={!!coMode}
                   onApprovedLines={isEstimate ? undefined : (lines) => setForm(f => ({ ...f, items: mergeChangeOrderLines(f.items, lines) }))}
+                  onDeleted={removeChangeOrderLines}
                 />
               </div>
             )}
@@ -13320,6 +13346,7 @@ export default function App() {
         const updated = { ...inv, items: [...(inv.items || []), ...(parsed.items || [])] };
         setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === parsed.invoiceId ? updated : i) }));
         await db.upsertInvoice(updated, false);
+        await syncLinkedDoc(updated, inv); // a converted estimate's new lines reach its invoice
         return updated;
       }
     }
@@ -13399,13 +13426,23 @@ export default function App() {
       try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
       return updated;
     }
+    // Replace a document's lines from a fresh copy (v1.64.1: a deleted change
+    // order's lines coming off an invoice that is not open).
+    if (parsed.action === "set_items") {
+      const base = parsed.base || data.invoices.find(i => i.id === parsed.invoiceId);
+      if (!base) return;
+      const updated = { ...base, items: parsed.items || [] };
+      setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === base.id ? { ...i, ...updated } : i) }));
+      try { const r = await db.upsertInvoice(updated, false); if (r?.updatedAt) setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === base.id ? { ...i, updatedAt: r.updatedAt } : i) })); } catch (e) { fail(e); }
+      return updated;
+    }
     if (parsed.action === "remove_item") {
       const inv = data.invoices.find(i => i.id === parsed.invoiceId);
       const idx = (parsed.itemIndex || 0) - 1;
       if (!inv || idx < 0) return;
       const updated = { ...inv, items: inv.items.filter((_, i) => i !== idx) };
       setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
-      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      try { await db.upsertInvoice(updated, false); await syncLinkedDoc(updated, inv); } catch (e) { fail(e); }
       return updated;
     }
     if (parsed.action === "update_item") {
@@ -13425,7 +13462,7 @@ export default function App() {
         } : it),
       };
       setDataNow(d => ({ ...d, invoices: d.invoices.map(i => i.id === inv.id ? updated : i) }));
-      try { await db.upsertInvoice(updated, false); } catch (e) { fail(e); }
+      try { await db.upsertInvoice(updated, false); await syncLinkedDoc(updated, inv); } catch (e) { fail(e); }
       return updated;
     }
     if (parsed.action === "update_client") {
@@ -14414,15 +14451,24 @@ export default function App() {
   // or invoice. Reads the partner fresh from the database, so its own
   // payments, status and schedule are what is really stored, never a stale
   // local copy. Never throws: the document itself is already saved.
-  const syncLinkedDoc = async (saved) => {
+  const syncLinkedDoc = async (saved, prev = null) => {
     try {
-      const partner = syncPartner(saved, dataRef.current?.invoices || []);
-      if (!partner || syncEqual(saved, partner)) return;
+      const all = dataRef.current?.invoices || [];
+      const notesPartner = syncPartner(saved, all);
+      // v1.64.1: a line changed on a converted estimate is changed on its invoice.
+      const itemsPartner = prev && Array.isArray(prev.items) && !sameItems(prev.items, saved.items) ? itemSyncTarget(saved, all) : null;
+      const partner = notesPartner || itemsPartner;
+      if (!partner) return;
+      if (notesPartner && itemsPartner && notesPartner.id !== itemsPartner.id) return; // never two targets
+      if (!itemsPartner && syncEqual(saved, partner)) return;
       const write = async () => {
         const fresh = await db.loadInvoiceWithItems(partner.id);
         if (!fresh || fresh.deletedAt) return null;
-        if (syncEqual(saved, fresh)) return fresh;
-        const next = { ...fresh, ...syncPatch(saved) };
+        const items = itemsPartner ? applyItemDiff(prev.items, saved.items, fresh.items) : null;
+        if (!items && (!notesPartner || syncEqual(saved, fresh))) return fresh;
+        const next = { ...fresh, ...(notesPartner ? syncPatch(saved) : {}), ...(items ? { items } : {}) };
+        // More work on a paid invoice leaves a balance.
+        if (items && next.status === "paid" && calcTotals(next).total > calcTotals(fresh).total + 0.005) next.status = "partial";
         const res = await db.upsertInvoice(next, false);
         return { ...next, updatedAt: res?.updatedAt || next.updatedAt };
       };
@@ -14444,6 +14490,7 @@ export default function App() {
     // Existing record — just update.
     if (form.id || selected?.id) {
       const id = form.id || selected.id;
+      const prevCopy = (dataRef.current?.invoices || []).find(inv => inv.id === id) || null;
       // Preserve the updatedAt token from whichever copy has the freshest one.
       const carriedUpdatedAt = form.updatedAt ?? selected?.updatedAt ?? null;
       const updated = { ...form, id, year, updatedAt: carriedUpdatedAt };
@@ -14492,7 +14539,7 @@ export default function App() {
       // Same internal notes on the job's other document (src/docLinks.js; the
       // estimate's customer-facing contents are frozen at conversion). Awaited, so opening the other document
       // through the cross-link (which flushes first) shows the copy.
-      await syncLinkedDoc(stamped);
+      await syncLinkedDoc(stamped, prevCopy);
       return stamped;
     }
     // New record — mint an ID from the shared sequence.
