@@ -190,8 +190,8 @@ export async function bookVisit({ name, phone, address, problem, appointment, ur
   });
   const id = filed?.estimate_id || null;
   if (id) {
-    // Synchronous calendar push on top of the insert trigger; a no-op if the
-    // trigger already created the event. Same belt and braces as sms-agent.js.
+    // Backup push in case the insert trigger did not fire. Migration 119 makes
+    // it skip while the trigger's push is in flight, so this cannot duplicate.
     try { await rpc('push_invoice_to_calendar', { p_id: id }); }
     catch (e) { console.error('[yelp-booking] calendar push failed (non-fatal):', e.message || e); }
   }

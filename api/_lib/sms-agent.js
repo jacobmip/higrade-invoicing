@@ -476,7 +476,9 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
     // runs asynchronously through pg_net. push_invoice_to_calendar() is a
     // synchronous belt-and-suspenders: it creates the event immediately and writes
     // the gcal_event_id back into the visits array so the app can find and move it.
-    // It is a no-op if the estimate already has a gcal_event_id.
+    // It is a no-op if the estimate already has a gcal_event_id, and (migration
+    // 119) while another push for it is still in flight. Note pg_net is async:
+    // this queues the push, it does not wait for the event id.
     try {
       await rpc('push_invoice_to_calendar', { p_id: filed.estimate_id });
       console.log('[sms-agent] calendar push ok', filed.estimate_id);
