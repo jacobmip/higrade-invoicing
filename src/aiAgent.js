@@ -741,6 +741,32 @@ async function lisaSwitch(input) {
   return { ok: true, changed: typeof input.on === 'boolean' ? keys : [], status };
 }
 
+// Lisa's Yelp conversations (public.yelp_threads): every message from the
+// customer, Lisa, her nudge and Jake's own Yelp-app replies, plus the quote
+// form, contact details and what it booked. Admin read under migration 121.
+async function yelpThreads(input) {
+  const limit = Math.min(Math.max(Number(input.limit) || 5, 1), 20);
+  let q = supabase.from('yelp_threads')
+    .select('lead_id,first_name,messages,replies_sent,phone,email,address,form,estimate_id,held_reason,second_message_sent_at,call_queued_at,updated_at')
+    .order('updated_at', { ascending: false }).limit(limit);
+  if (input.lead_id) q = q.eq('lead_id', String(input.lead_id));
+  else if (input.name) q = q.ilike('first_name', `%${String(input.name).trim()}%`);
+  const { data, error } = await q;
+  if (error) return { error: `Could not read Yelp threads: ${error.message}` };
+  const who = { owner: 'Jake (Yelp app)', lisa_nudge: 'Lisa (follow-up nudge)', lisa_gmail: 'Lisa (old email path)' };
+  return {
+    threads: (data || []).map((t) => ({
+      lead_id: t.lead_id, name: t.first_name, phone: t.phone, email: t.email, address: t.address,
+      quote_form: t.form, booked_estimate: t.estimate_id, held: t.held_reason,
+      nudged_at: t.second_message_sent_at, call_step_at: t.call_queued_at, last_activity: t.updated_at,
+      messages: (Array.isArray(t.messages) ? t.messages : []).slice(-30).map((m) => ({
+        from: m.role === 'consumer' ? 'customer' : (who[m.by] || 'Lisa'),
+        at: m.at, text: String(m.text || '').slice(0, 800),
+      })),
+    })),
+  };
+}
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 const TOOLS = {
   search_documents: searchDocuments,
@@ -769,6 +795,7 @@ const TOOLS = {
   place_call: placeCall,
   delete_document: deleteDocument,
   lisa_switch: lisaSwitch,
+  yelp_threads: yelpThreads,
 };
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
@@ -783,6 +810,7 @@ const PROGRESS = {
   find_client: (i) => `Looking up ${i.query || 'client'}`,
   search_price_book: 'Checking the price book',
   get_schedule: 'Checking the schedule',
+  yelp_threads: (i) => (i.name ? `Reading the Yelp thread with ${i.name}` : 'Reading Yelp threads'),
   lisa_switch: (i) => (typeof i.on === 'boolean' ? `Turning Lisa ${i.on ? 'on' : 'off'}` : "Checking Lisa's switches"),
   business_summary: 'Adding up the numbers',
   query_business_data: 'Checking the numbers',

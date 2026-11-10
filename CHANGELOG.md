@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.70.0 — 2026-11-09
+
+- **The AI header can read Lisa's Yelp conversations.** New read-only tool `yelp_threads`: every message from the customer, from Lisa, her follow-up nudge and Jake's own Yelp-app replies, plus the quote form, contact details, what it booked, and when the nudge and follow-up call step happened. Ask "show me the Yelp thread with Dan" or "any new Yelp leads". Migration 121 gives admins read access to `yelp_threads`; writes stay service-role only.
+
 ## v1.69.0 — 2026-11-09
 
 **Lisa on Yelp: a "thanks" after booking gets a friendly close, not "that day is booked up".**

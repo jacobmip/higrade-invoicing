@@ -510,6 +510,20 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name: 'yelp_threads',
+    description:
+      "Read Lisa's Yelp conversations: every message from the customer, from Lisa, her follow-up nudge, and Jake's own replies from the Yelp app, plus the Yelp quote form, phone, email, address, whether it booked (estimate id), whether it was held for Jake, and when the nudge and the follow-up call step happened. " +
+      'Use for "what did Lisa say to Dan on Yelp", "any new Yelp leads", "show me the Yelp thread with Jojo", "did that Yelp lead book". Newest first. Read only.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: "Customer first name as Yelp shows it (partial is fine). Omit to list the most recent threads." },
+        lead_id: { type: 'string', description: 'Exact Yelp lead id, if known.' },
+        limit: { type: 'integer', description: 'How many threads, 1 to 20. Default 5.' },
+      },
+    },
+  },
+  {
     name: 'place_call',
     description:
       "Queue an outbound phone call for Lisa to a customer. Does NOT dial: it files the call and Jake approves it from the approval_link before Lisa dials. Return the link to Jake in your reply so he can tap it to approve. " +
