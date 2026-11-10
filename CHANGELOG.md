@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.68.0 — 2026-11-09
+
+**Lisa on Yelp: a sharper first reply, and a follow-up bump.**
+
+- **First reply asks the one useful question.** On a thread's first reply only, Lisa's prompt (`systemPrompt()` in `api/_lib/yelp-agent.js`) gets a "FIRST REPLY: DIAGNOSTIC QUESTIONS" section: one diagnostic question by job type (drain, water heater, faucet, low pressure, running toilet, disposal, leak), skipped when the quote form or message already answers it. When the form names the job clearly and it matches the price book, she leads with the range and offers a time instead of asking anything.
+- **New op `yelp_bump`** on `POST /api/sms-inbound` (`{ op: 'yelp_bump', lead_id }`, webhook secret only): `generateYelpBump()` drafts a 1 to 2 sentence follow-up for a lead who has not answered, without repeating what was already sent, no greeting or sign-off. Returns `{ ok, reply, lead_id }`, 404 when there is no thread or no reply from us yet. Sends nothing.
+- `saveBumpSent(leadId, serviceSummary)` stamps `yelp_threads.second_message_sent_at` and `service_summary` (migration 116_yelp_followup_tracking). Exported for the follow-up script; no route calls it yet.
+
 ## v1.66.0 — 2026-11-09
 
 **An off switch for Lisa, in the app's AI header.** Say "Lisa off", "pause Lisa on Yelp", "turn Lisa back on" or "is Lisa on?".

@@ -45,7 +45,7 @@ import { autoReply, draftReply } from './_lib/sms-agent.js';
 import { handleInfoReply } from './_lib/sms-reply-capture.js';
 import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
-import { draftYelpReply, logYelpBusinessMessage } from './_lib/yelp-agent.js';
+import { draftYelpReply, logYelpBusinessMessage, generateYelpBump } from './_lib/yelp-agent.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -195,6 +195,14 @@ async function appSend(req, res) {
     if (params.op === 'yelp_log') {
       const r = await logYelpBusinessMessage(params);
       return jsonOut(res, r.ok ? 200 : 400, r);
+    }
+    // Lisa's 2-minute follow-up for a Yelp lead who has not answered (AI-OS
+    // scripts/yelp_followup.py). Secret only. Drafts; the caller posts it.
+    if (params.op === 'yelp_bump') {
+      if (!viaSecret) return jsonOut(res, 403, { error: 'secret required' });
+      const result = await generateYelpBump(params.lead_id);
+      if (!result) return jsonOut(res, 404, { error: 'thread not found or no reply yet' });
+      return jsonOut(res, 200, { ok: true, ...result });
     }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
