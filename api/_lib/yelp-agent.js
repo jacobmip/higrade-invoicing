@@ -24,7 +24,7 @@
 
 import { telegramNotify } from './convert-estimate.js';
 import { getSetting } from './sms.js';
-import { checkAppointment, speakSlot } from './availability-check.js';
+import { checkAppointment } from './availability-check.js';
 import {
   hawaiiNow, speakVisit, upcomingVisits, onMyWayToday, matchClient, bookVisit, requestChange, openSlots, requestedDates,
 } from './yelp-booking.js';
@@ -36,7 +36,11 @@ const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
 const MODEL = process.env.YELP_MODEL || 'claude-opus-5-5';
 
 // A loop between two autoresponders burns money and credibility together.
-const MAX_REPLIES_PER_THREAD = 8;
+// The hard stop is set high (Jake, 2026-11-09: no 8-reply limit). The useful
+// alarm is PROGRESS_ALERT_AFTER: past that many replies with no quote, no
+// contact details and no booking, Jake gets one Telegram (migration 120).
+const MAX_REPLIES_PER_THREAD = 30;
+const PROGRESS_ALERT_AFTER = 8;
 const INTAKE_URL = 'https://higrade-invoicing.vercel.app/schedule?src=yelp';
 const SIGNATURE = 'Lisa\nHI Grade Plumbing LLC\n808-444-5450';
 // Just the greeting: "Aloha Andrew," / "Aloha Andrew." plus trailing space. It
@@ -200,6 +204,8 @@ APPOINTMENTS ALREADY ON THE BOOKS
 - The visit time has arrived or passed, they say we are late, or they ask where the tech is: action "where_is_tech". Say you are checking with the tech right now and will update them shortly. Never invent an arrival time or a reason.
 - Move or cancel a visit: action "reschedule" or "cancel" with visit_start (and new_time). Say you have passed it to the team to confirm. Never say it is done.
 - Do not book a second visit for someone who already has one coming, unless they clearly want a separate job.
+- Once a visit is booked, a "thanks", "ok", "sounds good" or thumbs up gets one short, warm line and nothing else, for example "No problem, looking forward to seeing you Tuesday at 4 PM." or "No problem, looking forward to helping you." Leave appointment empty: they are not asking for a new time. Never re-offer times or re-ask for anything.
+- Before anything is booked, a "thanks, I'll get back to you" gets one short friendly line that leaves the door open. Do not push times again in that reply.
 
 PHOTOS
 - If they sent photos, look closely. When the photos and their words make a simple price-book job clear, give the range in this reply.
@@ -641,7 +647,14 @@ export async function draftYelpReply(p) {
   }
 
   let text = String(d.reply || '').trim();
-  const appointment = String(d.appointment || '').trim();
+  // A thread that already booked is not shopping for a time. Dan (2026-11-09)
+  // said "Thanks" after booking, the model echoed his booked time back as
+  // `appointment`, the calendar check found his own visit there and Lisa told
+  // him the day was booked up. Same for a time that is one of this customer's
+  // own visits. Reschedules go through action "reschedule", not this path.
+  const rawAppt = String(d.appointment || '').trim();
+  const ownVisit = visits.some((v) => String(v.start || '').slice(0, 16) === rawAppt.slice(0, 16));
+  const appointment = row.estimate_id || ownVisit ? '' : rawAppt;
   let slotFree = false;
   if (appointment) {
     // Never pencil a time the calendar has not cleared. Same rule as texting.
@@ -649,9 +662,13 @@ export async function draftYelpReply(p) {
     if (chk.status === 'free') {
       slotFree = true;
     } else if (chk.status === 'busy') {
-      const next = chk.next ? speakSlot(chk.next.start) : null;
-      text = next
-        ? `That time is already taken. We do have ${next} open. Does that work for you?`
+      // Offer from openSlots, not chk.next: chk.next ignores the 8 AM to 3 PM
+      // start window and offered Dan 4 PM.
+      const day = appointment.slice(0, 10);
+      const alt = (await openSlots({ prefer: [day] }).catch(() => []))
+        .filter((x) => x.start !== appointment).slice(0, 2);
+      text = alt.length
+        ? `That time is already taken. We do have ${alt.map((x) => x.spoken).join(' or ')} open. Which works for you?`
         : 'That day is booked up. What other day works for you?';
     } else {
       text = "I couldn't confirm that time just yet. What day and time window works best for you, and we'll lock it in?";
@@ -719,6 +736,15 @@ export async function draftYelpReply(p) {
 
   messages.push({ role: 'business', text: polished.text, at: new Date().toISOString() });
   row.replies_sent += 1;
+
+  // Long thread, nothing to show for it: no price given, no phone or address,
+  // no booking. One Telegram per thread (progress_alert_at, migration 120).
+  const quotedEver = !!polished.quoted || messages.some((m) => m.role === 'business' && /\$\s?\d/.test(m.text || ''));
+  if (row.replies_sent > PROGRESS_ALERT_AFTER && !existing?.progress_alert_at
+      && !quotedEver && !row.phone && !row.address && !row.estimate_id) {
+    row.progress_alert_at = new Date().toISOString();
+    await telegramNotify(`Yelp thread going nowhere: ${who}, ${row.replies_sent} replies, no estimate, no contact info, no booking. Worth a look, or ignore if they're just chatting.\nThey wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
+  }
   await saveThread(row);
 
   if (contact.phone) {

@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.69.0 — 2026-11-09
+
+**Lisa on Yelp: a "thanks" after booking gets a friendly close, not "that day is booked up".**
+
+- **The Dan bug.** After Dan booked Tuesday 4 PM he wrote "Thanks"; the model echoed his time back, the calendar check found his own visit there, and Lisa told him the day was booked. Now a thread that already booked (or a time that is one of the customer's own visits) skips the time check entirely. New prompt rule: once booked, a thanks gets one warm line ("No problem, looking forward to seeing you Tuesday at 4 PM."), and a "thanks, I'll get back to you" before booking gets a short door-open line without re-offering times.
+- **"That time is taken" offers real slots.** The fallback used the calendar's next gap, which ignored the 8 AM to 3 PM start window (it offered Dan 4 PM). It now offers up to two times from `openSlots()` for that day.
+- **No 8-reply ceiling.** The hard anti-loop stop is 30. Past 8 replies with no price given, no phone or address and no booking, Jake gets one Telegram (migration 120, `yelp_threads.progress_alert_at`).
+
 ## v1.68.2 — 2026-11-09
 
 **Fix: a client's phone number could look like it had vanished when editing.** Diane M's number appeared blank in the client edit form; Jake had to retype it.
