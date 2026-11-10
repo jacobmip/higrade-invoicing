@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.72.0 — 2026-11-09
+
+**Yelp conversations in the app, with photos.**
+
+- **Messages tab: Texts | Yelp switch.** The Yelp side lists every Lisa Yelp thread, newest first, with a status (Waiting on us, Booked EST…, Held for you, Nudged, Followed up) and a photo count. Opening one shows the whole conversation with who wrote each message (customer, Lisa, Lisa's follow-up, or you from the Yelp app), the quote form, the address, and the photos (tap to enlarge). Read-only: replies happen in the Yelp app and show up here through the "Yelp business messages" Zap.
+- **Yelp photos are saved.** Yelp's attachment links die after 24 hours, so Lisa now copies each photo into the `job-photos` bucket (`yelp/<lead>/…`) as it arrives, in parallel with drafting the reply, and stores them on the customer's message as `media` (same shape as texted photos). Photos sent before this show as a note; their links have already expired.
+
 ## v1.71.0 — 2026-11-09
 
 **One brain per client.** Every conversation Lisa has, on any channel, now sits on the client and every Lisa reads it.

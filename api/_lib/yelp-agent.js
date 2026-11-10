@@ -83,6 +83,38 @@ async function loadCatalog() {
     .filter((x) => x.name && Number.isFinite(x.price) && x.price > 0);
 }
 
+// Yelp's attachment links expire after 24 hours, so every photo is copied into
+// the public job-photos bucket the moment it arrives (same bucket and entry
+// shape as texted photos, see rehostTwilioMedia in ./sms.js). The app's Yelp
+// tab shows these copies. A copy that fails keeps the Yelp link so it at least
+// opens for a day.
+async function rehostYelpPhotos(leadId, urls) {
+  const key = supabaseKey();
+  const deadline = Date.now() + 12000;
+  const safe = String(leadId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60) || 'lead';
+  return Promise.all(urls.map(async (url, i) => {
+    try {
+      const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now())) });
+      if (!res.ok) throw new Error(`fetch ${res.status}`);
+      const type = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+      const ext = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/webp': 'webp', 'image/gif': 'gif' })[type] || 'jpg';
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const path = `yelp/${safe}/${Date.now()}-${i}.${ext}`;
+      const up = await fetch(`${supabaseUrl()}/storage/v1/object/job-photos/${path}`, {
+        method: 'POST',
+        headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': type, 'x-upsert': 'true' },
+        body: bytes,
+        signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now())),
+      });
+      if (!up.ok) throw new Error(`upload ${up.status}`);
+      return { url: `${supabaseUrl()}/storage/v1/object/public/job-photos/${path}`, type, bytes: bytes.length };
+    } catch (e) {
+      console.error('[yelp-agent] photo copy failed:', e.message || e);
+      return { failed: true, yelp_url: url, type: 'image/jpeg' };
+    }
+  }));
+}
+
 const DISCLAIMER = "Estimates sight unseen can't be confirmed until we're on the job site in person.";
 
 // Insert-if-absent. Returns true when this call created the row. The row holds
@@ -482,10 +514,13 @@ export async function draftYelpReply(p) {
     p.location && `Area they gave: ${p.location}`,
   ].filter(Boolean).join('\n');
   const consumerText = message;
-  messages.push({
+  // Started now, awaited before the thread is saved: runs alongside the model.
+  const photoCopies = photoUrls.length ? rehostYelpPhotos(leadId, photoUrls).catch(() => []) : null;
+  const incoming = {
     role: 'consumer', text: message, at: new Date().toISOString(),
     ...(photoUrls.length ? { photos: photoUrls.length } : {}),
-  });
+  };
+  messages.push(incoming);
 
   // Yelp's opt-in "Phone Number" from a New Lead counts the same as one typed.
   const contact = extractContact(`${message} ${p.phone || ''}`);
@@ -508,7 +543,15 @@ export async function draftYelpReply(p) {
 
   const out = { ok: true, should_send: false, reply: '', flags: [], captured_phone: contact.phone, captured_email: contact.email };
 
+  // Photo copies land on the customer's message before ANY save, held or sent.
+  const attachPhotos = async () => {
+    if (!photoCopies || incoming.media) return;
+    const media = await photoCopies;
+    if (media.length) incoming.media = media;
+  };
+
   const hold = async (why) => {
+    await attachPhotos();
     row.held_reason = why;
     await saveThread(row);
     out.skip_reason = why;
@@ -520,6 +563,7 @@ export async function draftYelpReply(p) {
   // "Lisa off"). Missing means on. The message is still recorded, so Lisa has
   // the whole thread when she is switched back on.
   if (String(await getSetting('yelp_autoreply_enabled') ?? 'true').toLowerCase() === 'false') {
+    await attachPhotos();
     await saveThread(row);
     out.skip_reason = 'Lisa is switched off for Yelp';
     return out;
@@ -633,6 +677,7 @@ export async function draftYelpReply(p) {
   if (d.spam) {
     out.skip_reason = 'Classified as spam or not a plumbing inquiry.';
     row.held_reason = out.skip_reason;
+    await attachPhotos();
     await saveThread(row);
     return out;
   }
@@ -750,6 +795,7 @@ export async function draftYelpReply(p) {
     row.progress_alert_at = new Date().toISOString();
     await telegramNotify(`Yelp thread going nowhere: ${who}, ${row.replies_sent} replies, no estimate, no contact info, no booking. Worth a look, or ignore if they're just chatting.\nThey wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
   }
+  await attachPhotos();
   await saveThread(row);
 
   if (contact.phone) {

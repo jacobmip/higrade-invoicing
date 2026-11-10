@@ -151,7 +151,7 @@ export function Media({ item }) {
 const POLISH_PROMPT = "Rewrite this as a brief, professional SMS from HI Grade Plumbing in Lisa's voice (warm, Hawaiian, no pricing). Keep it under 160 chars if possible. Return ONLY the rewritten message, no explanation.";
 
 // The bubbles plus the reply box. `messages` is this conversation, oldest first.
-function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
+function Thread({ messages: rawMessages, phone, canReply, onSent, height, footer }) {
   const messages = Array.isArray(rawMessages) ? rawMessages.filter(Boolean) : [];
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -232,6 +232,7 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
           return (
             <div key={m.id ?? m.created_at} style={{ display: 'flex', flexDirection: 'column' }}>
               {showStamp && <div style={{ textAlign: 'center', fontSize: 11, color: '#8899bb', margin: '10px 0 6px' }}>{stamp(m.created_at)}</div>}
+              {m.sender && <div style={{ alignSelf: out ? 'flex-end' : 'flex-start', fontSize: 11, color: '#8899bb', margin: '4px 6px 1px' }}>{m.sender}</div>}
               <div style={{
                 alignSelf: out ? 'flex-end' : 'flex-start', maxWidth: '80%',
                 background: out ? BLUE : '#e5e5ea', color: out ? '#fff' : '#111',
@@ -245,6 +246,7 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height }) {
           );
         })}
       </div>
+      {!canReply && footer ? <div style={{ borderTop: '1px solid #e5e7ee', background: '#f6f7fa', padding: '10px 14px', fontSize: 13, color: '#6b7280' }}>{footer}</div> : null}
       {canReply ? (
         <div style={{ borderTop: '1px solid #e5e7ee', background: '#f6f7fa', padding: 8 }}>
           {err && <div style={{ color: '#cc3333', fontSize: 12, padding: '0 4px 6px' }}>{err}</div>}
@@ -353,7 +355,137 @@ export function ClientThread(props) {
   return <ThreadBoundary key={props.client?.id}><ClientThreadInner {...props} /></ThreadBoundary>;
 }
 
+// ─── Yelp ─────────────────────────────────────────────────────────────────────
+// Lisa's Yelp conversations (public.yelp_threads, admin read under migration
+// 121): the customer, Lisa, her follow-up nudge and Jake's own replies from the
+// Yelp app (logged by the "Yelp business messages" Zap). Read-only here:
+// replies happen in the Yelp app. Photos are the copies Lisa saved when they
+// arrived (v1.72.0); Yelp's own links die after 24 hours.
+
+const YELP_RED = '#d32323';
+const SENDER = { owner: 'You (Yelp app)', lisa_nudge: 'Lisa, follow-up', lisa_gmail: 'Lisa (email)' };
+
+async function loadYelpThreads() {
+  const { data, error } = await supabase
+    .from('yelp_threads')
+    .select('lead_id, first_name, phone, email, address, form, messages, estimate_id, held_reason, client_id, second_message_sent_at, call_queued_at, created_at, updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return data || [];
+}
+
+function yelpBubbles(t) {
+  return (Array.isArray(t.messages) ? t.messages : []).map((m, i) => {
+    const media = Array.isArray(m.media) ? m.media.map((x) => (x.failed ? { url: x.yelp_url, type: x.type } : x)) : [];
+    const lost = !media.length && Number(m.photos) > 0
+      ? `\n(${m.photos} photo${m.photos > 1 ? 's' : ''}, sent before Lisa saved Yelp photos)` : '';
+    return {
+      id: `${t.lead_id}-${i}`,
+      direction: m.role === 'consumer' ? 'inbound' : 'outbound',
+      body: String(m.text || '').replace(/^\(quote request form, no message\)$/, 'Sent a quote request') + lost,
+      created_at: m.at || t.updated_at,
+      media,
+      sender: m.role === 'consumer' ? null : (SENDER[m.by] || 'Lisa'),
+    };
+  });
+}
+
+function yelpStatus(t) {
+  if (t.estimate_id) return { label: `Booked ${t.estimate_id}`, color: '#1a7f37' };
+  if (t.held_reason) return { label: 'Held for you', color: '#b45309' };
+  const msgs = Array.isArray(t.messages) ? t.messages : [];
+  const last = msgs[msgs.length - 1];
+  if (last?.role === 'consumer') return { label: 'Waiting on us', color: YELP_RED };
+  if (t.call_queued_at) return { label: 'Followed up', color: '#6b7280' };
+  if (t.second_message_sent_at) return { label: 'Nudged', color: '#6b7280' };
+  return null;
+}
+
+function YelpPane({ clients }) {
+  const [threads, setThreads] = useState(null);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState(null);
+  const load = useCallback(async () => {
+    try { setThreads(await loadYelpThreads()); setError(''); } catch (e) { setError(String(e.message || e)); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [load]);
+
+  const byId = useMemo(() => new Map((clients || []).map((c) => [c.id, c])), [clients]);
+  const open = (threads || []).find((t) => t.lead_id === openId) || null;
+  const nameOf = (t) => byId.get(t.client_id)?.name || t.first_name || 'Yelp customer';
+
+  if (open) {
+    const status = yelpStatus(open);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 150px)' }}>
+        <div style={{ background: NAVY, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={() => setOpenId(null)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 15, cursor: 'pointer', padding: 4 }}>Back</button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{nameOf(open)}</div>
+            <div style={{ color: '#8899bb', fontSize: 12 }}>
+              Yelp{open.phone ? ` · ${prettyPhone(open.phone)}` : ''}{status ? ` · ${status.label}` : ''}
+            </div>
+          </div>
+          {open.phone && <a href={`tel:${open.phone}`} style={{ color: '#fff', fontSize: 14, textDecoration: 'none', fontWeight: 600 }}>Call</a>}
+        </div>
+        {(open.form || open.address || open.held_reason) && (
+          <div style={{ background: '#f6f7fa', borderBottom: '1px solid #e5e7ee', padding: '8px 14px', fontSize: 12.5, color: '#445', whiteSpace: 'pre-wrap', maxHeight: 120, overflowY: 'auto' }}>
+            {open.held_reason && <div style={{ color: '#b45309', fontWeight: 700, marginBottom: 4 }}>Held: {open.held_reason}</div>}
+            {open.address && <div><b>Address:</b> {open.address}</div>}
+            {open.form && <div style={{ marginTop: open.address ? 4 : 0 }}>{open.form}</div>}
+          </div>
+        )}
+        <Thread messages={yelpBubbles(open)} canReply={false} height="100%"
+          footer="Reply in the Yelp app. Your replies show up here and Lisa reads them." />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {error && <div style={{ color: '#cc3333', fontSize: 13, padding: '0 16px' }}>{error}</div>}
+      {!threads && !error && <div style={{ color: '#8899bb', padding: 16 }}>Loading...</div>}
+      {threads && threads.length === 0 && <div style={{ color: '#8899bb', padding: 24, textAlign: 'center' }}>No Yelp conversations yet.</div>}
+      {(threads || []).map((t) => {
+        const b = yelpBubbles(t);
+        const last = b[b.length - 1];
+        const status = yelpStatus(t);
+        const photos = (Array.isArray(t.messages) ? t.messages : []).reduce((n, m) => n + (Array.isArray(m.media) ? m.media.length : 0), 0);
+        return (
+          <button key={t.lead_id} onClick={() => setOpenId(t.lead_id)} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: '#fff', border: 'none', borderBottom: '1px solid #eef0f5', padding: '12px 16px', textAlign: 'left', cursor: 'pointer' }}>
+            <div style={{ width: 10, flexShrink: 0 }}>
+              {status?.label === 'Waiting on us' && <div style={{ width: 10, height: 10, borderRadius: 5, background: YELP_RED }} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontWeight: 700, fontSize: 16, color: NAVY, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{nameOf(t)}</span>
+                <span style={{ fontSize: 12, color: '#8899bb', flexShrink: 0 }}>{last ? relTime(last.created_at) : ''}</span>
+              </div>
+              <div style={{ fontSize: 14, color: '#778', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>
+                {last ? `${last.sender ? `${last.sender}: ` : ''}${last.body.split('\n')[0]}` : ''}
+              </div>
+              {(status || photos > 0) && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 11.5, fontWeight: 700 }}>
+                  {status && <span style={{ color: status.color }}>{status.label}</span>}
+                  {photos > 0 && <span style={{ color: '#8899bb' }}>{photos} photo{photos > 1 ? 's' : ''}</span>}
+                </div>
+              )}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus }) {
+  const [channel, setChannel] = useState('texts');
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [openKey, setOpenKey] = useState(null);
@@ -396,6 +528,29 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus })
 
   if (!isAdmin) return <div style={{ padding: 24, color: '#8899bb', textAlign: 'center' }}>Messages are available to the owner.</div>;
 
+  const switcher = (
+    <div style={{ display: 'flex', gap: 6, padding: '0 16px 10px' }}>
+      {[['texts', 'Texts'], ['yelp', 'Yelp']].map(([id, label]) => (
+        <button key={id} onClick={() => setChannel(id)} style={{
+          flex: 1, padding: '7px 0', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer',
+          border: `1px solid ${channel === id ? (id === 'yelp' ? YELP_RED : BLUE) : '#cfd4e0'}`,
+          background: channel === id ? (id === 'yelp' ? YELP_RED : BLUE) : '#fff',
+          color: channel === id ? '#fff' : NAVY,
+        }}>{label}</button>
+      ))}
+    </div>
+  );
+
+  if (channel === 'yelp') {
+    return (
+      <div>
+        <div style={{ padding: '14px 16px 8px', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: NAVY }}>Messages</div>
+        {switcher}
+        <ThreadBoundary key="yelp"><YelpPane clients={clients} /></ThreadBoundary>
+      </div>
+    );
+  }
+
   if (open) {
     const title = open.client?.name || prettyPhone(open.phone);
     return (
@@ -417,6 +572,7 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus })
   return (
     <div>
       <div style={{ padding: '14px 16px 8px', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: NAVY }}>Messages</div>
+      {switcher}
       {error && <div style={{ color: '#cc3333', fontSize: 13, padding: '0 16px' }}>{error}</div>}
       {!rows && !error && <div style={{ color: '#8899bb', padding: 16 }}>Loading...</div>}
       {rows && convs.length === 0 && <div style={{ color: '#8899bb', padding: 24, textAlign: 'center' }}>No text conversations yet.</div>}
