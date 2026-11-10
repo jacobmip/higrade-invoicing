@@ -42,7 +42,6 @@ const MODEL = process.env.YELP_MODEL || 'claude-opus-5-5';
 // contact details and no booking, Jake gets one Telegram (migration 120).
 const MAX_REPLIES_PER_THREAD = 30;
 const PROGRESS_ALERT_AFTER = 8;
-const INTAKE_URL = 'https://higrade-invoicing.vercel.app/schedule?src=yelp';
 const SIGNATURE = 'Lisa\nHI Grade Plumbing LLC\n808-444-5450';
 // Just the greeting: "Aloha Andrew," / "Aloha Andrew." plus trailing space. It
 // must NOT run to the end of the line: the model sometimes writes
@@ -193,7 +192,7 @@ Turn this conversation into a booked visit, fast. A customer asking about schedu
 3. Once you have a time, the address and a phone number: set ready_to_book true with appointment set to that time, and tell them they are penciled in and the team will confirm. Keep it short.
 4. If they ask about price: give the price-book range (rules below), then go to step 1.
 5. Anything else: answer in a sentence or two the way an experienced plumbing office would, then move toward step 1.
-If none of the offered times work for them, ask what day and time window does, or offer the online scheduler: ${INTAKE_URL}
+If none of the offered times work for them, ask what day and time window does. Never send a link or a form to fill out (Jake, 2026-11-09): you are the one who takes their details, by message. Yelp is a fine single point of contact; the address is what we need most, then a phone number.
 ${isFirstReply ? `
 FIRST REPLY: DIAGNOSTIC QUESTIONS
 - If the quote form gives the job type AND a clear answer (for example "replace pressure regulator" or "replace 50 gal electric water heater") and it matches the price book: lead with the estimate range, then offer a time. Skip the diagnostic question entirely when you can quote.
@@ -318,6 +317,12 @@ function polish(raw, { firstName, isFirstReply, prices, customerText }) {
     reply = reply.replace(/((?:^|[.!]\s+)(?:Is|Are|Does|Do|Did|Was|Were|Can|Could|Would|Has|Have)\b[^.?!,\n]*)\.\s*$/, '$1?');
   }
 
+  // No links, ever (Jake, 2026-11-09: Lisa takes the details herself, no
+  // forms). Any sentence carrying a URL is dropped, belt and braces for the prompt.
+  if (/https?:\/\/|www\./i.test(reply)) {
+    reply = reply.replace(/[^.!?\n]*(https?:\/\/|www\.)\S*[^.!?\n]*[.!?]?[ \t]*/gi, '').replace(/\n{3,}/g, '\n\n').trim();
+    flags.push('dropped a link');
+  }
   if (WRONG_NUMBERS.test(reply)) {
     reply = reply.replace(WRONG_NUMBERS, '808-444-5450');
     flags.push("gave out Jake's direct line, rewrote it");

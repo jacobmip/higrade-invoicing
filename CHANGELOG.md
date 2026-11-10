@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.72.1 — 2026-11-09
+
+- **Lisa no longer sends the online scheduling link on Yelp.** Jake: the point of Lisa is that customers never fill out a form; she takes the time, address and phone by message. The prompt's fallback ("offer the online scheduler") is gone, and `polish()` drops any sentence that carries a URL as a backstop (flag `dropped a link`). Jojo got the link on 2026-11-09 from that fallback.
+
 ## v1.72.0 — 2026-11-09
 
 **Yelp conversations in the app, with photos.**
