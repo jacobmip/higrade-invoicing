@@ -45,7 +45,7 @@ import { autoReply, draftReply } from './_lib/sms-agent.js';
 import { handleInfoReply } from './_lib/sms-reply-capture.js';
 import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
-import { draftYelpReply, logYelpBusinessMessage, generateYelpBump } from './_lib/yelp-agent.js';
+import { draftYelpReply, logYelpBusinessMessage, setYelpPhone, generateYelpBump } from './_lib/yelp-agent.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -198,6 +198,10 @@ async function appSend(req, res) {
     }
     // Lisa's 2-minute follow-up for a Yelp lead who has not answered (AI-OS
     // scripts/yelp_followup.py). Secret only. Drafts; the caller posts it.
+    if (params.op === 'yelp_phone') {
+      if (!viaSecret) return jsonOut(res, 403, { error: 'secret required' });
+      return jsonOut(res, 200, await setYelpPhone(params));
+    }
     if (params.op === 'yelp_bump') {
       if (!viaSecret) return jsonOut(res, 403, { error: 'secret required' });
       const result = await generateYelpBump(params.lead_id);

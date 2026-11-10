@@ -845,6 +845,28 @@ export async function logYelpBusinessMessage(p) {
 }
 
 /**
+ * Store the phone number Yelp has for a lead (Zapier "Get Lead Details",
+ * field temporary_phone_number). Called by the nudge Zap right after it posts
+ * the nudge, so the follow-up call 7 minutes later has a number even for a
+ * customer who never replied. Fills an empty phone only; the trigger from
+ * migration 122 then links the client. Sends nothing.
+ * POST /api/sms-inbound { op: 'yelp_phone', lead_id, phone }
+ */
+export async function setYelpPhone(p) {
+  const leadId = String(p.lead_id || '').trim();
+  const phone = extractContact(String(p.phone || '')).phone;
+  if (!leadId) return { ok: false, error: 'lead_id is required' };
+  if (!phone) return { ok: true, saved: false, reason: 'no usable phone in the payload' };
+  const existing = await loadThread(leadId);
+  if (existing?.phone) return { ok: true, saved: false, reason: 'thread already has a phone' };
+  await saveThread({
+    lead_id: leadId, phone,
+    ...(existing ? {} : { created_at: new Date().toISOString(), replies_sent: 0, messages: [] }),
+  });
+  return { ok: true, saved: true };
+}
+
+/**
  * A short follow-up for a Yelp lead who has not answered Lisa yet (the
  * 2-minute bump in AI-OS scripts/yelp_followup.py). Drafts only: the caller
  * posts it, appends the sign-off, and calls saveBumpSent().

@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.72.2 — 2026-11-09
+
+- **New op `yelp_phone`** on `POST /api/sms-inbound` (`{ op: 'yelp_phone', lead_id, phone }`, webhook secret only): stores the phone Yelp has for a lead (`setYelpPhone()`), filling an empty `yelp_threads.phone` only. The nudge Zap calls it after posting the nudge (Yelp Get Lead Details, `temporary_phone_number`), so the follow-up call has a number even when the customer never replied. Jojo's lead arrived with no phone because only the New Lead Zap passed one.
+
 ## v1.72.1 — 2026-11-09
 
 - **Lisa no longer sends the online scheduling link on Yelp.** Jake: the point of Lisa is that customers never fill out a form; she takes the time, address and phone by message. The prompt's fallback ("offer the online scheduler") is gone, and `polish()` drops any sentence that carries a URL as a backstop (flag `dropped a link`). Jojo got the link on 2026-11-09 from that fallback.
