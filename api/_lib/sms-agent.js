@@ -19,6 +19,7 @@
 // Raw fetch rather than the Anthropic SDK, matching api/ai.js and
 // api/ai-estimator.js, which is also all this file needs.
 
+import { otherChannelsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
 
@@ -87,11 +88,13 @@ function firstNameOf(name) {
   return name.trim().split(/\s+/)[0];
 }
 
-function systemPrompt({ now, clientName, hasOpenEstimate, catalog }) {
+function systemPrompt({ now, clientName, hasOpenEstimate, catalog, history = '' }) {
   return `You are Lisa, the front desk at HI Grade Plumbing LLC, a licensed plumbing company on Oahu, Hawaii. You are answering a TEXT MESSAGE. You are the same Lisa who answers the phone and replies on Yelp.
 
 Right now it is ${now.weekday}, ${now.pretty} in Hawaii. Today's date is ${now.iso}. Work out every date from that and never guess a year.
-
+${history ? `
+${history}
+` : ''}
 YOUR ONE GOAL
 Get to a booked visit at a known address. A text thread that ends without an appointment and an address is a failure, however pleasant it was. Everything below serves that.
 
@@ -119,7 +122,7 @@ HOW YOU WRITE
 - No emoji. No markdown. No bullet points.
 - Do not sign your name on every message. They know who they are talking to after the first one.
 - Never repeat a question they already answered. Read the whole thread first.
-- Never claim to have received something unless it is in THIS conversation above. No "got your photo", no "thanks for the address", no referring to a previous visit or a previous job, unless it is right there in the messages you were given. You are seeing only the current conversation, not their history, so anything not shown did not happen as far as you know.
+- Never claim to have received something unless it is in THIS conversation above. No "got your photo", no "thanks for the address", no referring to a previous visit or a previous job, unless it is right there in the messages you were given. Past contact on other channels may be listed above with dates (THIS CUSTOMER ON OTHER CHANNELS): you may use it, but never say you received something in this text thread unless it is here.
 - Never say "I understand your frustration" or any other script line.
 
 HARD RULES
@@ -258,6 +261,9 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
         clientName,
         hasOpenEstimate,
         catalog: await priceCatalog(),
+        // Yelp, calls and emails for this number (migration 122). Texts are
+        // excluded: the thread above already is the text conversation.
+        history: await otherChannelsBlock({ phone, exclude: 'text' }),
       }),
       messages,
     }),

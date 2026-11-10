@@ -451,9 +451,13 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **121** — **applied and verified 2026-11-09.** Policy `yelp_threads_admin_select`: admins (`is_admin()`) may SELECT `yelp_threads`, so the AI header tool `yelp_threads` works. Writes stay service-role only. Verified: anon still gets `[]`. Next migration is 122.
 
+- **122** — **applied and verified 2026-11-09.** One brain per client. `client_id_for_phone(phone)` (unique match on last 10 digits of `phone`/`mobile`, else null; revoked from all API roles). Trigger `link_client_by_phone` (BEFORE INSERT, and on phone change) fills `client_id` on `vapi_calls`, `client_messages`, `yelp_threads` (Yelp also gets `match_level='phone'`). Backfilled: calls 1→25 of 30, texts 193→220 of 231. `client_timeline(p_client_id, p_phone, p_limit)` unions texts, calls, Yelp messages and `invoice_events` sent; admin or service role only (anon gets 42501).
+
+- **123** — **applied and verified 2026-11-09.** `client_timeline` split into `client_timeline_internal` (no gate, revoked from all) and the gated public wrapper. `lookup_client_by_phone()` (body from the LIVE definition) returns `recent_contact` (last 10 items, 30 days) for found AND not-found numbers. Verified: Dan's number returns 10 items. Next migration is 124.
+
 **There are two 113 files** (`113_lookup_client_appointments.sql` and `113_document_origin.sql`), written by two sessions on 2026-11-08/09. They touch different things (a function vs. new `invoices` columns and a trigger) and both are applied, so the order is harmless; like the two 059 files, do not renumber either.
 
-Next migration is `122_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
+Next migration is `124_<short_description>.sql` (076, 077 are taken on disk). **Patching a live function: match on anchors (first and last line), not on a whole block of text** — 065's whole-block match silently missed on whitespace. **Check `ls supabase/migrations/` before picking a number** — this list has twice been behind the directory, which is how 059 ended up duplicated and how 064 was first written as a second 062.
 
 **How 061 and 062 were applied**, since hard rule 6 assumes no programmatic access: through the Supabase **Management API**, `POST /v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`, driven by `scripts/apply-migration.py` in the AI-OS repo. That is the only one of the three doors that runs DDL — PostgREST cannot, and this project's MCP server is pinned `read_only` in `.mcp.json`. Prefer it over pasting into the dashboard.
 

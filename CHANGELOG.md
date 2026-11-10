@@ -1,5 +1,15 @@
 # HI Grade Invoicing — Changelog
 
+## v1.71.0 — 2026-11-09
+
+**One brain per client.** Every conversation Lisa has, on any channel, now sits on the client and every Lisa reads it.
+
+- **Auto-linking (migration 122).** Calls, texts and Yelp threads get their `client_id` from the phone number on insert (`client_id_for_phone()`, unique matches only). Backfill took calls from 1 of 30 linked to 25, texts from 193 to 220 of 231.
+- **`client_timeline()`**: texts, calls (with Lisa's summary), Yelp messages and documents sent, newest first, for a client id and/or a phone. Admins and the service role only; anon is refused.
+- **Texting Lisa and Yelp Lisa read the other channels** (`api/_lib/client-history.js`, `otherChannelsBlock()`): a dated "THIS CUSTOMER ON OTHER CHANNELS" block in the prompt, own channel excluded. Texting Lisa's "only this conversation" rule now allows that block.
+- **Phone Lisa** (migration 123): `lookup_client_by_phone()` returns `recent_contact`, the last 10 items from 30 days, for saved clients and for numbers not saved yet. Both Vapi assistants (receptionist and outbound) got a "[Recent contact]" section telling them to use it.
+- **AI header**: new tool `client_history`, the whole timeline for a client or a phone.
+
 ## v1.70.0 — 2026-11-09
 
 - **The AI header can read Lisa's Yelp conversations.** New read-only tool `yelp_threads`: every message from the customer, from Lisa, her follow-up nudge and Jake's own Yelp-app replies, plus the quote form, contact details, what it booked, and when the nudge and follow-up call step happened. Ask "show me the Yelp thread with Dan" or "any new Yelp leads". Migration 121 gives admins read access to `yelp_threads`; writes stay service-role only.

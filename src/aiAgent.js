@@ -741,6 +741,26 @@ async function lisaSwitch(input) {
   return { ok: true, changed: typeof input.on === 'boolean' ? keys : [], status };
 }
 
+// One timeline per client across every channel (migration 122).
+async function clientHistory(input) {
+  const clientId = String(input.client_id || '').trim() || null;
+  const phone = String(input.phone_number || '').replace(/\D/g, '').slice(-10) || null;
+  if (!clientId && (!phone || phone.length !== 10)) return { error: 'Give a client_id or a 10-digit phone number.' };
+  const limit = Math.min(Math.max(parseInt(input.limit, 10) || 40, 1), 150);
+  const { data, error } = await supabase.rpc('client_timeline', { p_client_id: clientId, p_phone: phone, p_limit: limit });
+  if (error) return { error: `Could not read the client's history: ${error.message}` };
+  const rows = (data || []).slice().reverse();
+  if (!rows.length) return { count: 0, timeline: 'Nothing on file for this client yet.' };
+  const when = (t) => new Date(t).toLocaleString('en-US', {
+    timeZone: 'Pacific/Honolulu', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  const label = { text: 'TEXT', call: 'CALL', yelp: 'YELP', email: 'EMAIL' };
+  return {
+    count: rows.length,
+    timeline: rows.map((r) => `[${when(r.at)}] ${label[r.channel] || r.channel} ${r.direction === 'inbound' ? 'from' : 'to'} customer, ${r.who}: ${String(r.body || '').slice(0, 600)}`),
+  };
+}
+
 // Lisa's Yelp conversations (public.yelp_threads): every message from the
 // customer, Lisa, her nudge and Jake's own Yelp-app replies, plus the quote
 // form, contact details and what it booked. Admin read under migration 121.
@@ -796,6 +816,7 @@ const TOOLS = {
   delete_document: deleteDocument,
   lisa_switch: lisaSwitch,
   yelp_threads: yelpThreads,
+  client_history: clientHistory,
 };
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
@@ -810,6 +831,7 @@ const PROGRESS = {
   find_client: (i) => `Looking up ${i.query || 'client'}`,
   search_price_book: 'Checking the price book',
   get_schedule: 'Checking the schedule',
+  client_history: 'Reading the client history',
   yelp_threads: (i) => (i.name ? `Reading the Yelp thread with ${i.name}` : 'Reading Yelp threads'),
   lisa_switch: (i) => (typeof i.on === 'boolean' ? `Turning Lisa ${i.on ? 'on' : 'off'}` : "Checking Lisa's switches"),
   business_summary: 'Adding up the numbers',

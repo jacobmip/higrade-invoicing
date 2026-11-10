@@ -25,6 +25,7 @@
 import { telegramNotify } from './convert-estimate.js';
 import { getSetting } from './sms.js';
 import { checkAppointment } from './availability-check.js';
+import { otherChannelsBlock } from './client-history.js';
 import {
   hawaiiNow, speakVisit, upcomingVisits, onMyWayToday, matchClient, bookVisit, requestChange, openSlots, requestedDates,
 } from './yelp-booking.js';
@@ -134,7 +135,7 @@ function clientBlock({ match, visits, omw, thread }) {
   return lines.join('\n');
 }
 
-function systemPrompt({ firstName, isFirstReply, now, client, form, slots, catalog }) {
+function systemPrompt({ firstName, isFirstReply, now, client, form, slots, catalog, history = '' }) {
   const times = (slots?.length
     ? slots.map((s) => `- ${s.spoken} [${s.start}]${s.asked ? ' (a day they asked about)' : ''}`).join('\n')
     : '(The calendar could not be read right now. Ask what day and time window works for them instead of offering times.)')
@@ -146,7 +147,7 @@ Right now it is ${now.weekday}, ${now.pretty} Hawaii time (today is ${now.iso}).
 
 WHO THIS IS
 ${client}
-
+${history ? `\n${history}\n` : ''}
 WHAT THEY ASKED FOR ON YELP'S QUOTE FORM
 ${form || '(no form details)'}
 
@@ -571,6 +572,9 @@ export async function draftYelpReply(p) {
   // Real open times to offer, unless this thread already booked a visit.
   const slots = row.estimate_id ? [] : await openSlots({ prefer: requestedDates(message) }).catch(() => []);
 
+  // Texts, calls and emails with this customer (migration 122). The Yelp
+  // thread itself is excluded: it is already the conversation turns.
+  const history = await otherChannelsBlock({ clientId: row.client_id, phone: row.phone, exclude: 'yelp' });
   const prices = await loadCatalog();
   // A big or open-ended job gets no price book at all, so Lisa answers it with
   // "we'll get you a real number after we see it" instead of a held draft.
@@ -594,6 +598,7 @@ export async function draftYelpReply(p) {
       system: systemPrompt({
         firstName: row.first_name, isFirstReply, now, catalog: catalogText, form: row.form, slots,
         client: clientBlock({ match, visits, omw, thread: row }),
+        history,
       }),
       messages: withPhotos(turns, urls),
     }),

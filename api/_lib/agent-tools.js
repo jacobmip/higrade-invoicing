@@ -226,6 +226,20 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  {
+    name: 'client_history',
+    description:
+      "Everything that has happened with a client on every channel, as one timeline: texts, phone calls (with Lisa's call summary), Yelp messages, and estimates or invoices sent by email or text. Newest last. " +
+      'Use this FIRST when Jake asks what is going on with a client, what they said, whether Lisa talked to them, or before contacting them. Prefer it over get_messages, which is texts only.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client UUID. Use find_client first if you only have a name.' },
+        phone_number: { type: 'string', description: 'Phone number, for someone not yet saved as a client.' },
+        limit: { type: 'integer', description: 'How many items, most recent. Default 40, max 150.' },
+      },
+    },
+  },
 
   // ── Writes ─────────────────────────────────────────────────────────────────
   {
