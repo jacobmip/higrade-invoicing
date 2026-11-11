@@ -14,6 +14,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { setClientLisaAutoreply } from './db.js';
+import { sendLisaYelp } from './lisaActions.js';
 
 const NAVY = '#0a1628';
 const BLUE = '#0070ba';
@@ -151,7 +152,8 @@ export function Media({ item }) {
 const POLISH_PROMPT = "Rewrite this as a brief, professional SMS from HI Grade Plumbing in Lisa's voice (warm, Hawaiian, no pricing). Keep it under 160 chars if possible. Return ONLY the rewritten message, no explanation.";
 
 // The bubbles plus the reply box. `messages` is this conversation, oldest first.
-function Thread({ messages: rawMessages, phone, canReply, onSent, height, footer }) {
+// sendFn(body): a different send path (the Yelp tab); default is a text to `phone`.
+function Thread({ messages: rawMessages, phone, canReply, onSent, height, footer, sendFn, placeholder }) {
   const messages = Array.isArray(rawMessages) ? rawMessages.filter(Boolean) : [];
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -200,16 +202,20 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height, footer
     if (!body || sending) return;
     setSending(true); setErr('');
     try {
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (!token) throw new Error('Signed out. Sign in again.');
-      const res = await fetch(api('/api/sms-inbound'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ to: phone, body }),
-      });
-      const out = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(out.error || `Send failed (${res.status})`);
+      if (sendFn) {
+        await sendFn(body);
+      } else {
+        const { data } = await supabase.auth.getSession();
+        const token = data?.session?.access_token;
+        if (!token) throw new Error('Signed out. Sign in again.');
+        const res = await fetch(api('/api/sms-inbound'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ to: phone, body }),
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(out.error || `Send failed (${res.status})`);
+      }
       setText('');
       onSent?.();
     } catch (e) {
@@ -258,7 +264,7 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height, footer
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <textarea
-              value={text} onChange={e => setText(e.target.value)} rows={1} placeholder="Text message"
+              value={text} onChange={e => setText(e.target.value)} rows={1} placeholder={placeholder || "Text message"}
               style={{ flex: 1, resize: 'none', border: '1px solid #cfd4e0', borderRadius: 18, padding: '9px 12px', fontSize: 16, fontFamily: 'inherit', maxHeight: 110, outline: 'none' }}
             />
             <button onClick={send} disabled={sending || polishing || !text.trim()} style={{ background: BLUE, color: '#fff', border: 'none', borderRadius: 18, padding: '9px 16px', fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: sending || !text.trim() ? 0.5 : 1 }}>
@@ -358,12 +364,12 @@ export function ClientThread(props) {
 // ─── Yelp ─────────────────────────────────────────────────────────────────────
 // Lisa's Yelp conversations (public.yelp_threads, admin read under migration
 // 121): the customer, Lisa, her follow-up nudge and Jake's own replies from the
-// Yelp app (logged by the "Yelp business messages" Zap). Read-only here:
-// replies happen in the Yelp app. Photos are the copies Lisa saved when they
+// Yelp app (logged by the "Yelp business messages" Zap). The reply box posts
+// through op yelp_send (v1.73.0) and is saved as Jake's reply. Photos are the copies Lisa saved when they
 // arrived (v1.72.0); Yelp's own links die after 24 hours.
 
 const YELP_RED = '#d32323';
-const SENDER = { owner: 'You (Yelp app)', lisa_nudge: 'Lisa, follow-up', lisa_gmail: 'Lisa (email)' };
+const SENDER = { owner_app: 'You (from the app)', owner: 'You (Yelp app)', lisa_nudge: 'Lisa, follow-up', lisa_gmail: 'Lisa (email)' };
 
 async function loadYelpThreads() {
   const { data, error } = await supabase
@@ -386,7 +392,7 @@ function yelpBubbles(t) {
       body: String(m.text || '').replace(/^\(quote request form, no message\)$/, 'Sent a quote request') + lost,
       created_at: m.at || t.updated_at,
       media,
-      sender: m.role === 'consumer' ? null : (SENDER[m.by] || 'Lisa'),
+      sender: m.role === 'consumer' ? null : (SENDER[m.by === 'owner' && m.via === 'app' ? 'owner_app' : m.by] || 'Lisa'),
     };
   });
 }
@@ -441,8 +447,9 @@ function YelpPane({ clients }) {
             {open.form && <div style={{ marginTop: open.address ? 4 : 0 }}>{open.form}</div>}
           </div>
         )}
-        <Thread messages={yelpBubbles(open)} canReply={false} height="100%"
-          footer="Reply in the Yelp app. Your replies show up here and Lisa reads them." />
+        <Thread messages={yelpBubbles(open)} canReply height="100%" onSent={load}
+          placeholder="Message on Yelp"
+          sendFn={(body) => sendLisaYelp({ leadId: open.lead_id, name: open.first_name, message: body })} />
       </div>
     );
   }

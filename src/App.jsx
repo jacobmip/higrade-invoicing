@@ -9,7 +9,7 @@ import { useActivityTracking } from "./activity.js";
 import { createPortal, flushSync } from "react-dom";
 import * as GCal from './googleCalendar.js';
 import * as db from './db.js';
-import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
+import { sendLisaText, sendLisaYelp, queueLisaCall, approveLisaCall } from './lisaActions.js';
 import { supabase } from './supabase.js';
 import { api } from './apiBase.js';
 import { canImportContacts, pickContact } from './contacts.js';
@@ -3049,6 +3049,9 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
               {m.card?.type === "confirm_sms" && <SendDraftCard draft={{ kind: "sms", phone: m.card.phone, message: m.card.message, invoiceId: m.card.invoiceId, status: m.card.status || "draft", result: m.card.result }}
                 onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, ...patch } } : x))}
                 sendSms={({ phone, message, invoiceId }) => sendLisaText({ phone, message, invoice: invoiceId ? data.invoices.find(x => x.id === invoiceId) : null })} />}
+              {m.card?.type === "confirm_yelp" && <SendDraftCard draft={{ kind: "yelp", name: m.card.name, message: m.card.message, status: m.card.status || "draft", result: m.card.result }}
+                onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, ...patch } } : x))}
+                sendYelp={({ message }) => sendLisaYelp({ leadId: m.card.leadId, name: m.card.name, message })} />}
               {m.card?.type === "confirm_email" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{m.card.invoiceId} · {fmt(m.card.total)}</div><div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Send to: {m.card.email}</div><div style={{ display: "flex", gap: 8 }}><button onClick={() => setMsgs(p => p.map((x, j) => j === i ? { ...x, card: { ...x.card, type: "email_cancelled" } } : x))} style={{ ...S.btn("ghost"), flex: 1, fontSize: 12, padding: "7px 0" }}>Cancel</button><button onClick={() => confirmEmail(i)} style={{ ...S.btn("navy"), flex: 2, fontSize: 12, padding: "7px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="mail" size={13} color="#fff" /> Confirm Send</button></div></div>}
               {m.card?.type === "email_sending" && <div style={{ marginTop: 10, background: "#f4f6fa", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>{[0,1,2].map(k => <span key={k} style={{ width: 7, height: 7, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${k*0.18}s infinite` }}/>)}<span style={{ fontSize: 12, color: "#888", marginLeft: 4 }}>Sending…</span></div>}
               {m.card?.type === "email_sent" && <div style={{ marginTop: 10, background: "#edfaf3", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}><Icon name="check" size={15} color="#27ae60" /><span style={{ fontSize: 12, fontWeight: 600, color: "#27ae60" }}>Sent!</span></div>}

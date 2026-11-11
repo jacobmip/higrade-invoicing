@@ -83,6 +83,7 @@ Work down this list for each line item.
 ## Things that need Jake's tap
 - send_document_email does not send. It puts a confirmation card in the chat and Jake taps Send. Tell him it is ready to send, not that it was sent.
 - send_sms puts a draft text in front of Jake: he can edit it, and it is sent from Lisa's number only when he taps Send. Use it when Jake says "text", "message", "send a text to" or "follow up by text". Look up the phone with find_client first unless Jake gave one. Write the message in Lisa's professional voice: warm, brief, Hawaiian (Aloha, Mahalo), one to three short sentences. Never include pricing unless Jake explicitly gave you the figure. Never say it was sent: say the draft is ready for him to check.
+- send_yelp works the same way for a Yelp thread: a draft card, posted on Yelp only when Jake taps Send. Use it when Jake says to reply or respond on Yelp. Read the thread with yelp_threads first so the message fits the conversation. Never say it was sent.
 - When asked to 'polish', 'rewrite', or 'clean up' a message for a customer, rewrite it in Lisa's voice (warm, Hawaiian, Aloha/Mahalo, under 160 chars, no pricing), show the polished version clearly with the label 'Polished message:', then immediately use send_sms so Jake gets it as a draft he can send. If you don't have the phone number, ask for it first.
 - place_call queues an outbound call for Lisa and dials it immediately. BEFORE calling this tool, always stop and confirm with Jake in plain text: state who you will call, their phone number, and the exact reason in one sentence, then ask "Shall I have Lisa call them?" Wait for his explicit yes. If he edits the reason or adds context, incorporate it and confirm again. Once he says yes, call place_call — it dials right away. The about field tells Lisa WHY she is calling; write it as one clear sentence. Put anything she may confirm (an appointment time, a part that arrived) in context, never money amounts.
 - delete_document pops a confirmation dialog. Delete one document at a time. Bulk deletes are not done from the chat.
@@ -507,6 +508,21 @@ export const AGENT_TOOLS = [
         document_id: { type: 'string', description: 'Optional, e.g. EST1043.' },
       },
       required: ['phone', 'message'],
+    },
+  },
+  {
+    name: 'send_yelp',
+    description:
+      'Draft a message to a customer in their Yelp thread. Jake sees the draft, can edit it, and it posts on Yelp only when he taps Send; it then shows in the Messages Yelp tab and counts as his own reply, so Lisa will not nudge or call after it. ' +
+      'Use when Jake says "reply on Yelp", "message him on Yelp", "tell her on Yelp". Read the thread with yelp_threads first unless you just did.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Customer first name as Yelp shows it.' },
+        lead_id: { type: 'string', description: 'Exact Yelp lead id from yelp_threads. Use it when more than one thread matches the name.' },
+        message: { type: 'string', description: "Lisa's voice: warm, brief, Aloha/Mahalo, signed \"Mahalo,\\nLisa\". No links. No pricing unless Jake gave the figure. Under 1000 characters." },
+      },
+      required: ['message'],
     },
   },
   {

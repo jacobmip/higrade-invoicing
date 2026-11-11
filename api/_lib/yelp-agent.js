@@ -845,6 +845,43 @@ export async function logYelpBusinessMessage(p) {
 }
 
 /**
+ * Jake sends a Yelp message from the app (the Yelp tab's reply box, or the AI
+ * chat's Send on Yelp card after he taps Send). Posted through the same Zapier
+ * catch hook the 2-minute nudge uses (settings.yelp_bump_hook_url: Catch Hook
+ * -> Yelp Create Message). Saved as by:'owner' so the follow-up script treats
+ * it as Jake's own reply: no nudge and no call after it. When the "Yelp
+ * business messages" Zap logs it back, the word match above skips it.
+ * Zapier answers as soon as it has the payload, so "sent" means handed to
+ * Zapier, not delivered on Yelp.
+ * POST /api/sms-inbound { op: 'yelp_send', lead_id, text } (admin session)
+ */
+export async function sendYelpMessage(p) {
+  const leadId = String(p.lead_id || '').trim();
+  const text = String(p.text || '').trim();
+  if (!leadId || !text) return { ok: false, status: 400, error: 'lead_id and text are required' };
+  if (text.length > 2000) return { ok: false, status: 400, error: 'Message too long for Yelp (2000 characters).' };
+  const thread = await loadThread(leadId);
+  if (!thread) return { ok: false, status: 404, error: 'No Yelp thread with that lead id.' };
+  const hook = String(await getSetting('yelp_bump_hook_url') || '').trim();
+  if (!/^https:\/\/hooks\.zapier\.com\//.test(hook)) {
+    return { ok: false, status: 409, error: 'The Yelp send hook is not set up (settings.yelp_bump_hook_url).' };
+  }
+  const r = await fetch(hook, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lead_id: leadId, reply: text }),
+    signal: AbortSignal.timeout(15000),
+  }).catch((e) => ({ ok: false, status: 0, statusText: e.message }));
+  if (!r.ok) return { ok: false, status: 502, error: `Zapier did not take the message (${r.status || r.statusText}). Nothing was sent.` };
+  const messages = Array.isArray(thread.messages) ? thread.messages.slice() : [];
+  messages.push({ role: 'business', text, at: new Date().toISOString(), by: 'owner', via: 'app' });
+  // Sent either way; a failed save is a missing bubble the log Zap fills in.
+  let logged = true;
+  try { await saveThread({ lead_id: leadId, messages }); } catch (e) { logged = false; console.error('[yelp_send] save failed:', e.message || e); }
+  return { ok: true, sent: true, logged, lead_id: leadId, name: thread.first_name || null };
+}
+
+/**
  * Store the phone number Yelp has for a lead (Zapier "Get Lead Details",
  * field temporary_phone_number). Called by the nudge Zap right after it posts
  * the nudge, so the follow-up call 7 minutes later has a number even for a

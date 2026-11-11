@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.73.0 — 2026-11-11
+
+- Reply on Yelp from the app. The Messages > Yelp tab has a reply box, and the AI header has a `send_yelp` tool: "reply to Dan on Yelp ..." puts an editable draft card in the chat that posts only when Jake taps Send. Both go through `op: 'yelp_send'` (admin session only), which posts via the same Zapier catch hook as the 2-minute nudge (`settings.yelp_bump_hook_url`) and saves the message as `by: 'owner', via: 'app'`. Counting it as Jake's reply means `AI-OS/scripts/yelp_followup.py` never nudges or calls after it, and the log Zap's echo is skipped by the words match. Shown as "You (from the app)".
+
 ## v1.72.5 — 2026-11-11
 
 - Yelp ops on `/api/sms-inbound` also accept Zapier's field names: `yelp_lead_id` for `lead_id` and `content` for `message`. `yelp_reply` and `yelp_bump` answers carry the draft as `content` as well as `reply`. Either naming now works.

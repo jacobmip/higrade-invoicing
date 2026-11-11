@@ -672,6 +672,28 @@ async function sendSms(input, ctx) {
   };
 }
 
+// Yelp: a draft card like send_sms. Nothing goes out until Jake taps Send.
+async function sendYelp(input) {
+  const message = String(input.message || '').trim();
+  if (!message) return { error: 'The message is empty.' };
+  let q = supabase.from('yelp_threads').select('lead_id,first_name,updated_at').order('updated_at', { ascending: false }).limit(5);
+  if (input.lead_id) q = q.eq('lead_id', String(input.lead_id).trim());
+  else if (input.name) q = q.ilike('first_name', `%${String(input.name).trim()}%`);
+  else return { error: 'Say which Yelp customer (name or lead_id).' };
+  const { data, error } = await q;
+  if (error) return { error: `Could not read Yelp threads: ${error.message}` };
+  if (!data?.length) return { error: `No Yelp thread found for ${input.name || input.lead_id}.` };
+  if (data.length > 1 && !input.lead_id) {
+    return { error: `More than one Yelp thread matches: ${data.map(t => `${t.first_name} (lead_id ${t.lead_id})`).join(', ')}. Ask Jake which one, or pass lead_id.` };
+  }
+  const t = data[0];
+  return {
+    ok: true, sent: false,
+    note: `Draft shown to Jake for ${t.first_name} on Yelp. Nothing is sent until he taps Send. Do not say it was sent; say the draft is ready.`,
+    card: { type: 'confirm_yelp', leadId: t.lead_id, name: t.first_name, message },
+  };
+}
+
 // Queue then immediately dial — Jake already confirmed in chat.
 async function placeCall(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
@@ -812,6 +834,7 @@ const TOOLS = {
   send_document_email: sendDocumentEmail,
   draft_change_order: draftChangeOrder,
   send_sms: sendSms,
+  send_yelp: sendYelp,
   place_call: placeCall,
   delete_document: deleteDocument,
   lisa_switch: lisaSwitch,
@@ -821,7 +844,7 @@ const TOOLS = {
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
   'remove_line_item', 'update_document', 'record_payment', 'save_price', 'schedule_job',
-  'send_document_email', 'send_sms', 'place_call', 'delete_document', 'draft_change_order', 'lisa_switch',
+  'send_document_email', 'send_sms', 'send_yelp', 'place_call', 'delete_document', 'draft_change_order', 'lisa_switch',
 ]);
 
 // What the chat shows while a tool runs.
@@ -851,6 +874,7 @@ const PROGRESS = {
   schedule_job: (i) => `Booking ${i.client_name || 'job'}`,
   send_document_email: 'Preparing email',
   send_sms: (i) => `Drafting a text to ${i.phone || 'customer'}`,
+  send_yelp: (i) => `Drafting a Yelp message${i.name ? ` to ${i.name}` : ''}`,
   draft_change_order: (i) => `Writing a change order on ${i.document_id || 'the invoice'}`,
   place_call: (i) => `Dialing ${i.name || i.phone || 'customer'}…`,
   delete_document: (i) => `Deleting ${i.document_id || 'document'}`,
@@ -967,7 +991,7 @@ async function callModel(messages) {
 // and nothing was actually written, the model is describing work it did not do.
 // "drafted" and friends added v1.57.0: the invoice chat said it had "drafted
 // up" a change order with no action behind it, and nothing caught it.
-const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set|drafted|prepared|written|put together)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set|drafted|prepared|wrote|put together)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved|drafted)|drafted\s+(up|a|the|your)|(here'?s|here is)\s+(the|your)\s+draft|done!|(create_change_order|update_change_order|send_change_order|draft_change_order|add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|send_sms|place_call|delete_invoice|delete_document))/i;
+const CLAIM_RE = /\b(i'?ve\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set|drafted|prepared|written|put together)|i\s+(added|created|updated|changed|removed|deleted|scheduled|sent|recorded|saved|set|drafted|prepared|wrote|put together)|just\s+(added|created|updated|removed|scheduled|deleted|sent|recorded|saved|drafted)|drafted\s+(up|a|the|your)|(here'?s|here is)\s+(the|your)\s+draft|done!|(create_change_order|update_change_order|send_change_order|draft_change_order|add_items|add_line_items|create_invoice|create_estimate|create_document|create_client|update_item|update_line_item|update_invoice|update_document|remove_item|remove_line_item|add_payment|record_payment|schedule_job|send_email|send_document_email|send_sms|send_yelp|place_call|delete_invoice|delete_document))/i;
 export function claimsAction(text) { return CLAIM_RE.test(text || ''); }
 
 export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx, onProgress }) {

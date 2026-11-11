@@ -2,6 +2,7 @@
 // Nothing is sent until Jake taps Send; Cancel sends nothing.
 //
 //   draft.kind 'sms'           { phone, message, invoiceId }   the text is editable
+//   draft.kind 'yelp'          { name, message }  posted in their Yelp thread (sendYelp)
 //   draft.kind 'change_order'  { coId, invoiceId, label, total, email, phone }
 //                              shows the exact email (rendered) and text the
 //                              server would send, with Email / Text choices
@@ -18,7 +19,7 @@ const label = { fontSize: 11, fontWeight: 700, color: '#6677aa', letterSpacing: 
 const input = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1.5px solid #dde2ee', borderRadius: 8, fontSize: 14, fontFamily: "'Barlow', sans-serif", background: '#fff' };
 const btn = (primary) => ({ flex: primary ? 2 : 1, border: primary ? 'none' : '1.5px solid #dde2ee', background: primary ? NAVY : '#fff', color: primary ? '#fff' : NAVY, borderRadius: 8, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' });
 
-export default function SendDraftCard({ draft, onUpdate, sendSms }) {
+export default function SendDraftCard({ draft, onUpdate, sendSms, sendYelp }) {
   const [phone, setPhone] = useState(draft.phone || '');
   const [message, setMessage] = useState(draft.message || '');
   const [email, setEmail] = useState(draft.email || '');
@@ -48,6 +49,11 @@ export default function SendDraftCard({ draft, onUpdate, sendSms }) {
         onUpdate({ status: 'sending' });
         const r = await sendSms({ phone, message: message.trim(), invoiceId: draft.invoiceId });
         onUpdate({ status: 'sent', phone, message: message.trim(), result: r?.text || `Texted ${phone}.` });
+      } else if (draft.kind === 'yelp') {
+        if (!message.trim()) throw new Error('The message is empty.');
+        onUpdate({ status: 'sending' });
+        const r = await sendYelp({ message: message.trim() });
+        onUpdate({ status: 'sent', message: message.trim(), result: r?.text || 'Sent on Yelp.' });
       } else {
         if (!viaEmail && !viaText) throw new Error('Pick email, text or both.');
         if (viaEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new Error('Enter an email address.');
@@ -74,6 +80,13 @@ export default function SendDraftCard({ draft, onUpdate, sendSms }) {
           <div style={{ ...label, marginTop: 8 }}>Text message</div>
           <textarea aria-label="Draft text message" value={message} onChange={e => setMessage(e.target.value)} rows={4} style={{ ...input, resize: 'vertical' }} disabled={!open} />
           <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{message.length} characters. Edit it here before sending.</div>
+        </>
+      )}
+      {draft.kind === 'yelp' && (
+        <>
+          <div style={label}>Yelp message to {draft.name || 'customer'}</div>
+          <textarea aria-label="Draft Yelp message" value={message} onChange={e => setMessage(e.target.value)} rows={5} style={{ ...input, resize: 'vertical' }} disabled={!open} />
+          <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>Posts in their Yelp thread as your reply. Edit it here before sending.</div>
         </>
       )}
       {draft.kind === 'change_order' && (

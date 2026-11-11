@@ -42,6 +42,16 @@ export async function sendLisaText({ phone, message, invoice }) {
   return { ...out, text: `Text sent to ${p}: ${preview}` };
 }
 
+// Jake's own message into a Yelp thread (op yelp_send). Saved as his reply, so
+// Lisa's follow-up script never nudges or calls after it.
+export async function sendLisaYelp({ leadId, message, name }) {
+  const body = String(message || '').trim();
+  if (!leadId) throw new Error('Which Yelp thread? The lead id is missing.');
+  if (!body) throw new Error('The message is empty.');
+  const out = await post({ op: 'yelp_send', lead_id: leadId, text: body });
+  return { ...out, text: `Sent on Yelp${name ? ` to ${name}` : ''}. It shows in the Yelp tab and Lisa reads it.` };
+}
+
 export async function queueLisaCall({ phone, name, about, context, invoiceId }) {
   const p = String(phone || '').trim();
   const reason = String(about || '').trim();
