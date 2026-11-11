@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.72.3 — 2026-11-11
+
+- Header AI: a visit it booked on a document it had just created no longer drops off the calendar. The "Created" card's Open button opened the copy saved in the chat at creation time, before the visit; editing that copy put it back into the app's memory without the visit, so the calendar drew the Google event as a grey "Other" block. Open now takes the live document by number. The database kept the visit, so a reload restores bookings already affected.
+- Test: `SCENARIO=aiopen` in `test/e2e/estimate-co.mjs`.
+
 ## v1.72.2 — 2026-11-09
 
 - **New op `yelp_phone`** on `POST /api/sms-inbound` (`{ op: 'yelp_phone', lead_id, phone }`, webhook secret only): stores the phone Yelp has for a lead (`setYelpPhone()`), filling an empty `yelp_threads.phone` only. The nudge Zap calls it after posting the nudge (Yelp Get Lead Details, `temporary_phone_number`), so the follow-up call has a number even when the customer never replied. Jojo's lead arrived with no phone because only the New Lead Zap passed one.

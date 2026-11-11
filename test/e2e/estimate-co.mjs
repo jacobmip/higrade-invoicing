@@ -51,6 +51,8 @@ if (SCENARIO === 'dup') {
 if (SCENARIO === 'lock') db.invoice_items.push({ id:'i3', invoice_id:'INV1300', name:'Loose fix', description:'added after signing', qty:1, price:80, unit:'ea', taxable:true, sort_order:2 });
 db.clients = [{ id:'c1', name:'Test Client', phone:'8085551234', email:'pat@example.com', addresses:[] }];
 const aiPrompts = [];
+let aiDocId = null;
+const hiToday = () => new Date(Date.now() - 10 * 3600e3).toISOString().slice(0, 10);
 const dialogs = [];
 db.saved_items = [{ id: 's1', name: 'Angle stop replacement', price: 95, category: 'Valves', owner_id: JAKE, taxable: true }];
 db.job_photos = [{ id: 'jp1', invoice_id: 'INV1300', url: 'https://cwhgcxxszyvevjpbnnkc.supabase.co/storage/v1/object/public/job-photos/INV1300/old.jpg', type: 'before', created_at: now }];
@@ -95,6 +97,11 @@ await page.route('**/*', async route => {
       aiPrompts.push(b);
       if (b?.mode === 'agent') {
         const n = aiPrompts.filter(x => x.mode === 'agent').length;
+        if (SCENARIO === 'aiopen') {
+          if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'create_document', input: { type: 'estimate', client_name: 'Test Client', items: [{ name: 'Shower valve', qty: 1, price: 1200 }] } }] });
+          if (n === 2) { const id = (JSON.stringify(b).match(/EST1[0-9]{3}/g) || []).filter(x => !['EST1300', 'EST1301'].includes(x)).pop(); aiDocId = id; return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu2', name: 'schedule_job', input: { document_id: id, date: hiToday(), time: '09:00', duration_hours: 5, job_description: 'Shower conversion' } }] }); }
+          return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Created and booked.' }] });
+        }
         if (SCENARIO === 'globaladd') {
           if (n === 1) return json({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'add_line_items', input: { document_id: 'INV1300', items: [{ name: 'Shower valve', qty: 1, price: 240 }] } }] });
           return json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Added.' }] });
@@ -436,6 +443,28 @@ if (SCENARIO === 'codel') {
   check('its lines left the invoice, the rest stayed', last && !last.items.some(i => /^Add shutoff valve/.test(i)) && last.items.some(i => /^Water heater/.test(i)), JSON.stringify(last && last.items));
   check('confirm asked before each delete', dialogs.filter(d => /Delete INV1300-CO/.test(d)).length === 2, JSON.stringify(dialogs));
   check('card shows none left', (await page.getByRole('button', { name: /^Delete INV1300-CO/ }).count()) === 0);
+}
+if (SCENARIO === 'aiopen') {
+  // ── v1.72.3: opening a document from the header AI's "Created" card must not undo a later booking ──
+  await page.goto(BASE + '/'); await page.waitForTimeout(2500);
+  await page.getByRole('button', { name: 'AI assistant' }).click(); await page.waitForTimeout(800);
+  await page.getByLabel('Chat message').fill('Make an estimate for Test Client and book it Nov 20 at 9');
+  await page.getByLabel('Chat message').press('Enter');
+  await page.waitForTimeout(6000);
+  const visitWrites = () => patches.filter(x => 'visits' in x.b && x.q.includes(aiDocId));
+  check('the booking wrote a visit on the new estimate', aiDocId && visitWrites().some(x => Array.isArray(x.b.visits) && x.b.visits.length === 1), JSON.stringify({ aiDocId, w: visitWrites() }));
+  if (!process.env.NOOPEN) { await page.getByText(`${aiDocId} Created`).first().click(); await page.waitForTimeout(3000); } else { await page.getByRole('button', { name: 'Close' }).first().click().catch(() => {}); await page.keyboard.press('Escape'); await page.waitForTimeout(800); }
+  // Edit something so the form saves, then leave.
+  if (!process.env.NOOPEN) {
+  await page.getByRole('button', { name: 'Price Book' }).first().dispatchEvent('click'); await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Add Angle stop replacement' }).dispatchEvent('click'); await page.waitForTimeout(3000);
+  }
+  if (!process.env.NOOPEN) await page.getByRole('button', { name: 'Done', exact: true }).first().click({ force: true }).catch(() => {}); await page.waitForTimeout(3000);
+  const w = visitWrites();
+  await page.getByRole('button', { name: /^Calendar/ }).first().click().catch(() => {}); await page.waitForTimeout(2500);
+  const cal = await text();
+  check('the booking still shows on the calendar as that estimate', cal.includes(aiDocId), (cal.match(/\d\d\/\d\d\/\d{4}[\s\S]{0,300}/) || [''])[0].replace(/\n/g, ' | '));
+  check('opening the card and leaving keeps the visit', w.length && Array.isArray(w[w.length - 1].b.visits) && w[w.length - 1].b.visits.length === 1, JSON.stringify(w.map(x => x.b.visits)));
 }
 log(fails ? `${fails} FAILED` : 'ALL PASS');
 await browser.close();

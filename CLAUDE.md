@@ -536,6 +536,11 @@ browser, up to 12 model calls per message.
   with `{ error }`.
 - A write to a document open in the form is refused (`openDocId`), because of
   the open-form overwrite below.
+- **Chat cards hold a copy of the document from when they were made** (and
+  they persist in `ai_chat_history`). Anything that opens a document from a
+  card must look it up live by id: `onOpenDoc` does, via `dataRef` (v1.72.3).
+  Opening the stored copy put a visit-less version back into memory on the
+  first save, and the calendar showed the booking as a grey "Other" event.
 - **Scheduling with a `document_id` goes through the `add_visit` action,** which
   does what `ScheduleJobModal` does: appends to `invoices.visits` via
   `updateInvoiceVisits`, creates the Google event with `buildCalendarEvent`
