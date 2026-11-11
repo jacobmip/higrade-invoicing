@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.72.4 — 2026-11-11
+
+- A reschedule or cancel request Lisa takes on Yelp no longer says "<name> called Lisa". The notification, email and history now say "<name> asked on Yelp to MOVE/CANCEL their visit" (history `via: lisa_yelp`); phone requests are unchanged. Migration 124 patches `request_visit_change()` on its live definition and corrects the Yelp notifications already written (Dan, 2026-11-11, which had no call recording because there was no call).
+
 ## v1.72.3 — 2026-11-11
 
 - Header AI: a visit it booked on a document it had just created no longer drops off the calendar. The "Created" card's Open button opened the copy saved in the chat at creation time, before the visit; editing that copy put it back into the app's memory without the visit, so the calendar drew the Google event as a grey "Other" block. Open now takes the live document by number. The database kept the visit, so a reload restores bookings already affected.
