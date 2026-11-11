@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.73.1 — 2026-11-11
+
+- "Polish with AI" reads the conversation. It now sends the last 20 messages of that thread (texts or Yelp) with the draft, so the rewrite fits as the next message: no fresh "Aloha" mid-conversation, nothing repeated, every time, date and price in the draft kept as written. The Yelp tab polishes for Yelp (Mahalo, Lisa sign-off), the texts tab for SMS length. The AI header's polish rule now reads the thread first too (`get_messages` / `yelp_threads`).
+
 ## v1.73.0 — 2026-11-11
 
 - Reply on Yelp from the app. The Messages > Yelp tab has a reply box, and the AI header has a `send_yelp` tool: "reply to Dan on Yelp ..." puts an editable draft card in the chat that posts only when Jake taps Send. Both go through `op: 'yelp_send'` (admin session only), which posts via the same Zapier catch hook as the 2-minute nudge (`settings.yelp_bump_hook_url`) and saves the message as `by: 'owner', via: 'app'`. Counting it as Jake's reply means `AI-OS/scripts/yelp_followup.py` never nudges or calls after it, and the log Zap's echo is skipped by the words match. Shown as "You (from the app)".
