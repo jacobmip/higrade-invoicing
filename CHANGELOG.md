@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.75.0 — 2026-11-11
+
+- New clients get First / Last name filled in. Lisa's leads were saved with only `name`, so Dan (EST1204) showed "Dan" but blank First and Last in the edit form. Migration 125 adds a trigger that splits a person-looking name on insert or name change when first, last and company are all empty, and backfilled the five clients created since migration 109.
+- Lisa on Yelp fills in the client profile. Once a visit is booked (or the customer is verified by phone or address), she asks for whatever the profile is missing: full name, email, phone, service address, once, in the confirmation. What they send is saved by `saveClientContact()` (`yelp-booking.js`): empty fields only, a second email to the secondary email, a full name to first / last when the first name agrees. The model's JSON now carries `email`. The booking's own client is used, never a name-only match.
+- Lisa's `moveVisit()` bumps `invoices.updated_at`, the app's stale-save lock. Without it, an estimate left open in the app saved its old visit back over the move (EST1204 went back to Tue 4 PM while the calendar said Thu 9 AM).
+- Availability checks only the business calendar (`google_credentials.calendar_id`, higradeplumbing@gmail.com). Jake's personal and Work calendars no longer block Lisa's bookings on phone, text, Yelp or the web form: the apprentice takes jobs while Jake is busy.
+
 ## v1.74.0 — 2026-11-11
 
 - Lisa books and moves Yelp visits herself (Jake: "don't pass it to the team, just book it"). A reschedule on Yelp to a time that is in business hours (weekday, start 8 AM to 3 PM, at least an hour out) and clear on the calendar is applied before her reply goes out: `moveVisit()` in `yelp-booking.js` patches the Google event through the stored grant (`_lib/gcal.js`, write calendar first, then the read calendars), then `invoices.visits`, then an `invoice_events` row `visit_moved` `{ from, to, via: 'lisa_yelp' }`. Jake gets a one-line Telegram FYI. A taken or out-of-hours time gets real open alternatives instead; a failed move tells the customer she is updating it and Telegrams Jake. Cancels are still recorded for Jake (`request_visit_change`).

@@ -27,7 +27,7 @@ import { getSetting } from './sms.js';
 import { checkAppointment } from './availability-check.js';
 import { otherChannelsBlock } from './client-history.js';
 import {
-  hawaiiNow, speakVisit, upcomingVisits, onMyWayToday, matchClient, bookVisit, requestChange, openSlots, requestedDates, moveVisit, inBusinessHours,
+  hawaiiNow, speakVisit, upcomingVisits, onMyWayToday, matchClient, bookVisit, requestChange, openSlots, requestedDates, moveVisit, inBusinessHours, clientIdForDoc, saveClientContact,
 } from './yelp-booking.js';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
@@ -163,6 +163,19 @@ function clientBlock({ match, visits, omw, thread }) {
   }
   if (omw) lines.push(`The tech texted them an "on my way" message today at ${omw}.`);
   if (thread?.estimate_id) lines.push(`You already booked a visit from this thread (${thread.estimate_id}). Do not book another.`);
+  // What the client profile still needs (v1.75.0). Only once a visit is booked
+  // or the customer is verified: never reveal or ask about a name-only match.
+  const c = match?.client && match.level !== 'name' ? match.client : null;
+  if (thread?.estimate_id || c) {
+    const missing = [];
+    if (!(c?.last_name || /\S+\s+\S+/.test(String(c?.name || '')))) missing.push('full name (first and last)');
+    if (!(c?.email || thread?.email)) missing.push('email address');
+    if (!(c?.mobile || c?.phone || thread?.phone)) missing.push('best phone number');
+    if (!(c?.address1 || thread?.address)) missing.push('service address with unit');
+    lines.push(missing.length
+      ? `STILL MISSING FOR THEIR CLIENT PROFILE: ${missing.join(', ')}. Once the visit is booked, ask for these in one friendly sentence (in the booking confirmation itself is best). Ask only once: if they skip it, drop it.`
+      : 'Their client profile is complete (full name, email, phone, address). Do not ask for any of it.');
+  }
   return lines.join('\n');
 }
 
@@ -189,6 +202,7 @@ YOUR JOB
 Turn this conversation into a booked visit, fast. A customer asking about scheduling is the most valuable message you will ever get. Work in this order:
 1. If they ask to schedule, ask when someone can come, or say they want someone out: offer TWO of the open times above by day and time and ask which works. In the same message, if you do not have it yet, ask for the service address. Do NOT ask diagnostic questions first: details get sorted at the visit.
 2. When they pick a time: confirm it and ask for whatever is still missing of the service address (with unit) and the best phone number to reach them. Both in one sentence is fine.
+After booking: get their full name (first and last) and email address too if STILL MISSING FOR THEIR CLIENT PROFILE lists them, in the same friendly sentence as the confirmation. Whatever they send is saved to their profile automatically: thank them for it in a few words, never read it back in full, and never say it is "on file" unless they sent it.
 3. Once you have a time, the address and a phone number: set ready_to_book true with appointment set to that time, and tell them they are booked for that day and time and we will see them then. It is a confirmed booking: never say penciled in, pending, or that the team will confirm. Keep it short. (The system checks the calendar before your reply goes out and replaces it if the time is taken.)
 4. If they ask about price: give the price-book range (rules below), then go to step 1.
 5. Anything else: answer in a sentence or two the way an experienced plumbing office would, then move toward step 1.
@@ -258,6 +272,7 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
   "spam": false,
   "name": "their full name if they gave it, else empty",
   "phone": "the phone number they gave in this thread, else empty",
+  "email": "the email address they gave in this thread, else empty",
   "address": "the full service address with unit they gave in this thread, else empty",
   "problem": "what is wrong, one or two sentences",
   "urgency": "emergency, urgent, or routine",
@@ -840,6 +855,22 @@ export async function draftYelpReply(p) {
   if (d.needs_human && !out.action) {
     await telegramNotify(`Yelp: ${who}\n${String(d.note || 'Needs you.').slice(0, 300)}\nThey wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
   }
+
+  // What they told us goes onto their client profile (v1.75.0): the client this
+  // thread booked, or a phone/address-verified match. Never a name-only match.
+  try {
+    // The booking's own client, never row.client_id: that can be a name-only match.
+    const profileId = row.estimate_id ? await clientIdForDoc(row.estimate_id)
+      : (match.client && match.level !== 'name' ? match.client.id : null);
+    const gotEmail = extractContact(String(d.email || '')).email || contact.email;
+    if (gotEmail) row.email = gotEmail;
+    if (profileId) {
+      const saved = await saveClientContact({
+        clientId: profileId, fullName: d.name, email: gotEmail || row.email, phone: row.phone, address: row.address,
+      });
+      if (saved.length) out.profile_saved = saved;
+    }
+  } catch (e) { console.error('[yelp-agent] profile save failed:', e.message || e); }
 
   messages.push({ role: 'business', text: polished.text, at: new Date().toISOString() });
   row.replies_sent += 1;

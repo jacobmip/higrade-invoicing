@@ -16,9 +16,10 @@
 // Busy comes from two places, because the two systems that book are separate:
 //   1. invoices: gcal_date and every entry of visits[] (Lisa's own bookings and
 //      the app's, including ones whose Google event never got created).
-//   2. Google Calendar: every calendar in google_credentials.read_calendar_ids
-//      plus the write calendar (Jake's personal calendar and Work), so a dentist
-//      appointment that is on no invoice still blocks.
+//   2. Google Calendar: the write calendar only (google_credentials.calendar_id,
+//      higradeplumbing@gmail.com), so a job on it that is on no invoice still
+//      blocks. Personal and Work calendars stopped counting in v1.75.0 (Jake:
+//      the apprentice handles jobs while he is busy with other things).
 //
 // FAILS CLOSED. If Google cannot be read the answer is a 502, not a partial
 // list: a partial list that omits the calendar is exactly the silent double
@@ -179,8 +180,9 @@ async function googleToken() {
 async function googleBlocks(date) {
   let { token, cred } = await googleToken();
   if (!cred) cred = (await sbGet('google_credentials?id=eq.google_calendar&select=calendar_id,read_calendar_ids&limit=1'))?.[0];
-  const ids = Array.isArray(cred?.read_calendar_ids) ? cred.read_calendar_ids.filter(Boolean) : [];
-  const calendars = Array.from(new Set([...ids, cred?.calendar_id || 'primary']));
+  // Only the business calendar (v1.75.0, Jake 2026-11-11): with the apprentice
+  // taking jobs, Jake's personal and Work calendars no longer block a booking.
+  const calendars = [cred?.calendar_id || 'primary'];
 
   // The Hawaii day is 10:00Z to 10:00Z the next day.
   const timeMin = `${date}T10:00:00Z`;

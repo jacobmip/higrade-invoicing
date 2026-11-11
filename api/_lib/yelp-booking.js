@@ -95,7 +95,7 @@ export async function onMyWayToday(docIds) {
 
 async function getClient(id) {
   const rows = await select(
-    `clients?id=eq.${encodeURIComponent(id)}&select=id,name,first_name,last_name,phone,mobile,address1,address_unit&limit=1`);
+    `clients?id=eq.${encodeURIComponent(id)}&select=id,name,first_name,last_name,email,email2,phone,mobile,address1,address_unit&limit=1`);
   return rows[0] || null;
 }
 
@@ -159,7 +159,7 @@ export async function matchClient({ clientId, level, displayName, phone, address
   if (!n) return { client: null, level: null };
   const rows = await select(
     `clients?or=(first_name.ilike.${encodeURIComponent(n.first)},name.ilike.${encodeURIComponent(n.first)},name.ilike.${encodeURIComponent(n.first + ' *')})` +
-    `&select=id,name,first_name,last_name,phone,mobile,address1,address_unit&limit=20`);
+    `&select=id,name,first_name,last_name,email,email2,phone,mobile,address1,address_unit&limit=20`);
   // A record with no last name (a quick-add like "Diane") cannot contradict the
   // initial, so it stays a candidate; uniqueness below still has to hold.
   const byInitial = rows.filter((c) => {
@@ -374,7 +374,11 @@ export async function moveVisit({ clientId, visitStart, newTime }) {
 
   const visits = hit.doc.visits.map((v, i) => (i === hit.i ? { ...v, start: to } : v));
   const r = await fetch(`${supabaseUrl()}/rest/v1/invoices?id=eq.${encodeURIComponent(hit.doc.id)}`, {
-    method: 'PATCH', headers: { ...sbHeaders(), Prefer: 'return=minimal' }, body: JSON.stringify({ visits }),
+    method: 'PATCH', headers: { ...sbHeaders(), Prefer: 'return=minimal' },
+    // updated_at is the app's stale-save lock (db.js expected_updated_at):
+    // without bumping it, an estimate left open in the app saves its old
+    // visit back over this move (EST1204, 2026-11-11).
+    body: JSON.stringify({ visits, updated_at: new Date().toISOString() }),
   });
   if (!r.ok) return { ok: false, doc: hit.doc.id, reason: `calendar moved but the app did not save (${r.status})` };
   await fetch(`${supabaseUrl()}/rest/v1/invoice_events`, {
@@ -382,4 +386,57 @@ export async function moveVisit({ clientId, visitStart, newTime }) {
     body: JSON.stringify({ invoice_id: hit.doc.id, kind: 'visit_moved', recipient: null, meta: { from, to, via: 'lisa_yelp' } }),
   }).catch(() => {});
   return { ok: true, doc: hit.doc.id, from, to };
+}
+
+/** The client a document belongs to (a thread's booking), or null. */
+export async function clientIdForDoc(docId) {
+  if (!docId) return null;
+  const rows = await select(`invoices?id=eq.${encodeURIComponent(docId)}&select=client_id&limit=1`);
+  return rows[0]?.client_id || null;
+}
+
+/**
+ * What the customer told Lisa, onto their client profile (v1.75.0, Jake
+ * 2026-11-11: "lisa should be actively adding it to their client profile").
+ * Fills EMPTY fields only, never overwrites what Jake typed: a different
+ * email goes to the secondary email when that is empty. A full name fills
+ * first / last when last is empty and the first name agrees, and upgrades a
+ * one-word display name ("Dan" -> "Dan Miyamoto").
+ * Only for a client this thread booked or a phone/address-verified match:
+ * the caller decides that.
+ * @returns {Promise<string[]>} the fields written
+ */
+export async function saveClientContact({ clientId, fullName, email, phone, address }) {
+  if (!clientId) return [];
+  const rows = await select(`clients?id=eq.${encodeURIComponent(clientId)}&select=id,name,first_name,last_name,company_name,email,email2,phone,mobile,address1&limit=1`);
+  const c = rows[0];
+  if (!c) return [];
+  const patch = {};
+  const em = String(email || '').trim().toLowerCase();
+  if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+    const has = [c.email, c.email2].map((x) => String(x || '').toLowerCase());
+    if (!c.email) patch.email = em;
+    else if (!has.includes(em) && !c.email2) patch.email2 = em;
+  }
+  const digits = String(phone || '').replace(/\D/g, '').slice(-10);
+  if (digits.length === 10 && !c.mobile && !c.phone) patch.mobile = `+1${digits}`;
+  const addr = String(address || '').trim();
+  if (addr && !c.address1) patch.address1 = addr.slice(0, 300);
+  const parts = String(fullName || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  if (parts.length >= 2 && parts.every((w) => /^[A-Za-z][A-Za-z'.-]*$/.test(w)) && !c.last_name && !c.company_name) {
+    const first = parts[0], last = parts.slice(1).join(' ');
+    const known = String(c.first_name || String(c.name || '').split(' ')[0] || '').toLowerCase();
+    if (!known || known === first.toLowerCase()) {
+      patch.first_name = first;
+      patch.last_name = last;
+      if (!String(c.name || '').trim().includes(' ')) patch.name = `${first} ${last}`;
+    }
+  }
+  const fields = Object.keys(patch);
+  if (!fields.length) return [];
+  const r = await fetch(`${supabaseUrl()}/rest/v1/clients?id=eq.${encodeURIComponent(clientId)}`, {
+    method: 'PATCH', headers: { ...sbHeaders(), Prefer: 'return=minimal' }, body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`clients update ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return fields;
 }
