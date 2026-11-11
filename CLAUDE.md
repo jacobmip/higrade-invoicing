@@ -442,7 +442,7 @@ numbers are therefore not contiguous, which was an accepted trade-off.
 
 - **116** — **applied and verified 2026-11-09.** `yelp_threads` gains `client_id` (uuid, FK `clients`, on delete set null), `match_level` (check `phone` | `address` | `name`), `address` and `estimate_id` (text, since `invoices.id` is text). Ties a Yelp thread to the matched client and the visit Lisa booked from it, so one thread can never book twice. No RLS change. Dry-run clean; the four columns confirmed in `information_schema` after a schema reload. Next migration is 117.
 
-- **116 (second file)** — `116_yelp_followup_tracking.sql`, **written 2026-11-09, applied state unchecked.** `yelp_threads.second_message_sent_at`, `call_queued_at` (timestamptz), `service_summary` (text), for the Yelp follow-up cron (`scripts/yelp_followup.py` in AI-OS) and `saveBumpSent()`. No RLS change. **There are two 116 files** (this and `116_yelp_thread_client.sql`); they add different columns.
+- **118** — `118_yelp_followup_tracking.sql`, **applied 2026-11-09 (per commit bd30fb7, v1.68.0).** `yelp_threads.second_message_sent_at`, `call_queued_at` (timestamptz), `service_summary` (text), for the Yelp follow-up cron (`scripts/yelp_followup.py` in AI-OS) and `saveBumpSent()`. No RLS change. Earlier listed here by mistake as a second 116 file; there is only one 116 (`116_yelp_thread_client.sql`).
 
 - **117** — **applied and verified 2026-11-09.** `yelp_threads.form` (text): the Yelp quote form summary, refreshed whenever a Zap sends form fields, given to every Lisa reply (v1.65.0). No RLS change. Dry-run clean; column confirmed after a schema reload. Next migration is 118.
 
