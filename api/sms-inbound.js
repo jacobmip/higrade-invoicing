@@ -174,6 +174,11 @@ async function appSend(req, res) {
       if (!viaSecret) return jsonOut(res, 403, { error: 'admin only' });
     }
     const { params } = await readBody(req);
+    // Zapier's Yelp steps may name these yelp_lead_id / content (v1.72.5).
+    if (/^yelp_/.test(params.op || '')) {
+      if (params.lead_id == null && params.yelp_lead_id != null) params.lead_id = params.yelp_lead_id;
+      if (params.message == null && params.content != null) params.message = params.content;
+    }
     // Ballpark for a lead filed outside this route (the Yelp script). Secret or
     // session. Queues the work and answers; the proposal itself is gated by
     // proposeLeadEstimate (lead_channel, address, description, not yet asked).
@@ -188,6 +193,7 @@ async function appSend(req, res) {
     // Sends nothing itself. See ./_lib/yelp-agent.js.
     if (params.op === 'yelp_reply') {
       const r = await draftYelpReply(params);
+      if (r && typeof r.reply === 'string') r.content = r.reply; // same text under Zapier's name
       return jsonOut(res, r.ok ? 200 : (r.error && /required/.test(r.error) ? 400 : 502), r);
     }
     // A message the business posted on Yelp (Zapier "New Business Message"):
@@ -206,7 +212,7 @@ async function appSend(req, res) {
       if (!viaSecret) return jsonOut(res, 403, { error: 'secret required' });
       const result = await generateYelpBump(params.lead_id);
       if (!result) return jsonOut(res, 404, { error: 'thread not found or no reply yet' });
-      return jsonOut(res, 200, { ok: true, ...result });
+      return jsonOut(res, 200, { ok: true, ...result, ...(typeof result.reply === 'string' ? { content: result.reply } : {}) });
     }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });

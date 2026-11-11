@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.72.5 — 2026-11-11
+
+- Yelp ops on `/api/sms-inbound` also accept Zapier's field names: `yelp_lead_id` for `lead_id` and `content` for `message`. `yelp_reply` and `yelp_bump` answers carry the draft as `content` as well as `reply`. Either naming now works.
+
 ## v1.72.4 — 2026-11-11
 
 - A reschedule or cancel request Lisa takes on Yelp no longer says "<name> called Lisa". The notification, email and history now say "<name> asked on Yelp to MOVE/CANCEL their visit" (history `via: lisa_yelp`); phone requests are unchanged. Migration 124 patches `request_visit_change()` on its live definition and corrects the Yelp notifications already written (Dan, 2026-11-11, which had no call recording because there was no call).
