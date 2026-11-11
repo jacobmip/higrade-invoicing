@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.75.1 — 2026-11-11
+
+- Lisa on Yelp reads a phone number typed with no spaces or dashes. `extractContact()` used `\b` before the area code, so "+18084291919" matched nothing: Alexander's phone was never saved, the booking step skipped, and he was told he was booked with nothing filed. Digit lookarounds replace `\b`. Booked by hand as EST1207 (Fri Nov 20, 10 AM).
+- Lisa never says "booked" when the booking cannot be filed. If the time is clear but the thread still has no phone or service address, the reply asks for the missing piece instead of confirming.
+
 ## v1.75.0 — 2026-11-11
 
 - New clients get First / Last name filled in. Lisa's leads were saved with only `name`, so Dan (EST1204) showed "Dan" but blank First and Last in the edit form. Migration 125 adds a trigger that splits a person-looking name on insert or name change when first, last and company are all empty, and backfilled the five clients created since migration 109.

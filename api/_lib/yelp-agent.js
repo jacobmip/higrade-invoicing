@@ -467,7 +467,9 @@ function polish(raw, { firstName, isFirstReply, prices, customerText }) {
 // A US number or an email typed into a message. Yelp never gives us these on
 // its own, so a customer typing one is the capture we are after.
 function extractContact(text) {
-  const phone = String(text).match(/(?:\+?1[\s.-]?)?\(?\b([2-9]\d{2})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})\b/);
+  // Digit lookarounds, not \b: "+18084291919" has no word break before the
+  // area code, so \b missed it and Alexander's booking never filed (2026-11-11).
+  const phone = String(text).match(/(?<!\d)(?:\+?1[\s.-]?)?\(?([2-9]\d{2})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})(?!\d)/);
   const email = String(text).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   return {
     phone: phone ? `+1${phone[1]}${phone[2]}${phone[3]}` : null,
@@ -788,6 +790,13 @@ export async function draftYelpReply(p) {
         out.reschedule = { ok: false, reason: 'calendar unreadable' };
       }
     }
+  }
+
+  // The booking below needs a phone and an address. If either is missing, the
+  // reply must ask for it, never say "you're booked" (Alexander, 2026-11-11).
+  if (d.ready_to_book && slotFree && !row.estimate_id && !(row.phone && row.address)) {
+    const need = [!row.phone && 'the best phone number to reach you', !row.address && 'the service address with unit'].filter(Boolean).join(' and ');
+    text = `${speakVisit(appointment)} is open. Send ${need} and I'll lock it in.`;
   }
 
   const polished = polish(text, {
