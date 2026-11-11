@@ -5627,6 +5627,9 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                     setClientDraft({
                       ...emptyClient(),
                       ...selectedClient,
+                      // Same fallback as ClientsTab.startEdit — the real number
+                      // can live in `mobile` alone, and the form only shows `phone`.
+                      phone: selectedClient.phone || selectedClient.mobile || "",
                       addresses: Array.isArray(selectedClient.addresses) ? [...selectedClient.addresses] : [],
                     });
                   } else if (effectiveClientInfo) {
@@ -7827,6 +7830,12 @@ function ClientsTab({ clients, invoices, onSave, onDelete, onImportClient, onSel
     setForm(c ? {
       ...emptyClient(),
       ...c,
+      // The edit form only shows one Phone box, but the number can live in
+      // either `phone` or `mobile` (lead intake writes mobile; a manual
+      // quick-add writes phone). Without this, a client whose only number
+      // is in `mobile` shows a blank Phone box on edit, looking like the
+      // number was lost even though it never moved.
+      phone: c.phone || c.mobile || "",
       addresses: Array.isArray(c.addresses) ? c.addresses : [],
     } : emptyClient());
     setMode("edit");
