@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.74.0 — 2026-11-11
+
+- Lisa books and moves Yelp visits herself (Jake: "don't pass it to the team, just book it"). A reschedule on Yelp to a time that is in business hours (weekday, start 8 AM to 3 PM, at least an hour out) and clear on the calendar is applied before her reply goes out: `moveVisit()` in `yelp-booking.js` patches the Google event through the stored grant (`_lib/gcal.js`, write calendar first, then the read calendars), then `invoices.visits`, then an `invoice_events` row `visit_moved` `{ from, to, via: 'lisa_yelp' }`. Jake gets a one-line Telegram FYI. A taken or out-of-hours time gets real open alternatives instead; a failed move tells the customer she is updating it and Telegrams Jake. Cancels are still recorded for Jake (`request_visit_change`).
+- New bookings: Lisa confirms them outright ("you're all set for ...") instead of "penciled in, the team will confirm", on Yelp and by text. Yelp bookings also enforce the same business-hours window. When Jake offers a time in the thread and the customer accepts, Lisa acts on it.
+
 ## v1.73.1 — 2026-11-11
 
 - "Polish with AI" reads the conversation. It now sends the last 20 messages of that thread (texts or Yelp) with the draft, so the rewrite fits as the next message: no fresh "Aloha" mid-conversation, nothing repeated, every time, date and price in the draft kept as written. The Yelp tab polishes for Yelp (Mahalo, Lisa sign-off), the texts tab for SMS length. The AI header's polish rule now reads the thread first too (`get_messages` / `yelp_threads`).

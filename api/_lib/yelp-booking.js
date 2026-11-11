@@ -10,10 +10,14 @@
 //
 // Booking goes through the same create_estimate_from_lead() RPC as phone and
 // text leads, so a Yelp booking is an ordinary penciled estimate plus the usual
-// owner alert. Reschedule and cancel go through request_visit_change() (114),
-// which only RECORDS a request: Jake makes the change.
+// owner alert. Reschedule: Lisa MOVES the visit herself (v1.74.0, Jake
+// 2026-11-11: "don't pass it to the team, just book it") when the new time is in
+// business hours and the calendar is clear: Google event first through the
+// stored grant (./gcal.js), then invoices.visits. Cancel still goes through
+// request_visit_change() (114), which only records it for Jake.
 
 import { rpc, getSetting } from './sms.js';
+import { calendarFetch, getCredentials } from './gcal.js';
 
 function supabaseUrl() {
   return process.env.SUPABASE_URL || 'https://cwhgcxxszyvevjpbnnkc.supabase.co';
@@ -292,4 +296,90 @@ export function requestedDates(text) {
     out.push(d);
   }
   return out.filter((d) => d.getUTCDay() !== 0 && d.getUTCDay() !== 6).map((d) => d.toISOString().slice(0, 10));
+}
+
+/**
+ * Business hours Lisa may book or move into on her own: a weekday, starting
+ * 8 AM to 3 PM Hawaii (the same window openSlots offers), at least an hour out.
+ * @param {string} t 'YYYY-MM-DDTHH:MM' Hawaii wall clock
+ */
+export function inBusinessHours(t) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(String(t || ''));
+  if (!m) return false;
+  const day = new Date(`${m[1]}T00:00:00Z`).getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const min = Number(m[2]) * 60 + Number(m[3]);
+  if (min < 8 * 60 || min > 15 * 60) return false;
+  const asUtc = Date.parse(`${m[1]}T${m[2]}:${m[3]}:00-10:00`);
+  return asUtc > Date.now() + 60 * 60 * 1000;
+}
+
+// 'YYYY-MM-DDTHH:MM' + minutes, as wall clock (Hawaii has no DST).
+function addMinutes(t, minutes) {
+  const d = new Date(Date.parse(`${t.slice(0, 16)}:00Z`) + minutes * 60000);
+  return d.toISOString().slice(0, 16);
+}
+
+/**
+ * Move one of this client's visits to newTime. The caller has already checked
+ * inBusinessHours() and the calendar. Google first: if the event cannot be
+ * moved, nothing in the app changes and the caller tells Jake. Then the visit
+ * on the document, then a history row.
+ * @returns {Promise<{ok:boolean, doc?:string, from?:string, to?:string, reason?:string}>}
+ */
+export async function moveVisit({ clientId, visitStart, newTime }) {
+  const to = String(newTime || '').slice(0, 16);
+  if (!clientId || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(to)) return { ok: false, reason: 'missing client or time' };
+  const today = hawaiiNow().iso;
+  const docs = await select(
+    `invoices?client_id=eq.${encodeURIComponent(clientId)}&deleted_at=is.null&select=id,visits`);
+  const upcoming = [];
+  for (const doc of docs) {
+    (Array.isArray(doc.visits) ? doc.visits : []).forEach((v, i) => {
+      if (String(v?.start || '') >= today) upcoming.push({ doc, i, v });
+    });
+  }
+  const want = String(visitStart || '').slice(0, 16);
+  const hit = want ? upcoming.find((x) => String(x.v.start).slice(0, 16) === want)
+    : (upcoming.length === 1 ? upcoming[0] : null);
+  if (!hit) return { ok: false, reason: want ? 'no visit at that time' : 'which visit is unclear' };
+  const from = String(hit.v.start).slice(0, 16);
+  if (from === to) return { ok: true, doc: hit.doc.id, from, to, unchanged: true };
+  const minutes = Number(hit.v.minutes) || 90;
+
+  if (hit.v.eventId) {
+    const id = String(hit.v.eventId).replace(/@google\.com$/, '');
+    const cred = await getCredentials();
+    const cals = [...new Set([cred?.calendar_id || 'primary', ...(cred?.read_calendar_ids || [])].filter(Boolean))];
+    const patch = {
+      start: { dateTime: `${to}:00`, timeZone: 'Pacific/Honolulu' },
+      end: { dateTime: `${addMinutes(to, minutes)}:00`, timeZone: 'Pacific/Honolulu' },
+    };
+    let moved = false;
+    let lastErr = null;
+    for (const cal of cals) {
+      try {
+        await calendarFetch(`/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(id)}`, {
+          method: 'PATCH', body: JSON.stringify(patch),
+        });
+        moved = true;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (e.status !== 404 && e.status !== 410) break;
+      }
+    }
+    if (!moved) return { ok: false, reason: `calendar: ${lastErr?.message || 'event not found'}` };
+  }
+
+  const visits = hit.doc.visits.map((v, i) => (i === hit.i ? { ...v, start: to } : v));
+  const r = await fetch(`${supabaseUrl()}/rest/v1/invoices?id=eq.${encodeURIComponent(hit.doc.id)}`, {
+    method: 'PATCH', headers: { ...sbHeaders(), Prefer: 'return=minimal' }, body: JSON.stringify({ visits }),
+  });
+  if (!r.ok) return { ok: false, doc: hit.doc.id, reason: `calendar moved but the app did not save (${r.status})` };
+  await fetch(`${supabaseUrl()}/rest/v1/invoice_events`, {
+    method: 'POST', headers: { ...sbHeaders(), Prefer: 'return=minimal' },
+    body: JSON.stringify({ invoice_id: hit.doc.id, kind: 'visit_moved', recipient: null, meta: { from, to, via: 'lisa_yelp' } }),
+  }).catch(() => {});
+  return { ok: true, doc: hit.doc.id, from, to };
 }
