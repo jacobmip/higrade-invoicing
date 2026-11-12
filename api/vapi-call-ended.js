@@ -19,6 +19,7 @@
 // Security: Vapi lets you set custom headers on a server URL. Send
 // x-webhook-secret matching SMS_WEBHOOK_SECRET, or append ?k=<secret>.
 
+import { fixFiledAddress } from './_lib/address-split.js';
 import { verifyAddress, clientAddressFields } from './_lib/address-verify.js';
 import { telegramNotify } from './_lib/convert-estimate.js';
 import {
@@ -510,6 +511,7 @@ export default async function handler(req, res) {
   if (rescued?.estimate_id) {
     const addr = await verifyCallAddress(rescued.estimate_id);
     if (addr) console.log('[vapi-call-ended] address check', rescued.estimate_id, addr.status);
+    await fixFiledAddress(rescued.estimate_id);
   }
 
   // Link the call to its estimate so the app can play the recording on it.

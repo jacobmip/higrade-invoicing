@@ -17,6 +17,7 @@
 // request_visit_change() (114), which only records it for Jake.
 
 import { clientAddressFields } from './address-verify.js';
+import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split.js';
 import { rpc, getSetting } from './sms.js';
 import { calendarFetch, getCredentials } from './gcal.js';
 
@@ -194,6 +195,8 @@ export async function bookVisit({ name, phone, address, problem, appointment, ur
     p_lead_channel: 'yelp',
   });
   const id = filed?.estimate_id || null;
+  // The RPC files the address as one line; split it into street / unit / city / zip.
+  if (id) await fixFiledAddress(id);
   if (id) {
     // Backup push in case the insert trigger did not fire. Migration 119 makes
     // it skip while the trigger's push is in flight, so this cannot duplicate.
@@ -423,7 +426,7 @@ export async function saveClientContact({ clientId, fullName, email, phone, addr
   if (digits.length === 10 && !c.mobile && !c.phone) patch.mobile = `+1${digits}`;
   const addr = String(address || '').trim();
   // A verified address lands in the editor's own fields (v1.78.0).
-  if (addr && !c.address1) Object.assign(patch, clientAddressFields(addressParts) || { address1: addr.slice(0, 300) });
+  if (addr && !c.address1) Object.assign(patch, clientAddressFields(addressParts) || (splitAddress(addr) && clientFieldsFrom(splitAddress(addr))) || { address1: addr.slice(0, 300) });
   const parts = String(fullName || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
   if (parts.length >= 2 && parts.every((w) => /^[A-Za-z][A-Za-z'.-]*$/.test(w)) && !c.last_name && !c.company_name) {
     const first = parts[0], last = parts.slice(1).join(' ');

@@ -23,6 +23,7 @@
 // Classic Node (req, res) handler: returning a Web Response makes Vercel's
 // nodejs runtime hang until timeout. Same note as api/public-invoice.js.
 
+import { fixFiledAddress } from './_lib/address-split.js';
 import {
   rpc, readBody, getSetting, sendTwilioSms, alreadySentMessage, recordSmsSnapshot,
 } from './_lib/sms.js';
@@ -214,6 +215,8 @@ export default async function handler(req, res) {
 
   try {
     const out = await rpc('create_estimate_from_lead', args);
+    // One-line address from the RPC -> street / unit / city / zip.
+    if (out?.estimate_id) await fixFiledAddress(out.estimate_id);
     const reference = out?.number || out?.estimate_number || out?.doc_number || out?.estimate_id || null;
     if (addressNote) {
       await telegramNotify(`Web booking from ${name || phone}${out?.estimate_id ? ` (${out.estimate_id})` : ''}: ${addressNote}`)

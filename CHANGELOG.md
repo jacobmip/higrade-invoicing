@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.3 — 2026-11-12
+
+- Lisa's leads no longer land with the whole address in the street box (Jake: Dan Miyamoto's client showed "2344 Ahaiki St, Pearl City, HI 96782" on one line, City / ST / ZIP empty). Every channel files through `create_estimate_from_lead` / `capture_abandoned_call` with one address string, and the parts the v1.78.0 lookup produced were gone by the booking turn. New `_lib/address-split.js`: `splitAddress()` splits "street, unit, city, HI zip" locally (Oahu town list, glued "StHonolulu", `#`/Apt/Unit/Ste units), and `fixFiledAddress(estimateId)` runs right after every filing (Yelp `bookVisit`, text, web form, end of a phone call) and fixes the estimate's `job_address` (with `updated_at` bumped) and the client's flat fields and `addresses[]`. The fallback when there are no verified parts now splits too instead of saving one line.
+
 ## v1.79.2 — 2026-11-12
 
 - Fixed Dan's name not showing in his message thread (showed his phone number instead). Checked the data directly: client_messages.client_id was correctly linked to his client record the whole time, and the matching code (groupConversations in Messages.jsx) was already correct too — client_id is matched before falling back to phone digits. The real gap: data.clients only loads once per app launch (db.loadAll) or an explicit pull-to-refresh, while the Messages tab refetches its own message rows every time it's opened or the app comes back to the foreground. A client created or linked to a thread after the app was last launched would keep showing its phone number in Messages — not a bad match, a stale client list — until a relaunch or manual pull-to-refresh caught it up. Added db.loadClients() and have the Messages tab refresh just the clients table on open and on every foreground, the same way its own messages already do.

@@ -19,6 +19,7 @@
 // Raw fetch rather than the Anthropic SDK, matching api/ai.js and
 // api/ai-estimator.js, which is also all this file needs.
 
+import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split.js';
 import { otherChannelsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
@@ -529,6 +530,8 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
         p_heard_from: 'text message',
         p_lead_channel: 'sms',
       });
+      // One-line address from the RPC -> street / unit / city / zip.
+      if (filed?.estimate_id) await fixFiledAddress(filed.estimate_id);
       } // end else (not alreadyFiled)
     } catch (e) {
       // The reply already went out, which is the part the customer sees. A
@@ -629,7 +632,7 @@ async function saveProgressiveData(phone, clientId, out) {
     }
     if (address) {
       const [c] = await select(`clients?id=eq.${clientId}&select=address1`);
-      if (!c?.address1) Object.assign(clientPatch, clientAddressFields(out.address_parts) || { address1: address });
+      if (!c?.address1) Object.assign(clientPatch, clientAddressFields(out.address_parts) || (splitAddress(address) && clientFieldsFrom(splitAddress(address))) || { address1: address });
     }
     if (Object.keys(clientPatch).length) {
       await fetch(`${base}/rest/v1/clients?id=eq.${clientId}`, {
