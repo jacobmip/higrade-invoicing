@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.78.3 — 2026-11-11
+
+- Bottom nav pill: actually more glass now. Verified in a headless-Chrome screenshot of an exact CSS replica (not the live app, which needs a login this session can't do) side by side with the old look before shipping — lower background opacity (0.72 -> 0.42), stronger blur (20px -> 34px) plus saturate/brightness, a brighter rim border and an inset top highlight so it reads as translucent instead of a flat dark pill; content now visibly shows through it. Also moved down closer to the bottom edge (10px less clearance above the home indicator).
+
 ## v1.78.2 — 2026-11-11
 
 - Yelp messages ring the app's bell. Texts have written a `notifications` row since migration 051; Yelp never did, so a new Yelp lead (Andriana, 9:22 PM) reached only the Yelp tab. `draftYelpReply()` now calls `notifyAll()` (type `yelp`, `{ lead_id, client_id, channel }`) for every customer message after the duplicate check, so a Zapier retry rings once. Phone push goes out too once APNs is configured.
