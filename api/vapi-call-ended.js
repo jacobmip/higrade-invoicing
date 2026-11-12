@@ -283,8 +283,12 @@ function extractCustomerName(p) {
 }
 
 const DRIP_PHONE = '808-444-5450';
-const dripMessages = name => [
-  `Aloha ${name}! This is Lisa from HI Grade Plumbing. Sorry we got cut off. If you still need help with your plumbing issue, just reply here or call ${DRIP_PHONE}. Mahalo! Reply STOP to opt out.`,
+// `missed`: our call was never answered, so "sorry we got cut off" is wrong
+// (the Yelp catch-up calls, 2026-11-10: six people who never picked up).
+const dripMessages = (name, missed = false) => [
+  missed
+    ? `Aloha ${name}! This is Lisa from HI Grade Plumbing. We just tried to give you a call. If you still need help with your plumbing issue, just reply here or call ${DRIP_PHONE}. Mahalo! Reply STOP to opt out.`
+    : `Aloha ${name}! This is Lisa from HI Grade Plumbing. Sorry we got cut off. If you still need help with your plumbing issue, just reply here or call ${DRIP_PHONE}. Mahalo! Reply STOP to opt out.`,
   `Hi ${name}, just checking in from HI Grade Plumbing. Plumbing problems can be stressful — we are here whenever you are ready. Reply here or call ${DRIP_PHONE}. Reply STOP to opt out.`,
   `Aloha ${name}, one last check-in from HI Grade Plumbing. If you still need a hand, reply or call ${DRIP_PHONE}. If you are all set, wishing you a great day! Reply STOP to opt out.`,
 ];
@@ -342,14 +346,14 @@ async function findBlacklistedClient(phone) {
 // Outbound: message 1 now, messages 2 and 3 queued for 24h and 48h. With
 // sms_outbound_enabled off, message 1 is skipped but 2 and 3 are still queued
 // (the sender script re-checks the setting before each send).
-async function startDrip({ to, callId, name, secret }) {
+async function startDrip({ to, callId, name, secret, missed = false }) {
   const q = await queueDrip({ to, callId, name, indexes: [2, 3] });
   if (!q) return { skipped: 'drip already started for this call' };
 
   const enabled = String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true';
   if (!enabled) return { queued: 2, message1: 'skipped, sms_outbound_enabled is false' };
 
-  const [m1] = dripMessages(name);
+  const [m1] = dripMessages(name, missed);
   const sent = await sendTwilioSms({ to, body: m1 });
   // Logged only after a successful handoff to Twilio.
   try {
@@ -520,7 +524,10 @@ export default async function handler(req, res) {
       return json(res, 200, { ok: true, skipped: `outbound call: no drip (${decision.reason})` });
     }
     try {
-      const drip = await startDrip({ to, callId, name: extractCustomerName(params), secret: expected });
+      const drip = await startDrip({
+        to, callId, name: extractCustomerName(params), secret: expected,
+        missed: decision.reason === 'voicemail_or_no_answer',
+      });
       return json(res, 200, { ok: true, drip, drip_reason: decision.reason });
     } catch (e) {
       console.error('[vapi-call-ended] drip failed:', e.message || e);

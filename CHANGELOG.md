@@ -1,5 +1,16 @@
 # HI Grade Invoicing — Changelog
 
+## v1.76.0 — 2026-11-11
+
+- Text Lisa answers again. `systemPrompt()` in `sms-agent.js` read `openEstimateDate`, `openEstimateProblem` and `openEstimateUrgency` without them being passed in, so every draft threw a ReferenceError from v1.50.0 (2026-11-03) on and no inbound text got a reply (Riley's "did you contact Ally yet?", Zoe's follow-up). They are parameters now. The scheduled-visit line also kept its minutes ("at 10:00", not "at 10").
+- Text Lisa runs `claude-opus-5-5`, the same model as Yelp Lisa (was `claude-opus-5`).
+- Text Lisa never overrides a booking with "We're booked up". A customer with a visit on the books had their "thanks", "ok" or email answered with their own time echoed back, the calendar check found their own visit and replaced the reply (Michael, Hideki, Kate on 2026-11-03). A scheduled customer's appointment is cleared before the check, the same fix Yelp got in v1.73.1.
+- Text prompt no longer contradicts itself: "pencil it in, the team confirms" is gone, booked means booked.
+- Service call fee, both channels (Jake, 2026-11-11). Asked what it costs to come out, the diagnostic fee or the hourly rate, Lisa offers a rough estimate over the phone first, then says a visit is a minimum of the $185 service call fee ($325 high-rise), always credited back if they go ahead with any repair. Amounts come from the price book by name (`_lib/service-fees.js`). On Yelp a fee mention is not a job quote: no range, no sight-unseen line.
+- Promises reach Jake. A reply that commits us to a call, a text or a follow-up ("we'll call Ally today", "someone will call you shortly") sends one Telegram with the sentence, read from the words sent (`_lib/promises.js`). Text `needs_human` now Telegrams too; before it only reached the log.
+- Yelp Lisa asks for everything still missing in one message: a day with no time gets two times for that day plus the address and phone in the same reply. Alexander took six messages to book.
+- An unanswered outbound call's first follow-up text says "We just tried to give you a call", not "Sorry we got cut off".
+
 ## v1.75.2 — 2026-11-11
 
 - Messages tab: clicking a client's name at the top of an open thread (texts or Yelp) now jumps straight to their client profile, same shortcut `onOpenClient` already gives Calls and the AI chat cards.

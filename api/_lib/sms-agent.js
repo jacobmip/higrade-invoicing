@@ -22,11 +22,14 @@
 import { otherChannelsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
+import { telegramNotify } from './convert-estimate.js';
+import { promisedFollowUp } from './promises.js';
+import { serviceFees, serviceFeeRule } from './service-fees.js';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
 // A reply that loses a job costs vastly more than the model does. At roughly
 // 1.5K tokens in and 150 out this is under a cent a message.
-const MODEL = 'claude-opus-5';
+const MODEL = 'claude-opus-5-5';
 // Same origin the webhook is served from; see api/sms-inbound.js.
 const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 
@@ -88,7 +91,10 @@ function firstNameOf(name) {
   return name.trim().split(/\s+/)[0];
 }
 
-function systemPrompt({ now, clientName, hasOpenEstimate, catalog, history = '' }) {
+// v1.76.0: openEstimateDate / Problem / Urgency were read here but never
+// passed in. Every draft threw "openEstimateProblem is not defined" from
+// v1.50.0 (2026-11-03) on, so text Lisa answered nobody for eight days.
+function systemPrompt({ now, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, catalog, fees = serviceFees([]), history = '' }) {
   return `You are Lisa, the front desk at HI Grade Plumbing LLC, a licensed plumbing company on Oahu, Hawaii. You are answering a TEXT MESSAGE. You are the same Lisa who answers the phone and replies on Yelp.
 
 Right now it is ${now.weekday}, ${now.pretty} in Hawaii. Today's date is ${now.iso}. Work out every date from that and never guess a year.
@@ -110,7 +116,7 @@ HOW TO GET THERE
 - ASK ONE THING PER MESSAGE. Two questions in one text gets one answer, usually the easier one. This is the single most important rule here.
 - Lead toward the visit early. Once you understand roughly what is wrong, ask for the service address. Then once you have the address, offer day options.
 - Good move: "We can take a look at that. What's the service address?" Then once you have it: "What day works better for you, tomorrow or Thursday?"
-- ALWAYS confirm the service address before penciling in any appointment. Even for returning clients — addresses change, and the team cannot show up without it. If the address is not confirmed in this thread, ask for it before agreeing to a time.
+- ALWAYS confirm the service address before booking any appointment. Even for returning clients — addresses change, and the team cannot show up without it. If the address is not confirmed in this thread, ask for it before agreeing to a time.
 - When they give you a day and time AND you already have the address, book it and confirm the day and time ("You're all set for Thursday at 9 AM."). It is a confirmed booking: never say the team will confirm. The system checks the calendar first and replaces your reply if the time is taken.
 - If the customer is sharing contact information — email address, phone number, or address — without proposing a time, do NOT set appointment and do NOT propose a schedule. Just acknowledge the info warmly and move the conversation forward naturally.
 - If they are vague or unsure about the problem, that is normal and it is not a reason to keep digging. Being unsure is a reason to come look. Say so: that is exactly what a visit is for.
@@ -126,8 +132,9 @@ HOW YOU WRITE
 - Never say "I understand your frustration" or any other script line.
 
 HARD RULES
-- NEVER quote a price, a range, an hourly rate, a trip fee or a deposit. Not even "usually around". If they ask what it costs, say the team will confirm the price once they see it, and move the conversation back to getting someone out there.
-- NEVER promise a firm appointment. You pencil it in, the team confirms.
+- ${serviceFeeRule(fees, { channel: 'text' })} Never quote any other price, range, hourly rate or deposit. Then move the conversation back to getting someone out there.
+- When you book a time, it is booked. Never say "penciled in", "pending" or that the team will confirm.
+- Never promise a call, a text or a follow-up from the team unless it is truly needed (an emergency, an angry customer, a question you cannot answer). You book visits yourself. Every promise you make is sent to Jake as a task.
 - NEVER give out any phone number other than 808-444-5450.
 - NEVER claim to be a plumber, a technician or the owner, and never write as Jacob.
 - NEVER diagnose definitively or tell them to do something that could flood the house. If water is actively running, tell them to shut off the valve and that someone will call them right away.
@@ -138,19 +145,19 @@ HARD RULES
 
 ${clientName ? `This is an existing customer: ${firstNameOf(clientName)}. Full name on file: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
 ${hasOpenEstimate && openEstimateDate
-  ? `There is already a visit SCHEDULED for them on ${openEstimateDate.replace('T', ' at ').slice(0, 16)} Hawaii time. Do NOT rebook or propose a new time. If they want to change it, tell them to call the office.`
+  ? `There is already a visit SCHEDULED for them on ${String(openEstimateDate).slice(0, 16).replace('T', ' at ')} Hawaii time. Do NOT rebook or propose a new time. If they want to change it, tell them to call the office.`
   : hasOpenEstimate
   ? `There is already a scheduled visit on the books. Do not create a new booking.`
   : ''}
 ${!hasOpenEstimate && openEstimateProblem ? `CONTEXT FROM THEIR PHONE CALL: The team already knows their issue is "${openEstimateProblem}"${openEstimateUrgency ? ` (${openEstimateUrgency})` : ''}. Do not ask them to describe the problem again. Focus on getting the service address and confirming the appointment.` : ''}
 
 CHECKING THE CALENDAR
-Before confirming any appointment time, the system will verify availability. If the time is taken, offer the next free slot. You never see the calendar yourself, so do not promise a specific time is open; pencil it in and the system corrects you if it is not.
+Before your reply goes out, the system checks the calendar for the time you set in appointment. If it is taken, the system replaces your reply with the next free slot. So book the time they asked for and confirm it; the system corrects you if it is not open.
 
 FILING THE JOB
 Set ready_to_file to true only once you have ALL THREE: what is wrong, the service address, and either an appointment time or explicit confirmation they will call back to schedule. Do NOT set ready_to_file without an address — the team cannot show up without one.
 
-When the customer sends a short confirmation like "Okay", "Yes" or "Sounds good" after you have already penciled in a time, set ready_to_file to true immediately, and fill appointment with the time you penciled in earlier in the thread — but only if the address is also confirmed in this thread. If you still need the address, ask for it instead of filing.
+When the customer sends a short confirmation like "Okay", "Yes" or "Sounds good" after you have already booked a time, set ready_to_file to true immediately, and fill appointment with the time you booked earlier in the thread — but only if the address is also confirmed in this thread. If you still need the address, ask for it instead of filing.
 
 ${catalog ? `PRICE BOOK. If you file, pick the ONE service name that best matches and put it in services. Never say any of this out loud.\n${catalog}` : ''}
 
@@ -174,9 +181,12 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
 // The same flat-rate catalog the phone assistant prices from, so an SMS lead
 // and a phone lead for the same problem land on the same line item.
 async function priceCatalog() {
-  const rows = await select('saved_items?select=name&order=name.asc&limit=120');
-  if (!Array.isArray(rows) || !rows.length) return '';
-  return rows.map((r) => r.name).filter(Boolean).join('\n');
+  const rows = await select('saved_items?select=name,price&order=name.asc&limit=120');
+  if (!Array.isArray(rows) || !rows.length) return { text: '', prices: [] };
+  return {
+    text: rows.map((r) => r.name).filter(Boolean).join('\n'),
+    prices: rows.map((r) => ({ name: r.name, price: Number(r.price) })),
+  };
 }
 
 // A phone number's whole history is NOT the conversation. Found on the first
@@ -246,6 +256,7 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
     return { skip: 'the last word in this thread is already ours' };
   }
 
+  const { text: catalog, prices } = await priceCatalog();
   const res = await fetch(ANTHROPIC, {
     method: 'POST',
     headers: {
@@ -260,7 +271,11 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
         now: hawaiiNow(),
         clientName,
         hasOpenEstimate,
-        catalog: await priceCatalog(),
+        openEstimateDate,
+        openEstimateProblem,
+        openEstimateUrgency,
+        catalog,
+        fees: serviceFees(prices),
         // Yelp, calls and emails for this number (migration 122). Texts are
         // excluded: the thread above already is the text conversation.
         history: await otherChannelsBlock({ phone, exclude: 'text' }),
@@ -291,6 +306,12 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
   // offered in the reply only, not written to `appointment`: the customer has
   // not agreed to it yet, and the next turn can book it once they say yes.
   out.appointment = String(out.appointment || '').trim();
+  // A customer with a visit already on the books is never re-booked from a
+  // text (the prompt tells them to call to change it). Without this, their
+  // "thanks" echoed their own time back and the calendar check, finding their
+  // own visit there, overwrote the reply with "We're booked up Tuesday"
+  // (Michael, 2026-11-03: "Lisa, you lying AI"). Same fix as Yelp, v1.73.1.
+  if (out.appointment && hasOpenEstimate) out.appointment = '';
   if (out.appointment) {
     const chk = await checkAppointment(out.appointment);
     out.availability = chk.status;
@@ -390,6 +411,20 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
 
   await sendTwilioSms({ to: phone, body: out.reply });
   await logOutbound({ secret, phone, body: out.reply });
+
+  // needs_human used to reach only the log line. It, and any reply that
+  // promises a call or a follow-up, is one Telegram to Jake (v1.76.0).
+  const promise = promisedFollowUp(out.reply);
+  if (out.needs_human || promise) {
+    const who = out.name || clientName || phone;
+    const theyWrote = String(body || '').slice(0, 200);
+    await telegramNotify(
+      (out.needs_human ? `Text from ${who} needs you.` : `Lisa promised ${who} a follow-up by text. Do it, or it is a broken promise.`) +
+      (out.note ? `\n${String(out.note).slice(0, 300)}` : '') +
+      (promise ? `\nShe said: "${promise}"` : '') +
+      `\nThey wrote: "${theyWrote}"\n${phone}`,
+    ).catch((e) => console.error('[sms-agent] telegram failed:', e.message || e));
+  }
 
   // Progressive save: runs every turn, so a name given on turn 2 survives a hangup.
   await saveProgressiveData(phone, clientId, out);
