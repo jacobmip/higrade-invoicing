@@ -24,6 +24,7 @@
 
 import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
+import { notifyAll } from './notify.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
 import { verifyAddress, addressQuestion, sameAddress } from './address-verify.js';
 import { getSetting } from './sms.js';
@@ -553,6 +554,18 @@ export async function draftYelpReply(p) {
     ...(photoUrls.length ? { photos: photoUrls.length } : {}),
   };
   messages.push(incoming);
+
+  // The app's bell (and the phone, once APNs is set up), same as a text
+  // (migration 051 does it for texts). Yelp never had one: Andriana's lead,
+  // 2026-11-11 9:22 PM, reached the Yelp tab and nothing else. After the
+  // duplicate check, so a Zapier retry does not ring twice. Never blocks the
+  // reply.
+  notifyAll({
+    type: 'yelp',
+    title: `Yelp: ${firstName || existing?.first_name || 'a customer'}${isNewLead ? ' (new lead)' : ''}`,
+    body: message.slice(0, 300),
+    data: { lead_id: leadId, client_id: existing?.client_id || null, channel: 'yelp' },
+  }).catch((e) => console.error('[yelp-agent] notification failed:', e.message || e));
 
   // Yelp's opt-in "Phone Number" from a New Lead counts the same as one typed.
   const contact = extractContact(`${message} ${p.phone || ''}`);

@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.78.2 — 2026-11-11
+
+- Yelp messages ring the app's bell. Texts have written a `notifications` row since migration 051; Yelp never did, so a new Yelp lead (Andriana, 9:22 PM) reached only the Yelp tab. `draftYelpReply()` now calls `notifyAll()` (type `yelp`, `{ lead_id, client_id, channel }`) for every customer message after the duplicate check, so a Zapier retry rings once. Phone push goes out too once APNs is configured.
+
 ## v1.78.1 — 2026-11-11
 
 - Address check accepts high-rises. Google pins a tower to its center (`GEOMETRIC_CENTER`), so 988 Halekauwila St came back "unsure" and Lisa would have asked Alexander to confirm a correct address. That now verifies when the house number and the street name both match what they typed.
