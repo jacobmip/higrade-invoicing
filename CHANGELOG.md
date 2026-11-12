@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.2 — 2026-11-12
+
+- Fixed Dan's name not showing in his message thread (showed his phone number instead). Checked the data directly: client_messages.client_id was correctly linked to his client record the whole time, and the matching code (groupConversations in Messages.jsx) was already correct too — client_id is matched before falling back to phone digits. The real gap: data.clients only loads once per app launch (db.loadAll) or an explicit pull-to-refresh, while the Messages tab refetches its own message rows every time it's opened or the app comes back to the foreground. A client created or linked to a thread after the app was last launched would keep showing its phone number in Messages — not a bad match, a stale client list — until a relaunch or manual pull-to-refresh caught it up. Added db.loadClients() and have the Messages tab refresh just the clients table on open and on every foreground, the same way its own messages already do.
+
 ## v1.79.1 — 2026-11-12
 
 - Nav pill: fixed contrast and moved down more, per feedback that white text was hard to read over the light invoice-list background. v1.79.0's brightness(1.15) filter plus a thin 0.30 opacity tint washed the pill out to near-white once the content behind it was light, not dark like Instagram's video feed — so the light label text lost its contrast. Dropped the brightness boost, raised background opacity (0.30 -> 0.58), eased saturate (180% -> 150%), brightened the inactive label color slightly (#e4e8f2 -> #f0f2f8), and added a text-shadow under every label/icon so it stays legible regardless of what's behind it. Verified with the same mockup-screenshot comparison before shipping — pill now stays readably dark over light content while still showing content ghosting through it. Also dropped the extra +4px bottom clearance (now flush to env(safe-area-inset-bottom) alone) so it sits a bit lower.

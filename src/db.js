@@ -568,6 +568,19 @@ export async function loadAll() {
   }
 }
 
+// A lighter refresh than loadAll(): just the clients table. The app only
+// calls loadAll() once per launch (plus pull-to-refresh), so a client
+// created or linked to a message thread after that point — e.g. a lead
+// that texted in and got a client record a minute ago — doesn't show its
+// name in Messages until the app is relaunched. Messages already refetches
+// its own rows on every tab foreground; this lets callers keep the client
+// list just as fresh so name-matching doesn't lag behind.
+export async function loadClients() {
+  const { data, error } = await supabase.from('clients').select('*').order('name')
+  if (error) throw error
+  return (data || []).map(toClient)
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 // User preferences (custom email/text message templates, etc.) are stored as
 // key/value rows in the `settings` table. setSetting upserts a single key.
