@@ -48,7 +48,7 @@ const ORANGE = "#E8622A";
 // scrollable screen needs at its bottom so content doesn't end up under the
 // pill; it has to match the pill's own position math below exactly.
 const NAV_BOTTOM_INSET = "calc(env(safe-area-inset-bottom) + 4px)";
-const NAV_HEIGHT = 60;
+const NAV_HEIGHT = 54;
 const NAV_CLEARANCE = `calc(${NAV_BOTTOM_INSET} + ${NAV_HEIGHT}px + 14px)`;
 // Last-resort length for a scheduled job with no stored duration and no Google
 // event to read one from. Since migration 042 the real value lives on the
@@ -14955,15 +14955,15 @@ export default function App() {
         <nav style={{
           position: "fixed", bottom: NAV_BOTTOM_INSET, left: "50%", transform: "translateX(-50%)",
           width: "calc(100% - 28px)", maxWidth: 452, minHeight: NAV_HEIGHT, boxSizing: "border-box",
-          background: "rgba(18,32,54,0.42)", backdropFilter: "blur(34px) saturate(220%) brightness(1.08)", WebkitBackdropFilter: "blur(34px) saturate(220%) brightness(1.08)",
-          border: "1px solid rgba(255,255,255,0.28)", borderRadius: 26,
-          display: "flex", alignItems: "center", gap: 2, padding: 5,
-          zIndex: 1300, boxShadow: "0 14px 32px rgba(5,12,24,0.30), 0 2px 8px rgba(5,12,24,0.18), inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.12)",
+          background: "rgba(8,10,16,0.30)", backdropFilter: "blur(26px) saturate(180%) brightness(1.15)", WebkitBackdropFilter: "blur(26px) saturate(180%) brightness(1.15)",
+          border: "1px solid rgba(255,255,255,0.22)", borderRadius: 30,
+          display: "flex", alignItems: "center", gap: 2, padding: 4,
+          zIndex: 1300, boxShadow: "0 10px 26px rgba(0,0,0,0.30), 0 2px 6px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.15)",
         }}>
           {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: tab === n.id ? "rgba(232,98,42,0.28)" : "transparent", border: "none", borderRadius: 17, cursor: "pointer", color: tab === n.id ? ORANGE : "#c3cbdc", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "background .15s, color .15s" }}>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: tab === n.id ? ORANGE : "#e4e8f2", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "color .15s" }}>
               <span style={{ position: "relative", display: "inline-flex" }}>
-                <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#c3cbdc"} />
+                <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#e4e8f2"} />
                 {n.id === "messages" && unreadMessages > 0 && (
                   <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
                 )}
@@ -14971,8 +14971,8 @@ export default function App() {
               {n.label}
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: isMoreTab ? "rgba(232,98,42,0.28)" : "transparent", border: "none", borderRadius: 17, cursor: "pointer", color: isMoreTab ? ORANGE : "#c3cbdc", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "background .15s, color .15s" }}>
-            <Icon name="more" size={20} color={isMoreTab ? ORANGE : "#c3cbdc"} />
+          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: isMoreTab ? ORANGE : "#e4e8f2", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "color .15s" }}>
+            <Icon name="more" size={20} color={isMoreTab ? ORANGE : "#e4e8f2"} />
             More
           </button>
         </nav>
