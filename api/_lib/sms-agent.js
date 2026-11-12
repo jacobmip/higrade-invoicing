@@ -342,6 +342,14 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
   // own visit there, overwrote the reply with "We're booked up Tuesday"
   // (Michael, 2026-11-03: "Lisa, you lying AI"). Same fix as Yelp, v1.73.1.
   if (out.appointment && hasOpenEstimate) out.appointment = '';
+  // Their own visit is never "taken" (Neil, 2026-11-12: booked for 3 PM, his
+  // next text got "That time's taken, we have 4:30", and the 4:30 went out as
+  // "firmly booked" while the calendar still said 3). Any outstanding job for
+  // this phone at that start time is theirs, whatever client record it is on.
+  if (out.appointment) {
+    const own = await ownVisits(phone);
+    if (own.some((t) => t === out.appointment.slice(0, 16))) out.appointment = '';
+  }
   if (out.appointment) {
     const chk = await checkAppointment(out.appointment);
     out.availability = chk.status;
@@ -366,8 +374,34 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
     // Filing needs the problem plus an appointment or an address.
     if (!out.appointment && !String(out.address || '').trim()) out.ready_to_file = false;
   }
+  // A booked visit is the only time Lisa may state. A reply naming any other
+  // clock time is replaced with the real one.
+  if (hasOpenEstimate && openEstimateDate) {
+    const booked = speakSlot(String(openEstimateDate).slice(0, 16));
+    const bookedTime = booked.split(' at ')[1].replace(/\s+/g, '').toLowerCase();
+    const said = (out.reply.match(/\b\d{1,2}(?::\d{2})?\s?(?:AM|PM)\b/gi) || []).map((x) => x.replace(/\s+/g, '').toLowerCase());
+    if (said.some((x) => x !== bookedTime)) {
+      console.log('[sms-agent] reply named a time other than the booked visit, replaced', said, booked);
+      out.reply = `You're set for ${booked}. If you need to change it, give us a call at 808-444-5450. Mahalo!`;
+      out.appointment = '';
+    }
+  }
   return out;
 }
+
+/** Start times ('YYYY-MM-DDTHH:MM') of outstanding visits for this phone. */
+async function ownVisits(phone) {
+  const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+  if (last10.length !== 10) return [];
+  try {
+    const rows = await select(`invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
+      + '&deleted_at=is.null&status=eq.outstanding&gcal_date=not.is.null&select=gcal_date&limit=10');
+    return (Array.isArray(rows) ? rows : []).map((r) => String(r.gcal_date).slice(0, 16));
+  } catch { return []; }
+}
+
+// "8083833200" -> "*808*383*3200*", so "(808) 383-3200" and "+18083833200" both match.
+const fuzzyPhone = (d) => `*${d.slice(0, 3)}*${d.slice(3, 6)}*${d.slice(6)}*`;
 
 /**
  * The live path: called from the inbound webhook after the message is logged.
@@ -431,6 +465,22 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
       // was collected on the phone call and doesn't re-ask.
       openEstimateProblem = String(open[0].internal_notes || '').trim() || null;
       openEstimateUrgency = String(open[0].urgency || '').trim() || null;
+    }
+  }
+
+  // The thread's client record can differ from the job's (Neil had one from
+  // October under another number) or not exist yet. Fall back to the phone on
+  // the job, scheduled visits only.
+  if (!openEstimateScheduled) {
+    const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+    const byPhone = last10.length === 10 ? await select(
+      `invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}&deleted_at=is.null&status=eq.outstanding`
+      + '&gcal_date=not.is.null&select=id,gcal_date&order=created_at.desc&limit=1').catch(() => []) : [];
+    if (Array.isArray(byPhone) && byPhone[0]) {
+      hasOpenEstimate = true;
+      openEstimateScheduled = true;
+      openEstimateId = openEstimateId || byPhone[0].id;
+      openEstimateDate = byPhone[0].gcal_date;
     }
   }
 

@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.4 — 2026-11-12
+
+- Text Lisa no longer talks a customer out of their own booking (Neil Hannahs: booked for Friday 3 PM, his next text got "That time's taken, we do have 4:30", then "You're firmly booked for 4:30" while EST1211 stayed at 3 PM). Three fixes in `_lib/sms-agent.js`:
+  - The open-visit lookup falls back to the job's phone (`client_info->>phone`) when the thread's client record does not have it (Neil also had an October record under another number), so the "already scheduled, do not rebook" rule applies.
+  - `ownVisits(phone)`: a time the model echoes that matches an outstanding job for this phone is theirs, never checked against the calendar as "taken".
+  - With a visit booked, a reply naming any other clock time is replaced with "You're set for <booked time>. If you need to change it, give us a call at 808-444-5450."
+
 ## v1.79.3 — 2026-11-12
 
 - Lisa's leads no longer land with the whole address in the street box (Jake: Dan Miyamoto's client showed "2344 Ahaiki St, Pearl City, HI 96782" on one line, City / ST / ZIP empty). Every channel files through `create_estimate_from_lead` / `capture_abandoned_call` with one address string, and the parts the v1.78.0 lookup produced were gone by the booking turn. New `_lib/address-split.js`: `splitAddress()` splits "street, unit, city, HI zip" locally (Oahu town list, glued "StHonolulu", `#`/Apt/Unit/Ste units), and `fixFiledAddress(estimateId)` runs right after every filing (Yelp `bookVisit`, text, web form, end of a phone call) and fixes the estimate's `job_address` (with `updated_at` bumped) and the client's flat fields and `addresses[]`. The fallback when there are no verified parts now splits too instead of saving one line.
