@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.77.0 — 2026-11-11
+
+- Bottom nav redesigned as a floating glass pill (inset from the edges, blurred translucent background, rounded on all sides) instead of a flat bar flush to the screen edge.
+- Bottom nav now stays mounted everywhere — including while an invoice/estimate is open for editing and while editing a client — not just on the main list tabs. Tapping a tab while a form is open backs out of the form first. Everything that used to sit right above the old flush bar (the `+` new-document button, the client search pill, the change-order action bar, the "Undone" toast) shifted up to clear the new floating pill.
+
 ## v1.76.0 — 2026-11-11
 
 - Text Lisa answers again. `systemPrompt()` in `sms-agent.js` read `openEstimateDate`, `openEstimateProblem` and `openEstimateUrgency` without them being passed in, so every draft threw a ReferenceError from v1.50.0 (2026-11-03) on and no inbound text got a reply (Riley's "did you contact Ally yet?", Zoe's follow-up). They are parameters now. The scheduled-visit line also kept its minutes ("at 10:00", not "at 10").
