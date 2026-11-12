@@ -95,10 +95,16 @@ export async function verifyAddress(raw, { apiKey } = {}) {
   const out = { formatted, line1, unit: unitOut, city, state: 'HI', zip, lat: loc.lat, lng: loc.lng };
 
   const onOahu = loc.lat >= OAHU.south && loc.lat <= OAHU.north && loc.lng >= OAHU.west && loc.lng <= OAHU.east;
-  const precise = (r.types || []).some((t) => PRECISE_TYPES.has(t))
-    && ['ROOFTOP', 'RANGE_INTERPOLATED'].includes(r.geometry?.location_type);
   const typedNum = houseNumber(query);
   const numberMatches = !!num && norm(num) === norm(typedNum);
+  // High-rises come back pinned to the building's center (GEOMETRIC_CENTER),
+  // not a rooftop: 988 Halekauwila St was "imprecise". That still counts when
+  // the house number and the street name both match what they typed.
+  const routeCore = norm(String(get('route') || '').split(' ')[0]);
+  const routeMatches = routeCore.length >= 3 && norm(query).includes(routeCore);
+  const lt = r.geometry?.location_type;
+  const precise = ((r.types || []).some((t) => PRECISE_TYPES.has(t)) && ['ROOFTOP', 'RANGE_INTERPOLATED'].includes(lt))
+    || (lt === 'GEOMETRIC_CENTER' && routeMatches);
 
   if (!line1 || !num) return { status: 'not_found', reason: 'no street address match', suggestion: r.formatted_address };
   if (!onOahu) return { status: 'unsure', reason: 'not on Oahu', suggestion: formatted, ...out };

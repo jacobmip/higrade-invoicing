@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.78.1 — 2026-11-11
+
+- Address check accepts high-rises. Google pins a tower to its center (`GEOMETRIC_CENTER`), so 988 Halekauwila St came back "unsure" and Lisa would have asked Alexander to confirm a correct address. That now verifies when the house number and the street name both match what they typed.
+
 ## v1.78.0 — 2026-11-11
 
 - Every service address is looked up before it is recorded (Jake: "it should always lookup and verify an address"). `_lib/address-verify.js` `verifyAddress()` runs the typed address through Google's geocoder, biased to Oahu, after stripping HTML, chatter ("My appointment was for today at 9am.") and labels ("Tenant: ..."), and keeping the unit (`Apt1113` -> `Apt 1113`, `#B`). Only a precise street-address match with the same house number, on Oahu, counts as verified, and is recorded in Google's clean form.
