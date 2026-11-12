@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.78.4 — 2026-11-12
+
+- Tapping a Yelp notification in the bell opens that customer's Yelp thread (Messages tab, Yelp switched on), instead of just closing the panel. A lead too new to be in the list yet reloads it once. Text notifications now also switch the Messages tab back to Texts if Yelp was showing.
+
 ## v1.78.3 — 2026-11-11
 
 - Bottom nav pill: actually more glass now. Verified in a headless-Chrome screenshot of an exact CSS replica (not the live app, which needs a login this session can't do) side by side with the old look before shipping — lower background opacity (0.72 -> 0.42), stronger blur (20px -> 34px) plus saturate/brightness, a brighter rim border and an inset top highlight so it reads as translucent instead of a flat dark pill; content now visibly shows through it. Also moved down closer to the bottom edge (10px less clearance above the home indicator).

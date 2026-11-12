@@ -432,7 +432,7 @@ function yelpStatus(t) {
   return null;
 }
 
-function YelpPane({ clients, onOpenClient }) {
+function YelpPane({ clients, onOpenClient, focus }) {
   const [threads, setThreads] = useState(null);
   const [error, setError] = useState('');
   const [openId, setOpenId] = useState(null);
@@ -440,6 +440,19 @@ function YelpPane({ clients, onOpenClient }) {
     try { setThreads(await loadYelpThreads()); setError(''); } catch (e) { setError(String(e.message || e)); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  // A tapped Yelp notification opens that lead's thread, once per tap. A lead
+  // not in the list yet (it just arrived) reloads once and tries again.
+  const handledFocus = useRef(null);
+  useEffect(() => {
+    if (!focus?.leadId || !threads || handledFocus.current === focus.n) return;
+    if (threads.some((t) => t.lead_id === focus.leadId)) {
+      handledFocus.current = focus.n;
+      setOpenId(focus.leadId);
+    } else if (handledFocus.current !== `reload-${focus.n}`) {
+      handledFocus.current = `reload-${focus.n}`;
+      load();
+    }
+  }, [focus, threads, load]);
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVis);
@@ -553,8 +566,13 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus, o
   // A tapped notification asks for one client's thread. Wait for the rows,
   // then open it once per request (focus.n changes on every tap).
   const handledFocus = useRef(null);
+  // A notification picks the channel: Yelp alerts open the Yelp tab, texts
+  // the Texts tab.
   useEffect(() => {
-    if (!focus || !rows || handledFocus.current === focus.n) return;
+    if (focus) setChannel(focus.leadId ? 'yelp' : 'texts');
+  }, [focus]);
+  useEffect(() => {
+    if (!focus || focus.leadId || !rows || handledFocus.current === focus.n) return;
     const d = digits10(focus.phone);
     const cv = convs.find(c => (focus.clientId && c.key === focus.clientId) || (d && digits10(c.phone) === d));
     handledFocus.current = focus.n;
@@ -581,7 +599,7 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus, o
       <div>
         <div style={{ padding: '14px 16px 8px', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: NAVY }}>Messages</div>
         {switcher}
-        <ThreadBoundary key="yelp"><YelpPane clients={clients} onOpenClient={onOpenClient} /></ThreadBoundary>
+        <ThreadBoundary key="yelp"><YelpPane clients={clients} onOpenClient={onOpenClient} focus={focus} /></ThreadBoundary>
       </div>
     );
   }

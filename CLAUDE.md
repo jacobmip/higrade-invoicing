@@ -122,7 +122,7 @@ src/
   TeamMap.jsx        — admin Team Map card in Reports: Leaflet (CDN) map of clocked-in techs, reads `db.loadTeamPositions()` (v1.35.0)
   lisaActions.js     — `sendLisaText()` / `queueLisaCall()` / `approveLisaCall()`: the AI chat's send_sms, place_call, and approve_call, shared by the per-invoice chat (App.jsx `handleGlobalAIAction`) and the global agent (`aiAgent.js`); text and call queue use `/api/sms-inbound`, approve uses `/api/approve-call` (v1.38.0, approve_call added v1.43.1)
   reviewRequest.js   — orphaned since v1.41.1: nothing imports it (the Google review text was removed from App.jsx because it caused a constant page refresh)
-  Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only)
+  Messages.jsx       — Messages tab, plus `ClientThread` reused in the client profile and the estimate/invoice Messages tab (admin only). A bell tap passes `focus` (`clientId`/`phone` for texts, `leadId` for Yelp, v1.78.4) and the tab opens that thread on the right channel
   PriceBook.jsx      — price book picker; portaled to `document.body`, sized to `visualViewport` and a fixed height on phones, so it opens on screen from a scrolled invoice, stays above the keyboard and keeps its top in place with few results (v1.57.4-5)
   AddressAutocomplete.jsx — street input with Google Places suggestions (v1.37.0); calls `/api/geocode?mode=autocomplete`, then `/api/geocode?address=` for city/state/zip
   TimeClockTab.jsx   — Time Clock tab: start/stop a shift with the raw GPS fix, job picker, the week's entries. Pay numbers are computed by the migration 072 trigger, never here; a bad GPS fix never blocks a clock event

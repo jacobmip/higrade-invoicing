@@ -8372,9 +8372,10 @@ function NotificationsBell({ onOpenInvoice, onOpenClient, onOpenMessages }) {
       setItems(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x));
     }
     setOpen(false);
-    // Texts go to the thread, then anything with an invoice, then a client
-    // profile. No target: the panel just closes, as before.
-    if (n.type === 'sms' && (n.data?.client_id || n.data?.phone)) onOpenMessages?.(n.data);
+    // Texts and Yelp go to the thread, then anything with an invoice, then a
+    // client profile. No target: the panel just closes, as before.
+    if (n.type === 'yelp' && n.data?.lead_id) onOpenMessages?.(n.data);
+    else if (n.type === 'sms' && (n.data?.client_id || n.data?.phone)) onOpenMessages?.(n.data);
     else if (n.invoice_id) onOpenInvoice?.(n.invoice_id);
     else if (n.data?.client_id) onOpenClient?.(n.data.client_id);
   };
@@ -14786,7 +14787,7 @@ export default function App() {
                 if (inv) { setSelected(withLists(inv)); setView("form"); }
               }}
               onOpenClient={(clientId) => { setView("list"); setTab("clients"); setOpenClientId(clientId); }}
-              onOpenMessages={(d) => { setView("list"); setTab("messages"); setMessagesFocus({ clientId: d.client_id, phone: d.phone, n: Date.now() }); }}
+              onOpenMessages={(d) => { setView("list"); setTab("messages"); setMessagesFocus({ clientId: d.client_id, phone: d.phone, leadId: d.lead_id, n: Date.now() }); }}
             />
             <button
               onClick={() => setShowGlobalAI(v => !v)}
