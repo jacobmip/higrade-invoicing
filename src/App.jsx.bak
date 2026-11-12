@@ -42,6 +42,14 @@ import changelogRaw from '../CHANGELOG.md?raw';
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
+// The bottom nav floats as an inset glass pill (v1.76.1) instead of a flush
+// bar, and stays mounted over every full-screen view (invoice/estimate form,
+// client edit), not just the list tabs. NAV_CLEARANCE is the space any
+// scrollable screen needs at its bottom so content doesn't end up under the
+// pill; it has to match the pill's own position math below exactly.
+const NAV_BOTTOM_INSET = "calc(env(safe-area-inset-bottom) + 14px)";
+const NAV_HEIGHT = 60;
+const NAV_CLEARANCE = `calc(${NAV_BOTTOM_INSET} + ${NAV_HEIGHT}px + 14px)`;
 // Last-resort length for a scheduled job with no stored duration and no Google
 // event to read one from. Since migration 042 the real value lives on the
 // invoice and the fallback comes from settings.gcal_default_minutes — the same
@@ -5553,7 +5561,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             </div>
           )}
           {undoToast && (
-            <div style={{ position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 18px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 5001 }}>Undone</div>
+            <div style={{ position: "fixed", bottom: NAV_CLEARANCE, left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", padding: "10px 18px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 5001 }}>Undone</div>
           )}
           {/* Bill To */}
           {(() => { const bc = clients.find(c => (form.client_id && c.id === form.client_id) || (!form.client_id && c.name === form.client)); return bc?.blacklisted ? (
@@ -6052,7 +6060,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 make position:fixed relative to it. Hidden while a sheet, the
                 line editor or the AI chat is in front. */}
             {coMode && !coSheet && coEditing === null && !showPriceBook && !showAI && createPortal(
-              <div role="region" aria-label="Change order actions" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 0, width: "100%", maxWidth: 480, zIndex: 1250, background: "#fff", borderTop: "1px solid #e3e7f0", boxShadow: "0 -4px 16px rgba(10,22,40,0.10)", padding: "10px 16px calc(10px + env(safe-area-inset-bottom))", display: "flex", alignItems: "center", gap: 10, boxSizing: "border-box", fontFamily: "'Barlow', sans-serif" }}>
+              <div role="region" aria-label="Change order actions" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: NAV_CLEARANCE, width: "100%", maxWidth: 480, zIndex: 1250, background: "#fff", borderTop: "1px solid #e3e7f0", boxShadow: "0 -4px 16px rgba(10,22,40,0.10)", padding: "10px 16px 10px", display: "flex", alignItems: "center", gap: 10, boxSizing: "border-box", fontFamily: "'Barlow', sans-serif" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 11, color: ORANGE, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", fontFamily: "'Barlow Condensed', sans-serif" }}>Change order {coMode.seq}</div>
                   <div style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a", lineHeight: 1.1 }}>{fmt(coTotals(coMode.items.filter(coMeaningful), form.tax).total)}</div>
@@ -6084,7 +6092,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 itemsLength={coMode.items.length}
               />
             ))}</div>}
-            {coMode && <div aria-hidden="true" style={{ height: 84 }} />}
+            {coMode && <div aria-hidden="true" style={{ height: `calc(84px + ${NAV_CLEARANCE})` }} />}
 
             {/* An invoice from a signed estimate: lines are labelled by where they
                 came from, but all of them edit freely (v1.64.0). */}
@@ -6608,7 +6616,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             {selectedClient?.id ? "Edit Client" : "New Client"}
           </span>
         </div>
-        <div style={{ padding: 16, paddingBottom: 40 }}>
+        <div style={{ padding: 16, paddingBottom: `calc(40px + ${NAV_CLEARANCE})` }}>
           <ClientEditFields value={clientDraft} onChange={setClientDraft} isAdmin={isAdmin} />
           <button
             type="button"
@@ -8231,7 +8239,7 @@ function FloatingSearchPill({ value, onChange, placeholder }) {
       <div
         style={{
           position: "fixed",
-          bottom: "calc(64px + env(safe-area-inset-bottom))",
+          bottom: NAV_CLEARANCE,
           left: "50%",
           transform: "translateX(-50%)",
           width: "100%",
@@ -12636,6 +12644,10 @@ export default function App() {
   const [tab, setTabRaw] = useState(() => { try { return localStorage.getItem('higrade_nav_tab') || "invoices"; } catch { return "invoices"; } });
   const setTab = (newTab) => {
     try { localStorage.setItem('higrade_nav_tab', newTab); } catch {}
+    // The bottom nav now stays mounted over an open invoice/estimate form
+    // (v1.76.1), so a tab tap has to back out of the form first — otherwise
+    // the tab underneath changes while the form pane keeps covering it.
+    if (view === "form") { setView("list"); setSelected(null); }
     if (newTab === 'recently-deleted') {
       const ownerId = effectiveOwnerId || session?.user?.id;
       if (ownerId) {
@@ -14678,7 +14690,7 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
 
   return (
-    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: textZoom === 1 ? "0 auto" : "0", position: "relative", paddingTop: globalHeaderH, paddingBottom: view === "list" ? 80 : 0, zoom: textZoom }}>
+    <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: textZoom === 1 ? "0 auto" : "0", position: "relative", paddingTop: globalHeaderH, paddingBottom: NAV_CLEARANCE, zoom: textZoom }}>
       {/* Edge-swipe-back visual indicator: a thin orange bar on the left
           edge that grows with the drag. Only renders while a swipe is in
           progress (edgeSwipeX > 0). Pointer-events: none so it can't
@@ -14836,7 +14848,7 @@ export default function App() {
             else if (tab === "expenses") { setExpenseNewToken(t => t + 1); }
           }}
           aria-label="New"
-          style={{ position: "fixed", bottom: 88, right: 20, width: 56, height: 56, background: ORANGE, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, zIndex: 1100, boxShadow: "0 4px 16px rgba(232,98,42,0.45)" }}
+          style={{ position: "fixed", bottom: NAV_CLEARANCE, right: 20, width: 56, height: 56, background: ORANGE, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, zIndex: 1100, boxShadow: "0 4px 16px rgba(232,98,42,0.45)" }}
         >
           <Icon name="plus" size={28} color="#fff" />
         </button>
@@ -14870,7 +14882,7 @@ export default function App() {
       </>
 
       {formMounted && (
-        <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", overflowX: "hidden", background: LIGHT, transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
+        <div style={{ position: "fixed", top: globalHeaderH, bottom: 0, left: "50%", width: "100%", maxWidth: 480, zIndex: 1200, overflowY: "auto", overflowX: "hidden", background: LIGHT, paddingBottom: NAV_CLEARANCE, boxSizing: "border-box", transform: formVisible ? "translateX(-50%)" : "translateX(calc(-50% + 100vw))", transition: `transform ${FORM_SLIDE_MS}ms cubic-bezier(0.25, 0.46, 0.45, 0.94)` }}>
           <FormBoundary key={(() => {
             const id = selected?.id;
             if (!id) return `new${newDocSeq}`;
@@ -14938,12 +14950,19 @@ export default function App() {
         </div>
       )}
 
-      {view === "list" && !keyboardOpen && (
-        <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: NAVY, display: "flex", borderTop: `2px solid ${ORANGE}`, zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {!keyboardOpen && (
+        <nav style={{
+          position: "fixed", bottom: NAV_BOTTOM_INSET, left: "50%", transform: "translateX(-50%)",
+          width: "calc(100% - 28px)", maxWidth: 452, minHeight: NAV_HEIGHT, boxSizing: "border-box",
+          background: "rgba(10,22,40,0.72)", backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          border: "1px solid rgba(255,255,255,0.10)", borderRadius: 24,
+          display: "flex", alignItems: "center", gap: 2, padding: 5,
+          zIndex: 1300, boxShadow: "0 12px 28px rgba(5,12,24,0.35), 0 2px 6px rgba(5,12,24,0.22)",
+        }}>
           {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: tab === n.id ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: tab === n.id ? "rgba(232,98,42,0.20)" : "transparent", border: "none", borderRadius: 17, cursor: "pointer", color: tab === n.id ? ORANGE : "#9aa6bf", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "background .15s, color .15s" }}>
               <span style={{ position: "relative", display: "inline-flex" }}>
-                <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#8899bb"} />
+                <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#9aa6bf"} />
                 {n.id === "messages" && unreadMessages > 0 && (
                   <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
                 )}
@@ -14951,8 +14970,8 @@ export default function App() {
               {n.label}
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "10px 2px 8px", background: "none", border: "none", cursor: "pointer", color: isMoreTab ? ORANGE : "#8899bb", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-            <Icon name="more" size={20} color={isMoreTab ? ORANGE : "#8899bb"} />
+          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: isMoreTab ? "rgba(232,98,42,0.20)" : "transparent", border: "none", borderRadius: 17, cursor: "pointer", color: isMoreTab ? ORANGE : "#9aa6bf", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "background .15s, color .15s" }}>
+            <Icon name="more" size={20} color={isMoreTab ? ORANGE : "#9aa6bf"} />
             More
           </button>
         </nav>
@@ -14975,7 +14994,7 @@ export default function App() {
         />
       )}
       {showMore && (
-        <div onClick={() => setShowMore(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 1200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+        <div onClick={() => setShowMore(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.55)", zIndex: 1400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#fff", borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "10px 0 max(20px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" }}>
             <div style={{ width: 40, height: 4, background: "#dde2ee", borderRadius: 2, margin: "4px auto 12px" }} />
             <div style={{ padding: "0 18px 8px", fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 13, color: "#8899bb", letterSpacing: 1.5, textTransform: "uppercase" }}>More</div>
@@ -14999,7 +15018,7 @@ export default function App() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, padding: "4px 8px 8px" }}>
               {moreNavItems.map(n => (
-                <button key={n.id} onClick={() => { if (n.id === "pricebook") { setShowPriceBook(true); setShowMore(false); } else { setTab(n.id); setShowMore(false); } }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                <button key={n.id} onClick={() => { if (n.id === "pricebook") { if (view === "form") { setView("list"); setSelected(null); } setShowPriceBook(true); setShowMore(false); } else { setTab(n.id); setShowMore(false); } }} style={{ background: tab === n.id ? "#fff5ef" : "none", border: "none", cursor: "pointer", padding: "14px 4px", borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: tab === n.id ? ORANGE : NAVY, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>
                   <Icon name={n.icon} size={26} color={tab === n.id ? ORANGE : NAVY} />
                   {n.label}
                 </button>
