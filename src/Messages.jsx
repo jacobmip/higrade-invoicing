@@ -432,7 +432,7 @@ function yelpStatus(t) {
   return null;
 }
 
-function YelpPane({ clients }) {
+function YelpPane({ clients, onOpenClient }) {
   const [threads, setThreads] = useState(null);
   const [error, setError] = useState('');
   const [openId, setOpenId] = useState(null);
@@ -452,12 +452,16 @@ function YelpPane({ clients }) {
 
   if (open) {
     const status = yelpStatus(open);
+    const linkedClient = open.client_id ? byId.get(open.client_id) : null;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 150px)' }}>
         <div style={{ background: NAVY, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <button onClick={() => setOpenId(null)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 15, cursor: 'pointer', padding: 4 }}>Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{nameOf(open)}</div>
+            <div
+              onClick={linkedClient ? () => onOpenClient?.(linkedClient.id) : undefined}
+              style={{ color: '#fff', fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: linkedClient ? 'pointer' : 'default', textDecoration: linkedClient ? 'underline' : 'none' }}
+            >{nameOf(open)}</div>
             <div style={{ color: '#8899bb', fontSize: 12 }}>
               Yelp{open.phone ? ` · ${prettyPhone(open.phone)}` : ''}{status ? ` · ${status.label}` : ''}
             </div>
@@ -515,7 +519,7 @@ function YelpPane({ clients }) {
   );
 }
 
-export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus }) {
+export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus, onOpenClient }) {
   const [channel, setChannel] = useState('texts');
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
@@ -577,7 +581,7 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus })
       <div>
         <div style={{ padding: '14px 16px 8px', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: NAVY }}>Messages</div>
         {switcher}
-        <ThreadBoundary key="yelp"><YelpPane clients={clients} /></ThreadBoundary>
+        <ThreadBoundary key="yelp"><YelpPane clients={clients} onOpenClient={onOpenClient} /></ThreadBoundary>
       </div>
     );
   }
@@ -589,7 +593,10 @@ export default function MessagesTab({ clients, isAdmin, onUnreadChange, focus })
         <div style={{ background: NAVY, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <button onClick={() => setOpenKey(null)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 15, cursor: 'pointer', padding: 4 }}>Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+            <div
+              onClick={open.client ? () => onOpenClient?.(open.client.id) : undefined}
+              style={{ color: '#fff', fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: open.client ? 'pointer' : 'default', textDecoration: open.client ? 'underline' : 'none' }}
+            >{title}</div>
             {open.client && <div style={{ color: '#8899bb', fontSize: 12 }}>{prettyPhone(open.phone)}</div>}
           </div>
           {isAdmin && open.client && <LisaToggle client={open.client} dark />}

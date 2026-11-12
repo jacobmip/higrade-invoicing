@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.75.2 — 2026-11-11
+
+- Messages tab: clicking a client's name at the top of an open thread (texts or Yelp) now jumps straight to their client profile, same shortcut `onOpenClient` already gives Calls and the AI chat cards.
+
 ## v1.75.1 — 2026-11-11
 
 - Lisa on Yelp reads a phone number typed with no spaces or dashes. `extractContact()` used `\b` before the area code, so "+18084291919" matched nothing: Alexander's phone was never saved, the booking step skipped, and he was told he was booked with nothing filed. Digit lookarounds replace `\b`. Booked by hand as EST1207 (Fri Nov 20, 10 AM).
