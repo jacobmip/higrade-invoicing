@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.1 — 2026-11-12
+
+- Nav pill: fixed contrast and moved down more, per feedback that white text was hard to read over the light invoice-list background. v1.79.0's brightness(1.15) filter plus a thin 0.30 opacity tint washed the pill out to near-white once the content behind it was light, not dark like Instagram's video feed — so the light label text lost its contrast. Dropped the brightness boost, raised background opacity (0.30 -> 0.58), eased saturate (180% -> 150%), brightened the inactive label color slightly (#e4e8f2 -> #f0f2f8), and added a text-shadow under every label/icon so it stays legible regardless of what's behind it. Verified with the same mockup-screenshot comparison before shipping — pill now stays readably dark over light content while still showing content ghosting through it. Also dropped the extra +4px bottom clearance (now flush to env(safe-area-inset-bottom) alone) so it sits a bit lower.
+
 ## v1.79.0 — 2026-11-12
 
 - Bottom nav redesigned to actually look like Instagram's floating pill, per side-by-side reference screenshots (Instagram vs. the app) and another headless-Chrome mockup comparison before shipping. Dropped the solid orange chip behind the active tab — Instagram just recolors the icon/text, no background box. Shifted the glass from a navy tint to a neutral near-black (opacity 0.42 -> 0.30), eased the blur (34px -> 26px blur, 220% -> 180% saturate, brightness 1.08 -> 1.15) so content ghosts through more clearly, brightened inactive icon/text color for contrast against the lighter tint (#c3cbdc -> #e4e8f2), and rounded the pill into a true stadium shape (radius 26 -> 30, height 60 -> 54) to match Instagram's fully-rounded ends. Kept text labels (6 tabs here vs Instagram's 5 universal icons) per a quick check-in.
