@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.0 — 2026-11-12
+
+- Bottom nav redesigned to actually look like Instagram's floating pill, per side-by-side reference screenshots (Instagram vs. the app) and another headless-Chrome mockup comparison before shipping. Dropped the solid orange chip behind the active tab — Instagram just recolors the icon/text, no background box. Shifted the glass from a navy tint to a neutral near-black (opacity 0.42 -> 0.30), eased the blur (34px -> 26px blur, 220% -> 180% saturate, brightness 1.08 -> 1.15) so content ghosts through more clearly, brightened inactive icon/text color for contrast against the lighter tint (#c3cbdc -> #e4e8f2), and rounded the pill into a true stadium shape (radius 26 -> 30, height 60 -> 54) to match Instagram's fully-rounded ends. Kept text labels (6 tabs here vs Instagram's 5 universal icons) per a quick check-in.
+
 ## v1.78.4 — 2026-11-12
 
 - Tapping a Yelp notification in the bell opens that customer's Yelp thread (Messages tab, Yelp switched on), instead of just closing the panel. A lead too new to be in the list yet reloads it once. Text notifications now also switch the Messages tab back to Texts if Yelp was showing.
