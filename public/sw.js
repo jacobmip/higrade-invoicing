@@ -1,4 +1,4 @@
-// v1.77.0
+// v1.78.0
 // Service worker for HI Grade Invoicing.
 // Strategy:
 //   - HTML (navigation): network-first, fall back to cache only when offline.

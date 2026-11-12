@@ -27,6 +27,8 @@ import {
   rpc, readBody, getSetting, sendTwilioSms, alreadySentMessage, recordSmsSnapshot,
 } from './_lib/sms.js';
 import { checkAppointment } from './_lib/availability-check.js';
+import { verifyAddress } from './_lib/address-verify.js';
+import { telegramNotify } from './_lib/convert-estimate.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
@@ -177,12 +179,26 @@ export default async function handler(req, res) {
     }
   }
 
+  // Every address is looked up before it is recorded (v1.78.0). A web lead is
+  // never dropped over it: a verified address is filed in Google's clean form;
+  // one that did not check out is filed as typed, with a note on the job and a
+  // Telegram so Jake confirms it with the customer before anyone drives there.
+  let filedAddress = address || null;
+  let addressNote = '';
+  if (address) {
+    const v = await verifyAddress(address);
+    if (v.status === 'verified') filedAddress = v.formatted;
+    else addressNote = v.status === 'error'
+      ? `Address not checked (map lookup failed): ${address}`
+      : `Address NOT found on the map: "${address}"${v.suggestion ? `. Closest match: ${v.suggestion}` : ''}. Confirm it with the customer.`;
+  }
+
   const args = {
     p_secret: secret,
     p_name: name,
     p_phone: phone,
-    p_address: address || null,
-    p_problem: problem,
+    p_address: filedAddress,
+    p_problem: addressNote ? `${problem}\n${addressNote}` : problem,
     p_urgency: clean(params.urgency, 60) || null,
     p_callback_window: clean(params.preferred_window, 60) || null,
     p_owner_or_tenant: clean(params.owner_or_tenant, 40) || null,
@@ -199,6 +215,10 @@ export default async function handler(req, res) {
   try {
     const out = await rpc('create_estimate_from_lead', args);
     const reference = out?.number || out?.estimate_number || out?.doc_number || out?.estimate_id || null;
+    if (addressNote) {
+      await telegramNotify(`Web booking from ${name || phone}${out?.estimate_id ? ` (${out.estimate_id})` : ''}: ${addressNote}`)
+        .catch((e) => console.error('[schedule-request] telegram failed:', e.message || e));
+    }
     await followUp({ phone, consented: !!params.sms_consent, estimateId: out?.estimate_id || null, secret });
     send(res, 200, { ok: true, reference });
     // After the response, so the form never waits on the model. Same gates as

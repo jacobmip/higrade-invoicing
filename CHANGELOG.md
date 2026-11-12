@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.78.0 — 2026-11-11
+
+- Every service address is looked up before it is recorded (Jake: "it should always lookup and verify an address"). `_lib/address-verify.js` `verifyAddress()` runs the typed address through Google's geocoder, biased to Oahu, after stripping HTML, chatter ("My appointment was for today at 9am.") and labels ("Tenant: ..."), and keeping the unit (`Apt1113` -> `Apt 1113`, `#B`). Only a precise street-address match with the same house number, on Oahu, counts as verified, and is recorded in Google's clean form.
+- Text and Yelp Lisa: a verified address replaces what they typed. A close match gets "Just to make sure we have it right, is the service address <match>?"; nothing found gets "I couldn't find ... on the map. Could you double-check ...". Either way nothing books that turn. A suggestion already put to them counts as confirmed once the model carries it, so a half-matched condo is asked about once. A failed lookup keeps the typed address and says so.
+- Verified addresses land in their own fields: the estimate's `job_address` gets street / unit / city / zip, the client gets `address1` / `address_unit` / `address2` ("City HI") / `address3` (zip), the same shape the client editor writes.
+- Website form: a verified address is filed clean; one that does not check out is filed as typed with a note on the job and a Telegram, so the lead is never lost.
+- Phone calls: once a call ends, the address Lisa heard is looked up. Verified replaces it on the estimate (with `updated_at` bumped, so an open form cannot save the old one back) and on the client when the client held the same heard text; not found is a Telegram.
+- `GET /api/geocode?mode=verify&address=...` returns the same check.
+
 ## v1.77.0 — 2026-11-11
 
 - Bottom nav redesigned as a floating glass pill (inset from the edges, blurred translucent background, rounded on all sides) instead of a flat bar flush to the screen edge.

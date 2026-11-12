@@ -25,6 +25,7 @@
 import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
+import { verifyAddress, addressQuestion, sameAddress } from './address-verify.js';
 import { getSetting } from './sms.js';
 import { checkAppointment } from './availability-check.js';
 import { otherChannelsBlock } from './client-history.js';
@@ -717,8 +718,31 @@ export async function draftYelpReply(p) {
   // name-only match to a verified one before anything is written.
   const gotPhone = extractContact(String(d.phone || '')).phone;
   if (gotPhone) row.phone = gotPhone;
-  if (String(d.address || '').trim()) row.address = String(d.address).trim().slice(0, 300);
-  if ((gotPhone || d.address) && (!row.client_id || row.match_level === 'name')) {
+  // Every address is looked up before it is recorded or booked (v1.78.0).
+  // row.address only ever holds a verified (or confirmed) address, so a model
+  // that repeats it each turn costs no second lookup. Close or not found:
+  // addressAsk becomes the reply and nothing books this turn.
+  let addressAsk = null;
+  let addrParts = null;
+  const typedAddr = String(d.address || '').trim().slice(0, 300);
+  if (typedAddr && !(row.address && sameAddress(row.address, typedAddr))) {
+    const asked = messages.filter((m) => m.role === 'business')
+      .map((m) => (String(m.text || '').match(/is the service address (.+?)\?/i) || [])[1]).filter(Boolean);
+    const confirmed = asked.find((a) => sameAddress(a, typedAddr));
+    const v = confirmed ? { status: 'verified', formatted: confirmed } : await verifyAddress(typedAddr);
+    out.address_check = v.status;
+    if (v.status === 'verified') {
+      row.address = v.formatted;
+      if (v.line1) addrParts = { line1: v.line1, line2: v.unit || '', city: v.city || '', zip: v.zip || '' };
+    } else if (v.status === 'error') {
+      console.error('[yelp-agent] address lookup failed, keeping it as typed:', v.reason);
+      row.address = typedAddr;
+    } else {
+      console.log('[yelp-agent] address', v.status, v.reason || '', JSON.stringify(typedAddr));
+      addressAsk = addressQuestion(v, typedAddr);
+    }
+  }
+  if ((gotPhone || (typedAddr && !addressAsk)) && (!row.client_id || row.match_level === 'name')) {
     try {
       const better = await matchClient({
         clientId: row.client_id, level: row.match_level, displayName: p.first_name, phone: row.phone, address: row.address,
@@ -805,6 +829,9 @@ export async function draftYelpReply(p) {
     const need = [!row.phone && 'the best phone number to reach you', !row.address && 'the service address with unit'].filter(Boolean).join(' and ');
     text = `${speakVisit(appointment)} is open. Send ${need} and I'll lock it in.`;
   }
+  // An address that did not check out is the question this turn. A move that
+  // already happened keeps its confirmation, with the question after it.
+  if (addressAsk) text = out.reschedule?.ok ? `${text} ${addressAsk}` : addressAsk;
 
   const polished = polish(text, {
     firstName: row.first_name, isFirstReply, prices,
@@ -818,7 +845,7 @@ export async function draftYelpReply(p) {
   const who = match.client?.name || row.first_name || 'A Yelp customer';
   const action = String(d.action || 'none').trim();
 
-  if (d.ready_to_book && slotFree && !row.estimate_id) {
+  if (d.ready_to_book && slotFree && !row.estimate_id && !addressAsk) {
     if (row.phone && row.address) {
       try {
         const id = await bookVisit({
@@ -888,7 +915,7 @@ export async function draftYelpReply(p) {
     if (gotEmail) row.email = gotEmail;
     if (profileId) {
       const saved = await saveClientContact({
-        clientId: profileId, fullName: d.name, email: gotEmail || row.email, phone: row.phone, address: row.address,
+        clientId: profileId, fullName: d.name, email: gotEmail || row.email, phone: row.phone, address: row.address, addressParts: addrParts,
       });
       if (saved.length) out.profile_saved = saved;
     }

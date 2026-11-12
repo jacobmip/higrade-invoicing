@@ -1,3 +1,5 @@
+import { verifyAddress } from './_lib/address-verify.js';
+
 export const config = { runtime: 'edge' };
 
 export default async function handler(req) {
@@ -12,6 +14,14 @@ export default async function handler(req) {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // mode=verify: the same check Lisa runs before recording an address
+  // (v1.78.0): { status: verified | unsure | not_found | error, formatted,
+  // suggestion, line1, unit, city, zip, reason }.
+  if (searchParams.get('mode') === 'verify') {
+    const v = await verifyAddress(searchParams.get('address') || '', { apiKey });
+    return new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } });
   }
 
   // mode=autocomplete: Places Autocomplete suggestions, biased to Oahu. Returns

@@ -25,6 +25,7 @@ import { checkAppointment, speakSlot } from './availability-check.js';
 import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
+import { verifyAddress, addressQuestion, sameAddress, clientAddressFields } from './address-verify.js';
 
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
 // A reply that loses a job costs vastly more than the model does. At roughly
@@ -305,6 +306,34 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
   // Never book a time the calendar has not cleared. The suggested slot is
   // offered in the reply only, not written to `appointment`: the customer has
   // not agreed to it yet, and the next turn can book it once they say yes.
+  // Every address is looked up before it is recorded or booked (v1.78.0).
+  // Verified: the clean Google form replaces what they typed. Close or not
+  // found: the reply becomes the question, and nothing is filed this turn. A
+  // suggestion we already put to them in this thread counts as confirmed once
+  // the model still carries it, so a condo Google only half-matches does not
+  // get asked about forever.
+  out.address = String(out.address || '').trim();
+  if (out.address) {
+    const asked = rows.filter((r) => r.direction === 'outbound')
+      .map((r) => (String(r.body || '').match(/is the service address (.+?)\?/i) || [])[1]).filter(Boolean);
+    const confirmed = asked.find((a) => sameAddress(a, out.address));
+    const v = confirmed ? { status: 'verified', formatted: confirmed } : await verifyAddress(out.address);
+    out.address_check = v.status;
+    if (v.status === 'verified') {
+      out.address = v.formatted;
+      if (v.line1) out.address_parts = { line1: v.line1, line2: v.unit || '', city: v.city || '', zip: v.zip || '' };
+    } else if (v.status === 'error') {
+      console.error('[sms-agent] address lookup failed, keeping it as typed:', v.reason);
+      out.note = `${out.note ? `${out.note} ` : ''}Address not verified (lookup failed): ${out.address}`;
+    } else {
+      console.log('[sms-agent] address', v.status, v.reason || '', JSON.stringify(out.address));
+      out.reply = addressQuestion(v, out.address);
+      out.address = '';
+      out.appointment = '';
+      out.ready_to_file = false;
+    }
+  }
+
   out.appointment = String(out.appointment || '').trim();
   // A customer with a visit already on the books is never re-booked from a
   // text (the prompt tells them to call to change it). Without this, their
@@ -452,7 +481,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
             // instead of creating a duplicate.
             const patch = {};
             if (out.address) {
-              patch.job_address = { label: 'Service address', line1: out.address, line2: '', line3: '', city: '', state: 'HI', zip: '' };
+              patch.job_address = jobAddress(out);
             }
             if (out.appointment) patch.gcal_date = out.appointment;
             if (out.name) patch.client_name = out.name;
@@ -559,6 +588,16 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
  * something Jake or the customer already set. Never throws: the reply has
  * already gone out.
  */
+// The invoice's job_address from a verified lookup: street on line1, unit on
+// line2, city and zip in their own fields (the app's address model). Falls back
+// to the whole string on line1 when the lookup could not run.
+function jobAddress(out) {
+  const a = out.address_parts;
+  return a
+    ? { label: 'Service address', line1: a.line1, line2: a.line2 || '', line3: '', city: a.city || '', state: 'HI', zip: a.zip || '' }
+    : { label: 'Service address', line1: out.address, line2: '', line3: '', city: '', state: 'HI', zip: '' };
+}
+
 async function saveProgressiveData(phone, clientId, out) {
   try {
     if (!clientId) return;
@@ -590,7 +629,7 @@ async function saveProgressiveData(phone, clientId, out) {
     }
     if (address) {
       const [c] = await select(`clients?id=eq.${clientId}&select=address1`);
-      if (!c?.address1) clientPatch.address1 = address;
+      if (!c?.address1) Object.assign(clientPatch, clientAddressFields(out.address_parts) || { address1: address });
     }
     if (Object.keys(clientPatch).length) {
       await fetch(`${base}/rest/v1/clients?id=eq.${clientId}`, {
@@ -610,7 +649,7 @@ async function saveProgressiveData(phone, clientId, out) {
       if (inv) {
         const patch = {};
         if (address && !inv.job_address?.line1) {
-          patch.job_address = { label: 'Service address', line1: address, line2: '', line3: '', city: '', state: 'HI', zip: '' };
+          patch.job_address = jobAddress(out);
         }
         if (problem && !(inv.internal_notes || '').trim()) patch.internal_notes = problem;
         if (Object.keys(patch).length) {

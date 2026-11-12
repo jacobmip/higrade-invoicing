@@ -16,6 +16,7 @@
 // stored grant (./gcal.js), then invoices.visits. Cancel still goes through
 // request_visit_change() (114), which only records it for Jake.
 
+import { clientAddressFields } from './address-verify.js';
 import { rpc, getSetting } from './sms.js';
 import { calendarFetch, getCredentials } from './gcal.js';
 
@@ -406,7 +407,7 @@ export async function clientIdForDoc(docId) {
  * the caller decides that.
  * @returns {Promise<string[]>} the fields written
  */
-export async function saveClientContact({ clientId, fullName, email, phone, address }) {
+export async function saveClientContact({ clientId, fullName, email, phone, address, addressParts }) {
   if (!clientId) return [];
   const rows = await select(`clients?id=eq.${encodeURIComponent(clientId)}&select=id,name,first_name,last_name,company_name,email,email2,phone,mobile,address1&limit=1`);
   const c = rows[0];
@@ -421,7 +422,8 @@ export async function saveClientContact({ clientId, fullName, email, phone, addr
   const digits = String(phone || '').replace(/\D/g, '').slice(-10);
   if (digits.length === 10 && !c.mobile && !c.phone) patch.mobile = `+1${digits}`;
   const addr = String(address || '').trim();
-  if (addr && !c.address1) patch.address1 = addr.slice(0, 300);
+  // A verified address lands in the editor's own fields (v1.78.0).
+  if (addr && !c.address1) Object.assign(patch, clientAddressFields(addressParts) || { address1: addr.slice(0, 300) });
   const parts = String(fullName || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
   if (parts.length >= 2 && parts.every((w) => /^[A-Za-z][A-Za-z'.-]*$/.test(w)) && !c.last_name && !c.company_name) {
     const first = parts[0], last = parts.slice(1).join(' ');

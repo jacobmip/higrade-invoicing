@@ -19,6 +19,8 @@
 // Security: Vapi lets you set custom headers on a server URL. Send
 // x-webhook-secret matching SMS_WEBHOOK_SECRET, or append ?k=<secret>.
 
+import { verifyAddress, clientAddressFields } from './_lib/address-verify.js';
+import { telegramNotify } from './_lib/convert-estimate.js';
 import {
   rpc, getSetting, readBody, fullUrl, webhookSecret, secretMatches, sendTwilioSms,
   alreadySentMessage, recentOutboundSms, recordSmsSnapshot, supabaseUrl,
@@ -275,6 +277,52 @@ function shouldSkipAbandonedLead(message) {
   return customerWordCount(message) < 5;
 }
 
+// Phone Lisa files the address mid-call through the RPC, as heard (v1.78.0).
+// Once the call ends it is looked up: a verified address replaces the heard
+// one on the estimate (street, unit, city, zip in their own fields, and
+// updated_at bumped so an open form cannot save the old one back), and the
+// client gets it too when the client's address was that same heard text. One
+// that did not check out is a Telegram for Jake. Never throws.
+async function verifyCallAddress(estimateId) {
+  try {
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!key || !estimateId) return null;
+    const h = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+    const base = `${supabaseUrl()}/rest/v1`;
+    const r = await fetch(`${base}/invoices?id=eq.${encodeURIComponent(estimateId)}&select=id,job_address,client_id,client_name`, { headers: h });
+    const [inv] = r.ok ? await r.json() : [];
+    const ja = inv?.job_address || {};
+    if (!ja.line1) return null;
+    const heard = [ja.line1, ja.line2, ja.city, ja.zip].filter(Boolean).join(', ');
+    const v = await verifyAddress(heard);
+    if (v.status === 'verified') {
+      const job_address = { ...ja, line1: v.line1, line2: v.unit || ja.line2 || '', city: v.city || ja.city || '', state: 'HI', zip: v.zip || ja.zip || '' };
+      await fetch(`${base}/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
+        method: 'PATCH', headers: { ...h, Prefer: 'return=minimal' },
+        body: JSON.stringify({ job_address, updated_at: new Date().toISOString() }),
+      });
+      if (inv.client_id) {
+        const cr = await fetch(`${base}/clients?id=eq.${inv.client_id}&select=address1`, { headers: h });
+        const [c] = cr.ok ? await cr.json() : [];
+        if (c && (!c.address1 || c.address1 === ja.line1)) {
+          await fetch(`${base}/clients?id=eq.${inv.client_id}`, {
+            method: 'PATCH', headers: { ...h, Prefer: 'return=minimal' },
+            body: JSON.stringify(clientAddressFields({ line1: v.line1, line2: v.unit, city: v.city, zip: v.zip })),
+          });
+        }
+      }
+      return { status: 'verified', formatted: v.formatted };
+    }
+    if (v.status !== 'error') {
+      await telegramNotify(`Phone lead ${estimateId}${inv.client_name ? ` (${inv.client_name})` : ''}: the address Lisa heard, "${heard}", is not on the map${v.suggestion ? `. Closest match: ${v.suggestion}` : ''}. Confirm it with the customer before anyone drives there.`);
+    }
+    return { status: v.status, reason: v.reason };
+  } catch (e) {
+    console.error('[vapi-call-ended] address check failed:', e.message || e);
+    return null;
+  }
+}
+
 // Outbound: the party we dialled, with the "there" fallback the drip texts use.
 function extractCustomerName(p) {
   const m = p?.message || p || {};
@@ -457,6 +505,11 @@ export default async function handler(req, res) {
     }
   } catch (e) {
     console.error('[vapi-call-ended] abandoned-call capture failed:', e.message || e);
+  }
+
+  if (rescued?.estimate_id) {
+    const addr = await verifyCallAddress(rescued.estimate_id);
+    if (addr) console.log('[vapi-call-ended] address check', rescued.estimate_id, addr.status);
   }
 
   // Link the call to its estimate so the app can play the recording on it.
