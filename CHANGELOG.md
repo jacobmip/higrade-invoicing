@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.7 — 2026-11-12
+
+- Yelp Lisa books work from an estimate already sent, the same as text Lisa (v1.79.6). New `_lib/estimate-booking.js`: `sentEstimates({clientId, phone})` (last 60 days, sent / pending / approved, with line items), `sentEstimatesPrompt()`, `bookOnEstimate()` (sets `gcal_date` + `updated_at` only while it is still empty, then `push_invoice_to_calendar`). Yelp's prompt gets the estimates (phone or a verified match, never a name-only guess); with `estimate_id` + `ready_to_book` and a time the calendar cleared, the visit lands on that estimate instead of a new lead, and needs no phone or address from the thread. A failed booking is a Telegram.
+
 ## v1.79.6 — 2026-11-12
 
 - Text Lisa books work from an estimate already sent, herself (Jake: "Lisa should book it automatically"). Asked "when can you come install it?", she agrees a time like any booking and returns `estimate_id`; once the calendar clears the time, `bookOnEstimate()` sets that estimate's `gcal_date` (with `updated_at`) and calls `push_invoice_to_calendar`. No new lead is filed. If it is not approved yet she mentions the link once. A failed booking is a Telegram. Visits on `sent` / `pending` / `approved` estimates now count as the customer's own for the "never taken" and "booked time only" guards (v1.79.4), not just `outstanding` ones. Replaces the v1.79.5 hand-off to Jake.

@@ -25,6 +25,7 @@
 import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
 import { notifyAll } from './notify.js';
+import { sentEstimates, sentEstimatesPrompt, bookOnEstimate } from './estimate-booking.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
 import { verifyAddress, addressQuestion, sameAddress } from './address-verify.js';
 import { getSetting } from './sms.js';
@@ -284,6 +285,7 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
   "urgency": "emergency, urgent, or routine",
   "appointment": "YYYY-MM-DDTHH:MM Hawaii time they agreed to or proposed, else empty",
   "ready_to_book": false,
+  "estimate_id": "the estimate number when the appointment is for work on an estimate already sent to them, else empty",
   "services": ["exact price book name that best matches, if any"],
   "action": "none | where_is_tech | reschedule | cancel",
   "visit_start": "the [visit_start] value of the visit they mean, else empty",
@@ -657,6 +659,11 @@ export async function draftYelpReply(p) {
   const visits = match.client ? await upcomingVisits(match.client.id).catch(() => []) : [];
   const omw = visits.length ? await onMyWayToday(visits.map((v) => v.doc)).catch(() => null) : null;
   const now = hawaiiNow();
+  // Estimates already sent to them (phone or a verified match, never a
+  // name-only guess): "install it" has an "it", and Lisa books it on that estimate.
+  const ests = await sentEstimates({
+    clientId: match.client && match.level !== 'name' ? match.client.id : null, phone: row.phone,
+  }).catch((e) => { console.error('[yelp-agent] estimates lookup failed:', e.message || e); return []; });
 
   // Real open times to offer, unless this thread already booked a visit.
   const slots = row.estimate_id ? [] : await openSlots({ prefer: requestedDates(message) }).catch(() => []);
@@ -686,7 +693,7 @@ export async function draftYelpReply(p) {
       fallbacks: 'default',
       system: systemPrompt({
         firstName: row.first_name, isFirstReply, now, catalog: catalogText, fees: serviceFees(prices), form: row.form, slots,
-        client: clientBlock({ match, visits, omw, thread: row }),
+        client: [clientBlock({ match, visits, omw, thread: row }), sentEstimatesPrompt(ests)].filter(Boolean).join('\n\n'),
         history,
       }),
       messages: withPhotos(turns, urls),
@@ -838,7 +845,8 @@ export async function draftYelpReply(p) {
 
   // The booking below needs a phone and an address. If either is missing, the
   // reply must ask for it, never say "you're booked" (Alexander, 2026-11-11).
-  if (d.ready_to_book && slotFree && !row.estimate_id && !(row.phone && row.address)) {
+  const estBooking = !!(d.estimate_id && ests.some((e) => e.id === String(d.estimate_id).trim().toUpperCase() && !e.gcal_date));
+  if (d.ready_to_book && slotFree && !row.estimate_id && !estBooking && !(row.phone && row.address)) {
     const need = [!row.phone && 'the best phone number to reach you', !row.address && 'the service address with unit'].filter(Boolean).join(' and ');
     text = `${speakVisit(appointment)} is open. Send ${need} and I'll lock it in.`;
   }
@@ -858,7 +866,14 @@ export async function draftYelpReply(p) {
   const who = match.client?.name || row.first_name || 'A Yelp customer';
   const action = String(d.action || 'none').trim();
 
-  if (d.ready_to_book && slotFree && !row.estimate_id && !addressAsk) {
+  if (d.ready_to_book && slotFree && !row.estimate_id && estBooking) {
+    const b = await bookOnEstimate({ estimateId: d.estimate_id, ests, appointment });
+    if (b.ok) { row.estimate_id = b.estimateId; out.booked = { estimate_id: b.estimateId, appointment, on_estimate: true }; }
+    else {
+      console.error('[yelp-agent] estimate booking failed:', b.why);
+      await telegramNotify(`Yelp booking FAILED, Lisa told ${who} they are booked for ${speakVisit(appointment)} on ${d.estimate_id}. ${b.why}. Book it by hand.\nLead ${leadId}`);
+    }
+  } else if (d.ready_to_book && slotFree && !row.estimate_id && !addressAsk) {
     if (row.phone && row.address) {
       try {
         const id = await bookVisit({
