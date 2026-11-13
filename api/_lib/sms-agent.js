@@ -174,6 +174,7 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
   "address": "full service address with unit if you have it, else empty",
   "problem": "what is wrong, in their words, one or two sentences",
   "appointment": "YYYY-MM-DDTHH:MM in Hawaii time if agreed, else empty",
+  "estimate_id": "the estimate number when this appointment is for work on an estimate already sent to them, else empty",
   "urgency": "emergency, urgent, or routine",
   "services": ["exact price book name"],
   "note": "one short line for Jake if there is something he should know, else empty"
@@ -252,7 +253,7 @@ async function sentEstimatesBlock(phone) {
     return `ESTIMATES ALREADY SENT TO THIS CUSTOMER (the link to each is in the thread):
 ${lines.join('\n')}
 When they say "it", "the job" or "the install", they mean this work. Never ask what they want done when an estimate above covers it.
-If they want to schedule work from an estimate that is not approved yet: thank them, say the estimate needs their approval at the link first (it only takes a tap), and that Jacob will reach out to set a time once it is approved. If it is approved: say Jacob will reach out to get it on the calendar. Either way do NOT set appointment, do NOT offer specific times, and set needs_human to true so Jacob books it on that estimate.`;
+If they want to schedule work from an estimate that is not scheduled yet, book it yourself, the same way you book any visit: agree a day and time, then set appointment to it and set estimate_id to that estimate's number (e.g. "EST1209"). The visit goes on that estimate, so never ask for the problem again and keep ready_to_file false (it is not a new lead). If it is not approved yet, mention once that they can approve it at the link before the visit. If it already shows scheduled, tell them that time and do not rebook.`;
   } catch { return ''; }
 }
 
@@ -432,13 +433,38 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
   return out;
 }
 
+/** Put an agreed visit on an estimate already sent to this phone, then push it to Google Calendar. */
+async function bookOnEstimate(phone, estimateId, appointment) {
+  try {
+    if (!/^EST\d+$/.test(estimateId)) return { ok: false, why: `not an estimate number: ${estimateId}` };
+    const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+    const [est] = await select(`invoices?id=eq.${encodeURIComponent(estimateId)}&client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
+      + '&deleted_at=is.null&select=id,gcal_date,status');
+    if (!est) return { ok: false, why: 'estimate not found for this phone' };
+    if (est.gcal_date) return { ok: false, why: `already scheduled ${est.gcal_date}` };
+    const key = supabaseKey();
+    const r = await fetch(`${supabaseUrl()}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
+      method: 'PATCH',
+      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ gcal_date: appointment.slice(0, 16), updated_at: new Date().toISOString() }),
+    });
+    if (!r.ok) return { ok: false, why: `save ${r.status}` };
+    try { await rpc('push_invoice_to_calendar', { p_id: estimateId }); }
+    catch (e) { return { ok: false, why: `saved on the estimate, calendar push failed: ${e.message || e}` }; }
+    console.log('[sms-agent] booked on estimate', estimateId, appointment);
+    return { ok: true, estimateId };
+  } catch (e) {
+    return { ok: false, why: e.message || String(e) };
+  }
+}
+
 /** Start times ('YYYY-MM-DDTHH:MM') of outstanding visits for this phone. */
 async function ownVisits(phone) {
   const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
   if (last10.length !== 10) return [];
   try {
     const rows = await select(`invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
-      + '&deleted_at=is.null&status=eq.outstanding&gcal_date=not.is.null&select=gcal_date&limit=10');
+      + '&deleted_at=is.null&status=in.(outstanding,sent,pending,approved)&gcal_date=not.is.null&select=gcal_date&limit=10');
     return (Array.isArray(rows) ? rows : []).map((r) => String(r.gcal_date).slice(0, 16));
   } catch { return []; }
 }
@@ -517,7 +543,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   if (!openEstimateScheduled) {
     const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
     const byPhone = last10.length === 10 ? await select(
-      `invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}&deleted_at=is.null&status=eq.outstanding`
+      `invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}&deleted_at=is.null&status=in.(outstanding,sent,pending,approved)`
       + '&gcal_date=not.is.null&select=id,gcal_date&order=created_at.desc&limit=1').catch(() => []) : [];
     if (Array.isArray(byPhone) && byPhone[0]) {
       hasOpenEstimate = true;
@@ -529,6 +555,19 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
 
   const out = await draftReply({ phone, clientName, hasOpenEstimate: openEstimateScheduled, openEstimateDate, openEstimateProblem, openEstimateUrgency });
   if (out.skip) return out.skip;
+  // Work from an estimate already sent (Jake: "Lisa should book it
+  // automatically", Zoe EST1209, 2026-11-12). draftReply has already checked
+  // the time against the calendar; here it lands on that estimate (never a new
+  // lead) and goes to Google Calendar. A failed booking is a Telegram, since the
+  // reply already says they are booked.
+  if (out.estimate_id && out.appointment) {
+    out.ready_to_file = false;
+    out.booked_estimate = await bookOnEstimate(phone, String(out.estimate_id).trim().toUpperCase(), out.appointment);
+    if (!out.booked_estimate?.ok) {
+      await telegramNotify(`Lisa told ${clientName || phone} they are booked for ${speakSlot(out.appointment)} on ${out.estimate_id}, but the booking FAILED (${out.booked_estimate?.why || 'unknown'}). Book it by hand.\n${phone}`)
+        .catch((e) => console.error('[sms-agent] telegram failed:', e.message || e));
+    }
+  }
   if (out.spam) return 'classified as spam, not replying';
   if (!out.reply) return 'model chose to say nothing';
 

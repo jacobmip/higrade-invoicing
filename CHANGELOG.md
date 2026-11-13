@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.6 — 2026-11-12
+
+- Text Lisa books work from an estimate already sent, herself (Jake: "Lisa should book it automatically"). Asked "when can you come install it?", she agrees a time like any booking and returns `estimate_id`; once the calendar clears the time, `bookOnEstimate()` sets that estimate's `gcal_date` (with `updated_at`) and calls `push_invoice_to_calendar`. No new lead is filed. If it is not approved yet she mentions the link once. A failed booking is a Telegram. Visits on `sent` / `pending` / `approved` estimates now count as the customer's own for the "never taken" and "booked time only" guards (v1.79.4), not just `outstanding` ones. Replaces the v1.79.5 hand-off to Jake.
+
 ## v1.79.5 — 2026-11-12
 
 - Text Lisa keeps the thread's context across a long break (Zoe: asked about a recessed ice maker box, got EST1209, and 21 hours later "When are you available to come and install it?" got "What is it you'd like us to install?"). The 12-hour conversation cut still decides what she is answering, but the 12 messages before it ride along as an EARLIER IN THIS TEXT THREAD block.
