@@ -219,7 +219,7 @@ ${isFirstReply ? `- First reply: if the quote form gives the job type and a clea
 FORMAT
 - ${isFirstReply ? '2 to 4 sentences.' : '1 to 3 sentences.'} One idea per sentence.
 - No sign-off, it is added for you. ${isFirstReply ? 'No greeting either: "Aloha <name>," is added for you.' : 'No greeting: this is a running conversation.'}
-- Do not write the sight-unseen line after a price, it is added for you.
+- Do not write the more-or-less-in-person line after a price, it is added for you.
 ${catalog ? `\nPRICE BOOK (name - price):\n${catalog}` : '\n(No price book for this one: do NOT quote any job price. The service call fee is still fine.)'}
 ${firstName ? `\nTheir first name is ${firstName}.` : ''}
 

@@ -68,7 +68,7 @@ VISITS ALREADY ON THE BOOKS
 - Never call one of their own booked times "taken".
 
 PRICES
-- Simple, standard jobs that clearly match a PRICE BOOK line: give the price-book amount (the system turns it into a range and adds the sight-unseen line). Several lines fit: lowest to highest. Never invent or round a number.
+- Simple, standard jobs that clearly match a PRICE BOOK line: always give a rough estimate from the price-book amount, even when they ask for a quote over the phone (the system turns it into a range and adds the line that it could be more or less once we see it in person). Several lines fit: lowest to highest. Never invent or round a number.
 - No price for repipes, slab leaks, sewer lines, remodels, gas work, or anything that must be diagnosed first: say we will give them a real number once we see it.
 - Never an hourly rate, trip fee, deposit or discount.
 - ${serviceFeeRule(fees, { channel })}

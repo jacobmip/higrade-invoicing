@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.80.2 — 2026-11-12
+
+- Lisa gives rough estimates again (Jake: "I still wanted Lisa to give Yelp responses rough estimates and let the customer know it could be more or less when we see it in person"). v1.80.1's "never offer an estimate" line overrode the price book, so a toilet replacement got "a real number once we see it". `serviceFeeRule()` now only bans quoting on a phone call or sending them to call for a price; a price-book job always gets its range in the conversation. `lisa-soul` PRICES says so explicitly.
+- The line after every quote is now "That's a rough estimate, it could be more or less once we see it in person." (`DISCLAIMER` in lisa-guards, every channel).
+- Text Lisa's price book was names only, no prices, so she could never quote. It now carries `name - $price` like Yelp's. Dry runs: kitchen sink $350 to $395, toilet $395 to $750, disposal $295 to $375, each with the more-or-less line and two open times.
+
 ## v1.80.1 — 2026-11-12
 
 - Lisa no longer offers a rough estimate over the phone (Jake: "we don't give estimates over the phone"). `serviceFeeRule()` (every channel, via lisa-soul) now says: having us come take a look is a minimum of the service call fee, credited back on any repair; never offer a phone estimate or send them to call for a price. Replaces the 2026-11-11 wording. Dry run: "Can you give me a quote over the phone?" now gets "we'll give you a real number once we see it" plus the fee and two open times.

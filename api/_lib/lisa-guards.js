@@ -8,7 +8,8 @@
 
 import { serviceFees } from './service-fees.js';
 
-export const DISCLAIMER = "Estimates sight unseen can't be confirmed until we're on the job site in person.";
+// Jake, 2026-11-12: a rough estimate, "it could be more or less when we see it in person".
+export const DISCLAIMER = "That's a rough estimate, it could be more or less once we see it in person.";
 export const BIG_JOB = /\b(re-?pip\w*|whole[- ]house|sewer|main line|slab|remodel|renovat\w*|gas line|gas pipe|tankless|commercial|high[- ]rise|hydro[- ]?jet\w*|excavat\w*|trench\w*)\b/i;
 export const MAX_AUTO_QUOTE = 2500;
 const WRONG_NUMBERS = /\(?808\)?[-. ]?393[-. ]?0015|8083930015/g;
@@ -98,7 +99,7 @@ export function checkPrices(body, { prices, customerText }) {
   }
   // "Call or text" on every quote, unless a question already is the next step.
   if (!/\bcall or text\b/i.test(t) && !t.includes('?')) t = `${t} Call or text 808-444-5450 when you are ready to schedule.`;
-  if (!/sight unseen/i.test(t)) t = `${t} ${DISCLAIMER}`;
+  if (!/sight unseen|more or less/i.test(t)) t = `${t} ${DISCLAIMER}`;
   return { text: t, flags, hold: null, quoted };
 }
 

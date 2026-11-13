@@ -131,7 +131,7 @@ ON TEXT
 FORMAT
 - Short: one or two sentences, under 300 characters. It is a text, not an email.
 - Do not sign your name on every message, and no greeting after the first one.
-- Do not write the sight-unseen line after a price, it is added for you.
+- Do not write the more-or-less-in-person line after a price, it is added for you.
 ${catalog ? `\nPRICE BOOK (name - price). Quote from it under the PRICES rules, and if you file, put the ONE best-matching name in services.\n${catalog}` : '\n(No price book for this one: do NOT quote any job price. The service call fee is still fine.)'}
 
 RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
@@ -161,7 +161,8 @@ async function priceCatalog() {
   const rows = await select('saved_items?select=name,price&order=name.asc&limit=120');
   if (!Array.isArray(rows) || !rows.length) return { text: '', prices: [] };
   return {
-    text: rows.map((r) => r.name).filter(Boolean).join('\n'),
+    // Names WITH prices, same as Yelp: names alone left text Lisa nothing to quote.
+    text: rows.filter((r) => r.name && Number(r.price) > 0).map((r) => `${r.name} - $${Number(r.price)}`).join('\n'),
     prices: rows.map((r) => ({ name: r.name, price: Number(r.price) })),
   };
 }

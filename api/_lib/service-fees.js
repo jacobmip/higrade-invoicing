@@ -15,8 +15,8 @@ export function serviceFees(prices) {
 
 /** The rule every Lisa follows, in prompt form. */
 export function serviceFeeRule(fees) {
-  // Jake, 2026-11-12: "we don't give estimates over the phone". The Nov 11
-  // "rough estimate over the phone first" offer is gone: a price-book job gets
-  // its range in the conversation, anything else is the service call.
-  return `SERVICE CALL FEE. Use this when they ask what it costs to come out, the diagnostic fee, the trip charge or the hourly rate, and for any job you cannot price. Say it in your own short words: having us come take a look is a minimum of the $${fees.std} service call fee ($${fees.highRise} for a high-rise building), which is always credited back if they go ahead with any repair. We do not give estimates over the phone: never offer one, and never send them to call for a price. Never call it a trip fee, an hourly rate or a deposit.`;
+  // Jake, 2026-11-12: "we don't give estimates over the phone", but (same day)
+  // "I still wanted Lisa to give Yelp responses rough estimates": a price-book
+  // job gets its rough range in writing, anything else is the service call.
+  return `SERVICE CALL FEE. Use this when they ask what it costs to come out, the diagnostic fee, the trip charge or the hourly rate, and for any job you cannot price. Say it in your own short words: having us come take a look is a minimum of the $${fees.std} service call fee ($${fees.highRise} for a high-rise building), which is always credited back if they go ahead with any repair. Never offer to quote on a phone call and never send them to call for a price: a job in the PRICE BOOK gets its rough range right here in the conversation. Never call it a trip fee, an hourly rate or a deposit.`;
 }
