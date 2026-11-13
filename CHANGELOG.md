@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.3 — 2026-11-13
+
+- Phone Lisa: a caller who already has a visit booked (today onward) no longer gets a new estimate, the "send your address and photos" text or the follow-up drip after the call. The call links to the booked job and the call record email still goes out. Marianne called to confirm her 4:30 and got all three (EST1213).
+
 ## v1.81.2 — 2026-11-12
 
 - Estimate agent: drive time is checked for the visit time, or the next weekday at 8 AM when there is none yet, not the moment the customer writes (a 9 PM question priced Kailua at 22 min, in-town).

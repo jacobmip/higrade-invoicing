@@ -27,6 +27,7 @@ import {
   alreadySentMessage, recentOutboundSms, recordSmsSnapshot, supabaseUrl,
 } from './_lib/sms.js';
 import { recordCall, handleRecordingRequest } from './_lib/call-recording.js';
+import { matchClient, upcomingVisits } from './_lib/yelp-booking.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
 
@@ -110,6 +111,20 @@ async function buildConfirmationSms(to, estimateId) {
     return body + ' Reply STOP to opt out.';
   } catch (e) {
     console.error('[vapi-call-ended] confirmation lookup failed, using kickoff:', e.message || e);
+    return null;
+  }
+}
+
+// The caller's next booked visit (today onward, Hawaii), else null. Any lookup
+// failure is null, so the normal lead path still runs.
+async function bookedVisitFor(phone) {
+  try {
+    const { client } = await matchClient({ phone });
+    if (!client) return null;
+    const [v] = await upcomingVisits(client.id);
+    return v ? { doc: v.doc, start: v.start, client: client.id } : null;
+  } catch (e) {
+    console.error('[vapi-call-ended] booked-visit lookup failed:', e.message || e);
     return null;
   }
 }
@@ -486,10 +501,18 @@ export default async function handler(req, res) {
   // Never for an outbound call: we dialled the customer, so "no estimate was
   // filed" is expected and capturing would turn our own call into a fake
   // inbound lead and a duplicate estimate.
-  let rescued = null;
-  const skipLead = !outbound && shouldSkipAbandonedLead(params?.message || params || {});
+  // A caller who already has a visit on the books (today onward) is a booked
+  // customer, not a lead: Marianne called on 2026-11-13 to confirm her 4:30 and
+  // got a duplicate estimate (EST1213), the "send your address and photos"
+  // kickoff and a queued drip. Link the call to the booked job and stop there.
+  // The call record email still goes out; the return is just before the texts.
+  const booked = outbound ? null : await bookedVisitFor(to);
+  if (booked) console.log('[vapi-call-ended] booked customer, no lead/kickoff/drip', { to, callId, doc: booked.doc });
+
+  let rescued = booked ? { estimate_id: booked.doc, booked: true } : null;
+  const skipLead = !outbound && !booked && shouldSkipAbandonedLead(params?.message || params || {});
   if (skipLead) console.log('[vapi-call-ended] Skipped lead: no engagement', { to, callId });
-  if (!outbound && !skipLead) try {
+  if (!outbound && !skipLead && !booked) try {
     rescued = await rpc('capture_abandoned_call', {
       p_secret: expected,
       p_caller_id: to,
@@ -508,7 +531,7 @@ export default async function handler(req, res) {
     console.error('[vapi-call-ended] abandoned-call capture failed:', e.message || e);
   }
 
-  if (rescued?.estimate_id) {
+  if (rescued?.estimate_id && !booked) {
     const addr = await verifyCallAddress(rescued.estimate_id);
     if (addr) console.log('[vapi-call-ended] address check', rescued.estimate_id, addr.status);
     await fixFiledAddress(rescued.estimate_id);
@@ -569,6 +592,8 @@ export default async function handler(req, res) {
     // Never let the archive email affect the call outcome.
     console.error('[vapi-call-ended] call archive email failed:', e.message || e);
   }
+
+  if (booked) return json(res, 200, { ok: true, skipped: 'caller has a booked visit', visit: booked });
 
   // The kickoff text is for new inbound leads only. An outbound call that
   // filed no estimate gets the 3-message drip instead.
