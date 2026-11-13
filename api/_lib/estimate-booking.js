@@ -45,7 +45,7 @@ export function sentEstimatesPrompt(ests) {
   return `ESTIMATES ALREADY SENT TO THIS CUSTOMER:
 ${lines.join('\n')}
 When they say "it", "the job" or "the install", they mean this work. Never ask what they want done when an estimate above covers it.
-If they want to schedule work from an estimate that is not scheduled yet, book it yourself: agree a day and time, then set appointment to it, set estimate_id to that estimate's number (e.g. "EST1209") and set ready_to_book true. The visit goes on that estimate, so do not ask for the problem, address or phone again. If it is not approved yet, mention once that they can approve it at the link before the visit. If it already shows scheduled, tell them that time and do not rebook.`;
+If they want to schedule work from an estimate that is not scheduled yet, book it yourself: agree a day and time, then set appointment to it, set estimate_id to that estimate's number (e.g. "EST1209") and set ready_to_book true. The visit goes on that estimate, so do not ask for the problem, address or phone again. Approval is NOT needed to schedule: never ask them to approve or sign it first, and do not bring approval up. If it already shows scheduled, tell them that time and do not rebook.`;
 }
 
 /** Put the agreed visit on that estimate and push it to Google Calendar. */

@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.8 — 2026-11-12
+
+- Lisa (text and Yelp) never asks a customer to approve an estimate before scheduling it (Jake: "the estimate doesn't need to be approved before scheduling"). Zoe was told "The estimate just needs your approval at the link first" when she asked for tomorrow. Approval is not mentioned at all now; she just books it on the estimate.
+
 ## v1.79.7 — 2026-11-12
 
 - Yelp Lisa books work from an estimate already sent, the same as text Lisa (v1.79.6). New `_lib/estimate-booking.js`: `sentEstimates({clientId, phone})` (last 60 days, sent / pending / approved, with line items), `sentEstimatesPrompt()`, `bookOnEstimate()` (sets `gcal_date` + `updated_at` only while it is still empty, then `push_invoice_to_calendar`). Yelp's prompt gets the estimates (phone or a verified match, never a name-only guess); with `estimate_id` + `ready_to_book` and a time the calendar cleared, the visit lands on that estimate instead of a new lead, and needs no phone or address from the thread. A failed booking is a Telegram.
