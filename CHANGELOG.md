@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.80.0 — 2026-11-12
+
+- One Lisa on every channel (Jake: "when I adjust Lisa, she stays consistent and her soul or personality and reasoning stays the same"). Text and Yelp had drifted into different rules: text refused prices, sent reschedules to the office, booked any hour and named "Jacob"; Yelp quoted ranges, moved visits herself, booked 8 to 3 and never named the owner.
+  - `_lib/lisa-soul.js`: `lisaIdentity(channel)` and `lisaSoul({channel, fees})`, the single copy of who she is and every customer rule (goal, booking flow, hours, address, estimates, visits on the books, prices, the one useful question, voice, never naming the owner, promises, safety). Both prompts are built from it and keep only their format and JSON. Decisions: price-book ranges everywhere; Lisa moves visits herself; visits start weekdays 8 AM to 3 PM; always "we"; estimates never need approval before scheduling.
+  - `_lib/lisa-guards.js`: the after-reply checks, moved out of Yelp's `polish()` so text runs the same ones (`cleanStyle`, `checkPrices`, `scrubOwner`, `styleFlags`, `guardBody`). Yelp's `polish()` now only adds its opener and sign-off (6 of 8 sample replies byte-identical; the 2 differences are "Someone from our team will" for the owner's name and a capitalised first word). `scrubOwner` also catches "Jacob".
+  - Text Lisa gains what Yelp had: real open times by name (`openSlots`), the 8 to 3 window, alternatives from `openSlots` when a time is taken, price ranges with the sight-unseen line, held replies to Jake by Telegram instead of sent, and `action` reschedule / cancel / where_is_tech (moves via `moveVisit`).
+  - `upcomingVisits()` and `moveVisit()` now see visits Lisa booked herself (`gcal_date` with no `visits[]` entry, e.g. EST1211): Yelp could neither list nor move them before.
+  - `draftReply()` takes `testRows` for dry runs.
+
 ## v1.79.8 — 2026-11-12
 
 - Lisa (text and Yelp) never asks a customer to approve an estimate before scheduling it (Jake: "the estimate doesn't need to be approved before scheduling"). Zoe was told "The estimate just needs your approval at the link first" when she asked for tomorrow. Approval is not mentioned at all now; she just books it on the estimate.

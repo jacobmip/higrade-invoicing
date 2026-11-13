@@ -23,6 +23,9 @@ import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split
 import { otherChannelsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
+import { openSlots, requestedDates, upcomingVisits, moveVisit, requestChange, inBusinessHours, speakVisit } from './yelp-booking.js';
+import { guardBody, BIG_JOB } from './lisa-guards.js';
+import { lisaIdentity, lisaSoul } from './lisa-soul.js';
 import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
@@ -96,72 +99,40 @@ function firstNameOf(name) {
 // v1.76.0: openEstimateDate / Problem / Urgency were read here but never
 // passed in. Every draft threw "openEstimateProblem is not defined" from
 // v1.50.0 (2026-11-03) on, so text Lisa answered nobody for eight days.
-function systemPrompt({ now, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, catalog, fees = serviceFees([]), history = '' }) {
-  return `You are Lisa, the front desk at HI Grade Plumbing LLC, a licensed plumbing company on Oahu, Hawaii. You are answering a TEXT MESSAGE. You are the same Lisa who answers the phone and replies on Yelp.
+// Who Lisa is and every rule she follows live in lisa-soul.js, shared with
+// Yelp (and the phone prompt). Only text's own format and fields are here.
+function systemPrompt({ now, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, catalog, fees = serviceFees([]), history = '', slots = [], visits = [] }) {
+  const times = slots?.length
+    ? slots.map((x) => `- ${x.spoken} [${x.start}]${x.asked ? ' (a day they asked about)' : ''}`).join('\n')
+      + (slots.fullDays?.length ? `\nFully booked, checked just now: ${slots.fullDays.join(', ')}.` : '')
+      + '\nOnly these days were checked. Never say any other day is unavailable: if they want a different day, ask what time works that day and set appointment, the system checks it.'
+    : '(No open times listed. If they want a time, ask what day and time window works for them.)';
+  return `${lisaIdentity('text')}
 
 Right now it is ${now.weekday}, ${now.pretty} in Hawaii. Today's date is ${now.iso}. Work out every date from that and never guess a year.
-${history ? `
-${history}
-` : ''}
-YOUR ONE GOAL
-Get to a booked visit at a known address. A text thread that ends without an appointment and an address is a failure, however pleasant it was. Everything below serves that.
 
-To book a visit you need, in this order of importance:
-1. What is wrong, in enough detail to send the right person with the right parts
-2. The service address, including unit number — required before scheduling
-3. A day and rough time that works for them
-4. Their name
+WHO THIS IS
+${clientName ? `An existing customer: ${firstNameOf(clientName)}. Full name on file: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
+You already have their phone number: they texted you.
+${visits?.length ? `Their upcoming visits (Hawaii time):\n${visits.map((v) => `- ${speakVisit(v.start)}${v.what ? `, ${v.what}` : ''} (${v.doc}) [visit_start ${v.start}]`).join('\n')}` : (hasOpenEstimate && openEstimateDate ? `They have a visit SCHEDULED for ${String(openEstimateDate).slice(0, 16).replace('T', ' at ')} Hawaii time.` : '')}
+${hasOpenEstimate ? 'They already have a visit booked: do not book a new one. Confirm it, or move it if they ask.' : ''}
+${!hasOpenEstimate && openEstimateProblem ? `From their phone call, the team already knows the issue is "${openEstimateProblem}"${openEstimateUrgency ? ` (${openEstimateUrgency})` : ''}. Do not ask them to describe it again.` : ''}
+${history ? `\n${history}\n` : ''}
+OPEN TIMES ON THE CALENDAR (offer these by name, never invent others)
+${times}
 
-You usually already have their number, because they texted you.
+${lisaSoul({ channel: 'text', fees })}
 
-HOW TO GET THERE
-- ASK ONE THING PER MESSAGE. Two questions in one text gets one answer, usually the easier one. This is the single most important rule here.
-- Lead toward the visit early. Once you understand roughly what is wrong, ask for the service address. Then once you have the address, offer day options.
-- Good move: "We can take a look at that. What's the service address?" Then once you have it: "What day works better for you, tomorrow or Thursday?"
-- ALWAYS confirm the service address before booking any appointment. Even for returning clients — addresses change, and the team cannot show up without it. If the address is not confirmed in this thread, ask for it before agreeing to a time.
-- When they give you a day and time AND you already have the address, book it and confirm the day and time ("You're all set for Thursday at 9 AM."). It is a confirmed booking: never say the team will confirm. The system checks the calendar first and replaces your reply if the time is taken.
-- If the customer is sharing contact information — email address, phone number, or address — without proposing a time, do NOT set appointment and do NOT propose a schedule. Just acknowledge the info warmly and move the conversation forward naturally.
-- If they are vague or unsure about the problem, that is normal and it is not a reason to keep digging. Being unsure is a reason to come look. Say so: that is exactly what a visit is for.
-- If they go quiet mid-thread, your next message should make it trivially easy to say yes to a time.
+ON TEXT
+- Booking a new visit: once you have what is wrong, the service address and an agreed time, set ready_to_file true with appointment set to that time. If they only confirm ("Okay", "Yes") a time you offered and the address is confirmed in this thread, set ready_to_file true and fill appointment with that time. Never set ready_to_file without an address.
+- Work on an estimate already sent: set appointment and estimate_id, keep ready_to_file false.
+- Moving a visit: action "reschedule" with visit_start and new_time. Cancelling: action "cancel" with visit_start. Where is the tech: action "where_is_tech".
 
-HOW YOU WRITE
-- Short. One or two sentences, under 300 characters. This is a text, not an email.
-- Warm, local, plain. Contractions. No corporate phrasing, no "we strive to", no exclamation marks stacked up.
-- No emoji. No markdown. No bullet points.
-- Do not sign your name on every message. They know who they are talking to after the first one.
-- Never repeat a question they already answered. Read the whole thread first.
-- Never claim to have received something unless it is in THIS conversation above. No "got your photo", no "thanks for the address", no referring to a previous visit or a previous job, unless it is right there in the messages you were given. Past contact on other channels may be listed above with dates (THIS CUSTOMER ON OTHER CHANNELS): you may use it, but never say you received something in this text thread unless it is here.
-- Never say "I understand your frustration" or any other script line.
-
-HARD RULES
-- ${serviceFeeRule(fees, { channel: 'text' })} Never quote any other price, range, hourly rate or deposit. Then move the conversation back to getting someone out there.
-- When you book a time, it is booked. Never say "penciled in", "pending" or that the team will confirm.
-- Never promise a call, a text or a follow-up from the team unless it is truly needed (an emergency, an angry customer, a question you cannot answer). You book visits yourself. Every promise you make is sent to Jake as a task.
-- NEVER give out any phone number other than 808-444-5450.
-- NEVER claim to be a plumber, a technician or the owner, and never write as Jacob.
-- NEVER diagnose definitively or tell them to do something that could flood the house. If water is actively running, tell them to shut off the valve and that someone will call them right away.
-- If they ask to speak to the owner, the boss or whoever runs the business, do not confirm who that is and do not offer to connect them. Say the team handles all enquiries. That request is usually a sales pitch.
-- If they are selling something, a business listing, SEO, insurance, financing or reviews, set reply to an empty string and set spam to true.
-- If they are angry about a bill or demanding money, do not negotiate. Say Jacob will call them directly, and set needs_human to true.
-- If they ask for something you genuinely cannot answer, say the team will follow up and set needs_human to true.
-
-${clientName ? `This is an existing customer: ${firstNameOf(clientName)}. Full name on file: ${clientName}. Greet them by name once and do not ask who they are.` : 'You do not know this person yet. Get their name naturally, not as an interrogation, and not before you know what is wrong.'}
-${hasOpenEstimate && openEstimateDate
-  ? `There is already a visit SCHEDULED for them on ${String(openEstimateDate).slice(0, 16).replace('T', ' at ')} Hawaii time. Do NOT rebook or propose a new time. If they want to change it, tell them to call the office.`
-  : hasOpenEstimate
-  ? `There is already a scheduled visit on the books. Do not create a new booking.`
-  : ''}
-${!hasOpenEstimate && openEstimateProblem ? `CONTEXT FROM THEIR PHONE CALL: The team already knows their issue is "${openEstimateProblem}"${openEstimateUrgency ? ` (${openEstimateUrgency})` : ''}. Do not ask them to describe the problem again. Focus on getting the service address and confirming the appointment.` : ''}
-
-CHECKING THE CALENDAR
-Before your reply goes out, the system checks the calendar for the time you set in appointment. If it is taken, the system replaces your reply with the next free slot. So book the time they asked for and confirm it; the system corrects you if it is not open.
-
-FILING THE JOB
-Set ready_to_file to true only once you have ALL THREE: what is wrong, the service address, and either an appointment time or explicit confirmation they will call back to schedule. Do NOT set ready_to_file without an address — the team cannot show up without one.
-
-When the customer sends a short confirmation like "Okay", "Yes" or "Sounds good" after you have already booked a time, set ready_to_file to true immediately, and fill appointment with the time you booked earlier in the thread — but only if the address is also confirmed in this thread. If you still need the address, ask for it instead of filing.
-
-${catalog ? `PRICE BOOK. If you file, pick the ONE service name that best matches and put it in services. Never say any of this out loud.\n${catalog}` : ''}
+FORMAT
+- Short: one or two sentences, under 300 characters. It is a text, not an email.
+- Do not sign your name on every message, and no greeting after the first one.
+- Do not write the sight-unseen line after a price, it is added for you.
+${catalog ? `\nPRICE BOOK (name - price). Quote from it under the PRICES rules, and if you file, put the ONE best-matching name in services.\n${catalog}` : '\n(No price book for this one: do NOT quote any job price. The service call fee is still fine.)'}
 
 RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
 {
@@ -175,9 +146,12 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
   "problem": "what is wrong, in their words, one or two sentences",
   "appointment": "YYYY-MM-DDTHH:MM in Hawaii time if agreed, else empty",
   "estimate_id": "the estimate number when this appointment is for work on an estimate already sent to them, else empty",
+  "action": "none | where_is_tech | reschedule | cancel",
+  "visit_start": "the [visit_start] value of the visit they mean, else empty",
+  "new_time": "YYYY-MM-DDTHH:MM for a reschedule, else empty",
   "urgency": "emergency, urgent, or routine",
   "services": ["exact price book name"],
-  "note": "one short line for Jake if there is something he should know, else empty"
+  "note": "one short line for the office if there is something they should know, else empty"
 }`;
 }
 
@@ -287,18 +261,26 @@ function parseJson(text) {
  * Decide what Lisa would say next in a thread, without sending anything.
  * Exported so the preview path and the live path share one prompt.
  */
-export async function draftReply({ phone, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency }) {
+// testRows: a made-up thread for dry runs (nothing is sent from draftReply).
+export async function draftReply({ phone, clientName, clientId = null, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, testRows = null }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
-  const rows = await thread(phone);
+  const rows = testRows || await thread(phone);
   const messages = asMessages(rows);
   if (!messages.length) return { skip: 'nothing in the thread to answer' };
   if (messages[messages.length - 1].role !== 'user') {
     return { skip: 'the last word in this thread is already ours' };
   }
 
-  const { text: catalog, prices } = await priceCatalog();
+  const { text: catalogAll, prices } = await priceCatalog();
+  // Same as Yelp: what they wrote decides whether a price book is offered at
+  // all, real open times are offered by name, and their visits are listed.
+  const customerText = rows.filter((r) => r.direction === 'inbound').map((r) => String(r.body || '')).join('\n');
+  const catalog = BIG_JOB.test(customerText) ? '' : catalogAll;
+  const lastIn = String(rows[rows.length - 1]?.body || '');
+  const slots = hasOpenEstimate ? [] : await openSlots({ prefer: requestedDates(lastIn) }).catch(() => []);
+  const visits = clientId ? await upcomingVisits(clientId).catch(() => []) : [];
   const res = await fetch(ANTHROPIC, {
     method: 'POST',
     headers: {
@@ -317,6 +299,8 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
         openEstimateProblem,
         openEstimateUrgency,
         catalog,
+        slots,
+        visits,
         fees: serviceFees(prices),
         // Yelp, calls and emails for this number (migration 122). Texts are
         // excluded: the thread above already is the text conversation.
@@ -347,6 +331,16 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
     out.reply = (stop > 160 ? cut.slice(0, stop + 1) : cut).trim();
   }
   out.usage = json.usage;
+
+  // The checks every channel shares (lisa-guards.js): prices from the book as
+  // a range, big jobs and the owner's name held, only 808-444-5450.
+  if (out.reply) {
+    const g = guardBody(out.reply, { prices, customerText });
+    out.reply = g.text;
+    out.flags = g.flags;
+    if (g.hold) out.hold = g.hold;
+  }
+  out.action = String(out.action || 'none').trim();
 
   // Never book a time the calendar has not cleared. The suggested slot is
   // offered in the reply only, not written to `appointment`: the customer has
@@ -394,6 +388,19 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
     const own = await ownVisits(phone);
     if (own.some((t) => t === out.appointment.slice(0, 16))) out.appointment = '';
   }
+  // Visits start weekdays 8 AM to 3 PM, at least an hour out (lisa-soul).
+  const altText = async (t, lead) => {
+    const day = String(t || '').slice(0, 10);
+    const alt = (await openSlots({ prefer: day ? [day] : [] }).catch(() => []))
+      .filter((x) => x.start !== String(t).slice(0, 16)).slice(0, 2);
+    return alt.length ? `${lead} We do have ${alt.map((x) => x.spoken).join(' or ')} open. Which works for you?` : `${lead} What other day works for you?`;
+  };
+  if (out.appointment && !inBusinessHours(out.appointment)) {
+    out.reply = await altText(out.appointment, 'We book visits on weekdays between 8 AM and 3 PM.');
+    out.appointment = '';
+    out.ready_to_file = false;
+    delete out.hold;
+  }
   if (out.appointment) {
     const chk = await checkAppointment(out.appointment);
     out.availability = chk.status;
@@ -404,12 +411,12 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
       const nextSlot = chk.next ? speakSlot(chk.next.start) : null;
       const nextDay = nextSlot ? nextSlot.split(' at ')[0] : null;
       const sameDay = blockedDay && nextDay && blockedDay === nextDay;
+      const busyAt = out.appointment;
       out.appointment = '';
-      out.reply = nextSlot
-        ? (sameDay
-          ? `That time's taken — we do have ${nextSlot} open. Does that work for you?`
-          : `We're booked up ${blockedDay || 'that window'} — we do have ${nextSlot} open. Does that work for you?`)
-        : `We're booked up ${blockedDay || 'that day'}. What other day works for you?`;
+      void nextSlot; void sameDay; void blockedDay;
+      // Alternatives from openSlots (the 8 AM to 3 PM window), same as Yelp.
+      out.reply = await altText(busyAt, 'That time is already taken.');
+      delete out.hold;
     } else if (chk.status === 'error') {
       console.error('[sms-agent] availability check failed, not booking:', chk.detail);
       out.appointment = '';
@@ -420,13 +427,13 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
   }
   // A booked visit is the only time Lisa may state. A reply naming any other
   // clock time is replaced with the real one.
-  if (hasOpenEstimate && openEstimateDate) {
+  if (hasOpenEstimate && openEstimateDate && out.action !== 'reschedule') {
     const booked = speakSlot(String(openEstimateDate).slice(0, 16));
     const bookedTime = booked.split(' at ')[1].replace(/\s+/g, '').toLowerCase();
     const said = (out.reply.match(/\b\d{1,2}(?::\d{2})?\s?(?:AM|PM)\b/gi) || []).map((x) => x.replace(/\s+/g, '').toLowerCase());
     if (said.some((x) => x !== bookedTime)) {
       console.log('[sms-agent] reply named a time other than the booked visit, replaced', said, booked);
-      out.reply = `You're set for ${booked}. If you need to change it, give us a call at 808-444-5450. Mahalo!`;
+      out.reply = `You're set for ${booked}. If you need to change it, just let me know. Mahalo!`;
       out.appointment = '';
     }
   }
@@ -553,7 +560,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
     }
   }
 
-  const out = await draftReply({ phone, clientName, hasOpenEstimate: openEstimateScheduled, openEstimateDate, openEstimateProblem, openEstimateUrgency });
+  const out = await draftReply({ phone, clientName, clientId, hasOpenEstimate: openEstimateScheduled, openEstimateDate, openEstimateProblem, openEstimateUrgency });
   if (out.skip) return out.skip;
   // Work from an estimate already sent (Jake: "Lisa should book it
   // automatically", Zoe EST1209, 2026-11-12). draftReply has already checked
@@ -570,6 +577,45 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
   }
   if (out.spam) return 'classified as spam, not replying';
   if (!out.reply) return 'model chose to say nothing';
+
+  // A reply that failed a shared check is not sent: Jake gets it, same as Yelp.
+  if (out.hold) {
+    await telegramNotify(`Text to ${clientName || phone} held for you\nWhy: ${out.hold}\nDraft: "${String(out.reply).slice(0, 400)}"\nThey wrote: "${String(body || '').slice(0, 200)}"\n${phone}`)
+      .catch((e) => console.error('[sms-agent] telegram failed:', e.message || e));
+    return `held: ${out.hold}`;
+  }
+
+  // Visits already on the books: Lisa moves them herself, same as Yelp.
+  const who = out.name || clientName || phone;
+  if (out.action === 'reschedule') {
+    const newTime = String(out.new_time || '').trim().slice(0, 16);
+    if (!clientId) {
+      out.reply = 'Could you send the service address on the booking so I can pull it up and move it?';
+    } else if (newTime && !inBusinessHours(newTime)) {
+      out.reply = 'We book visits on weekdays between 8 AM and 3 PM. What time in that window works for you?';
+    } else if (newTime) {
+      const chk = await checkAppointment(newTime);
+      if (chk.status === 'free') {
+        const r = await moveVisit({ clientId, visitStart: out.visit_start, newTime }).catch((e) => ({ ok: false, reason: e.message || String(e) }));
+        out.reschedule = r;
+        if (r.ok && !r.unchanged) {
+          await telegramNotify(`Lisa moved ${who}'s visit by text: ${speakVisit(r.from)} -> ${speakVisit(r.to)} (${r.doc}). Calendar and app updated.`).catch(() => {});
+        } else if (!r.ok) {
+          out.reply = `I'm updating your appointment to ${speakVisit(newTime)} now and will confirm shortly.`;
+          await telegramNotify(`Text reschedule NOT applied for ${who}: ${r.reason}.\nWants: ${speakVisit(newTime)}${out.visit_start ? ` (was ${speakVisit(out.visit_start)})` : ''}\nMove it in the app and confirm by text.\n${phone}`).catch(() => {});
+        }
+      } else if (chk.status === 'busy') {
+        out.reply = 'That time is already taken. What other time works for you?';
+      } else {
+        out.reply = "I couldn't check that time just yet. What day and time window works best for you?";
+      }
+    }
+  } else if (out.action === 'cancel') {
+    const r = await requestChange({ phone, action: 'cancel', visitStart: out.visit_start, reason: String(body || '') }).catch(() => null);
+    await telegramNotify(`${who} asked to CANCEL by text${out.visit_start ? `: ${speakVisit(out.visit_start)}` : ''}${r?.ok ? ' (recorded)' : ''}\nThey wrote: "${String(body || '').slice(0, 200)}"\n${phone}`).catch(() => {});
+  } else if (out.action === 'where_is_tech') {
+    await telegramNotify(`URGENT: ${who} is asking by text if we are still coming.\nThey wrote: "${String(body || '').slice(0, 200)}"\nLisa told them she is checking with the tech. ${phone}`).catch(() => {});
+  }
 
   await sendTwilioSms({ to: phone, body: out.reply });
   await logOutbound({ secret, phone, body: out.reply });

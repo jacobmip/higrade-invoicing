@@ -67,14 +67,21 @@ export async function upcomingVisits(clientId) {
   if (!clientId) return [];
   const today = hawaiiNow().iso;
   const docs = await select(
-    `invoices?client_id=eq.${encodeURIComponent(clientId)}&deleted_at=is.null&select=id,type,visits`);
+    `invoices?client_id=eq.${encodeURIComponent(clientId)}&deleted_at=is.null&select=id,type,visits,gcal_date,gcal_event_id`);
   const out = [];
   for (const doc of docs) {
-    for (const v of Array.isArray(doc.visits) ? doc.visits : []) {
+    const vs = Array.isArray(doc.visits) ? doc.visits : [];
+    for (const v of vs) {
       const start = String(v?.start || '');
       if (start && start >= today) {
         out.push({ start, what: String(v.label || v.kind || '').trim(), doc: doc.id, on_calendar: !!v.eventId });
       }
+    }
+    // A visit Lisa booked lives in gcal_date (create_estimate_from_lead,
+    // bookOnEstimate), with no visits[] entry: Neil's EST1211 was invisible here.
+    const g = String(doc.gcal_date || '').slice(0, 16);
+    if (g && g >= today && !vs.some((v) => String(v?.start || '').slice(0, 16) === g)) {
+      out.push({ start: g, what: '', doc: doc.id, on_calendar: !!doc.gcal_event_id });
     }
   }
   return out.sort((a, b) => a.start.localeCompare(b.start)).slice(0, 5);
@@ -336,12 +343,18 @@ export async function moveVisit({ clientId, visitStart, newTime }) {
   if (!clientId || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(to)) return { ok: false, reason: 'missing client or time' };
   const today = hawaiiNow().iso;
   const docs = await select(
-    `invoices?client_id=eq.${encodeURIComponent(clientId)}&deleted_at=is.null&select=id,visits`);
+    `invoices?client_id=eq.${encodeURIComponent(clientId)}&deleted_at=is.null&select=id,visits,gcal_date,gcal_event_id`);
   const upcoming = [];
   for (const doc of docs) {
-    (Array.isArray(doc.visits) ? doc.visits : []).forEach((v, i) => {
+    const vs = Array.isArray(doc.visits) ? doc.visits : [];
+    vs.forEach((v, i) => {
       if (String(v?.start || '') >= today) upcoming.push({ doc, i, v });
     });
+    // Lisa's own bookings: gcal_date + gcal_event_id, no visits[] entry (i = -1).
+    const g = String(doc.gcal_date || '').slice(0, 16);
+    if (g && g >= today && !vs.some((v) => String(v?.start || '').slice(0, 16) === g)) {
+      upcoming.push({ doc, i: -1, v: { start: g, eventId: doc.gcal_event_id || null } });
+    }
   }
   const want = String(visitStart || '').slice(0, 16);
   const hit = want ? upcoming.find((x) => String(x.v.start).slice(0, 16) === want)
@@ -376,13 +389,15 @@ export async function moveVisit({ clientId, visitStart, newTime }) {
     if (!moved) return { ok: false, reason: `calendar: ${lastErr?.message || 'event not found'}` };
   }
 
-  const visits = hit.doc.visits.map((v, i) => (i === hit.i ? { ...v, start: to } : v));
+  const change = hit.i === -1
+    ? { gcal_date: to }
+    : { visits: hit.doc.visits.map((v, i) => (i === hit.i ? { ...v, start: to } : v)) };
   const r = await fetch(`${supabaseUrl()}/rest/v1/invoices?id=eq.${encodeURIComponent(hit.doc.id)}`, {
     method: 'PATCH', headers: { ...sbHeaders(), Prefer: 'return=minimal' },
     // updated_at is the app's stale-save lock (db.js expected_updated_at):
     // without bumping it, an estimate left open in the app saves its old
     // visit back over this move (EST1204, 2026-11-11).
-    body: JSON.stringify({ visits, updated_at: new Date().toISOString() }),
+    body: JSON.stringify({ ...change, updated_at: new Date().toISOString() }),
   });
   if (!r.ok) return { ok: false, doc: hit.doc.id, reason: `calendar moved but the app did not save (${r.status})` };
   await fetch(`${supabaseUrl()}/rest/v1/invoice_events`, {
