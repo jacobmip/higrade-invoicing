@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.79.5 — 2026-11-12
+
+- Text Lisa keeps the thread's context across a long break (Zoe: asked about a recessed ice maker box, got EST1209, and 21 hours later "When are you available to come and install it?" got "What is it you'd like us to install?"). The 12-hour conversation cut still decides what she is answering, but the 12 messages before it ride along as an EARLIER IN THIS TEXT THREAD block.
+- She also sees every estimate sent to that phone in the last 60 days (`sent` / `pending` / `approved`): number, date, approved or not, scheduled or not, line items and notes. "It" means that work. Asked to schedule it, she says the estimate needs approval at the link first (if it is not approved) and that Jacob will set the time, sets no appointment, and flags Jake (`needs_human` Telegram), so the visit lands on that estimate instead of a duplicate lead.
+
 ## v1.79.4 — 2026-11-12
 
 - Text Lisa no longer talks a customer out of their own booking (Neil Hannahs: booked for Friday 3 PM, his next text got "That time's taken, we do have 4:30", then "You're firmly booked for 4:30" while EST1211 stayed at 3 PM). Three fixes in `_lib/sms-agent.js`:

@@ -221,7 +221,46 @@ async function thread(phone) {
     if (gap > CONVERSATION_GAP_HOURS) break;
     start = i - 1;
   }
-  return rows.slice(start);
+  // What came before the gap is not the conversation, but it is context:
+  // Zoe asked about an ice maker box, got estimate EST1209, and 21 hours later
+  // "When are you available to come and install it?" got "What is it you'd
+  // like us to install?" (2026-11-12). It rides along as background.
+  const out = rows.slice(start);
+  out.earlier = rows.slice(Math.max(0, start - 12), start);
+  return out;
+}
+
+// Estimates already sent to this phone (last 60 days, not deleted): number,
+// date, status and scope, so "when can you install it?" has an "it".
+async function sentEstimatesBlock(phone) {
+  const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+  if (last10.length !== 10) return '';
+  try {
+    const since = new Date(Date.now() - 60 * 86400e3).toISOString();
+    const ests = await select(`invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
+      + `&type=eq.estimate&deleted_at=is.null&status=in.(sent,pending,approved)&created_at=gte.${encodeURIComponent(since)}`
+      + '&select=id,date,status,gcal_date,notes&order=created_at.desc&limit=3');
+    if (!Array.isArray(ests) || !ests.length) return '';
+    const ids = ests.map((e) => e.id).join(',');
+    const items = await select(`invoice_items?invoice_id=in.(${encodeURIComponent(ids)})&select=invoice_id,name,description,qty&order=sort_order`);
+    const lines = ests.map((e) => {
+      const its = (Array.isArray(items) ? items : []).filter((i) => i.invoice_id === e.id)
+        .map((i) => `${Number(i.qty) > 1 ? `${i.qty} x ` : ''}${i.name}${i.description ? ` (${String(i.description).replace(/\s*\n\s*/g, '; ').slice(0, 220)})` : ''}`);
+      const signed = e.status === 'approved';
+      return `- ${e.id}, sent ${e.date}, ${signed ? 'APPROVED' : 'not approved yet'}${e.gcal_date ? `, scheduled ${String(e.gcal_date).slice(0, 16).replace('T', ' at ')}` : ', not scheduled'}: ${its.join('; ') || 'no line items'}${e.notes ? `. Notes on it: ${String(e.notes).slice(0, 200)}` : ''}`;
+    });
+    return `ESTIMATES ALREADY SENT TO THIS CUSTOMER (the link to each is in the thread):
+${lines.join('\n')}
+When they say "it", "the job" or "the install", they mean this work. Never ask what they want done when an estimate above covers it.
+If they want to schedule work from an estimate that is not approved yet: thank them, say the estimate needs their approval at the link first (it only takes a tap), and that Jacob will reach out to set a time once it is approved. If it is approved: say Jacob will reach out to get it on the calendar. Either way do NOT set appointment, do NOT offer specific times, and set needs_human to true so Jacob books it on that estimate.`;
+  } catch { return ''; }
+}
+
+function earlierBlock(rows) {
+  const e = (rows?.earlier || []).filter((r) => String(r.body || '').trim() && r.body !== '(no text)');
+  if (!e.length) return '';
+  return `EARLIER IN THIS TEXT THREAD (before a long break; background only, the conversation below is what you are answering):
+${e.map((r) => `${r.direction === 'inbound' ? 'Customer' : 'Us'} (${String(r.created_at).slice(0, 10)}): ${String(r.body).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n')}`;
 }
 
 function asMessages(rows) {
@@ -280,7 +319,11 @@ export async function draftReply({ phone, clientName, hasOpenEstimate, openEstim
         fees: serviceFees(prices),
         // Yelp, calls and emails for this number (migration 122). Texts are
         // excluded: the thread above already is the text conversation.
-        history: await otherChannelsBlock({ phone, exclude: 'text' }),
+        history: [
+          await otherChannelsBlock({ phone, exclude: 'text' }),
+          earlierBlock(rows),
+          await sentEstimatesBlock(phone),
+        ].filter(Boolean).join('\n\n'),
       }),
       messages,
     }),
