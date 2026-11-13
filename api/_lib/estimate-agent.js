@@ -97,7 +97,17 @@ const TOOLS = [
   { name: 'parts_cost', description: "Jake's actual unit cost for parts bought at Ferguson whose description contains ALL keywords, newest first. Use for the main part of the job (e.g. ['water heater','50']).",
     input_schema: { type: 'object', properties: { keywords: { type: 'array', items: { type: 'string' } } }, required: ['keywords'], additionalProperties: false } },
 ];
-const RUN = { past_jobs: pastJobs, parts_cost: partsCost };
+// No street address yet: the agent names the place they mentioned (a town or
+// neighborhood) and gets real drive time for it, in the same turn as the rest.
+async function driveTime({ place }) {
+  const q = String(place || '').trim();
+  if (!q) return { error: 'name a town or neighborhood' };
+  const minutes = await driveMinutes(/\b(HI|Hawaii)\b/i.test(q) ? q : `${q}, Oahu, HI`);
+  return minutes == null ? { error: 'no route found, use the zone guess' } : { minutes, ...travelFor(minutes) };
+}
+TOOLS.push({ name: 'drive_time', description: 'One-way drive minutes in traffic from our shop to a place on Oahu, with the travel surcharge to add. Use when travel is unknown and they named a town or neighborhood.',
+  input_schema: { type: 'object', properties: { place: { type: 'string' } }, required: ['place'], additionalProperties: false } });
+const RUN = { past_jobs: pastJobs, parts_cost: partsCost, drive_time: driveTime };
 
 // The website's estimator prompt (higrade-site/higrade-homepage-template.php),
 // which Jake prefers because it prices higher. Keep the ranges in step with it.
@@ -141,7 +151,7 @@ export async function estimateJob({ job, address = '', when = null, photos = [],
   const minutes = address ? await driveMinutes(address, when) : null;
   const travel = { minutes, ...travelFor(minutes) };
   const travelLine = travel.surcharge === null
-    ? `Travel: drive time unknown${address ? ` (address: ${address})` : ' (no address yet)'}. Guess the zone from any town they mention: Honolulu proper 0, 30+ min away (Hawaii Kai, Kailua, Kaneohe, Pearl City, Mililani, Ewa, Kapolei) +150, North Shore, Waianae coast or Laie/Kahuku +300. No town mentioned: assume 0 and say so.`
+    ? `Travel: drive time unknown${address ? ` (address: ${address})` : ' (no address yet)'}. If they named a town or neighborhood, call drive_time for it in your first turn alongside the other tools and add the surcharge it gives. If that fails, guess: Honolulu proper 0, 30+ min away (Hawaii Kai, Kailua, Kaneohe, Pearl City, Mililani, Ewa, Kapolei) +150, North Shore, Waianae coast or Laie/Kahuku +300. No place mentioned: assume 0 and say so.`
     : `Travel: ${minutes} min one way in traffic, ${travel.zone}, add $${travel.surcharge}.`;
 
   const content = [];
@@ -168,9 +178,10 @@ export async function estimateJob({ job, address = '', when = null, photos = [],
       if (j.stop_reason === 'tool_use') {
         const uses = j.content.filter((b) => b.type === 'tool_use');
         const results = await Promise.all(uses.map(async (u) => {
-          looked.push(`${u.name}: ${(u.input?.keywords || []).join(', ')}`);
+          looked.push(`${u.name}: ${u.input?.place || (u.input?.keywords || []).join(', ')}`);
           try {
             const out = RUN[u.name] ? await RUN[u.name](u.input || {}) : { error: 'unknown tool' };
+            if (u.name === 'drive_time' && Number.isFinite(out?.minutes)) Object.assign(travel, { place: u.input.place, ...out });
             return { type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out).slice(0, 6000) };
           } catch (e) {
             return { type: 'tool_result', tool_use_id: u.id, content: String(e.message || e), is_error: true };

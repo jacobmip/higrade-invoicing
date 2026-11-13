@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.1 — 2026-11-12
+
+- Estimate agent: a `drive_time` tool, so a customer who only names a town or neighborhood ("I'm in Kailua") gets real Google drive time in traffic instead of a zone guess. Called in the same turn as past_jobs and parts_cost, so no extra wait. Found on the first live preview of v1.81.0 (Kailua toilet: $750 to $1,000, 16s end to end, travel guessed).
+
 ## v1.81.0 — 2026-11-12
 
 - The estimate agent (Jake: "I want Lisa to be smarter and actually give an accurate estimate"). `_lib/estimate-agent.js` `estimateJob({job, address, when, photos, deadlineMs})` is a Claude tool loop (Opus 5.5, effort low) that prices like the website's AI estimator (Honolulu market, the same reference ranges, which Jake prefers because they run higher) and checks: `past_jobs` (billed or accepted line items, trashed docs excluded), `parts_cost` (Jake's Ferguson unit costs, 1.35x markup minimum), and up to two web searches. A past charge below market never pulls the quote down; it is reported to Jake as underpricing. Travel is Google drive time in traffic from Ward/Kakaako: under 30 min nothing, 30+ min +$150, 60+ min +$300, rolled in. Commercial and high-rise lean high; special-order parts add a $185 second trip. Returns low/high, confidence, line items, assumptions, `notes_for_jake`, `auto_send` (high <= $1,000 and not low confidence).
