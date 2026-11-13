@@ -654,8 +654,12 @@ were already done and were sending agents chasing work that did not exist.
 ### Open
 
 1. **iPhone: long-pressing a client's name selects it as text** — **fixed in
-   v1.21.4, not yet confirmed on the phone** (it cannot be: Vercel has not
-   deployed since 2026-10-18, see AI-OS `STATUS.md`).
+   v1.21.4, live since 2026-10-24, still unconfirmed on the phone.** Nobody has
+   checked it yet. This entry used to say confirmation was impossible because
+   Vercel had not deployed since 2026-10-18; that block was cleared by v1.22.0
+   and about 60 versions have shipped since, so the claim was false for three
+   weeks. It is now a 20-second check: long-press a client's name in Clients.
+   If it does not select as text, close this bug.
    **What Jake actually reported, on 2026-10-23:** long-pressing the name in
    Clients "doesn't do anything, it just starts selecting it as text". The
    complaint is the selection itself, not the page moving. The old title
