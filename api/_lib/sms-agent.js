@@ -24,7 +24,8 @@ import { otherChannelsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
 import { openSlots, requestedDates, upcomingVisits, moveVisit, requestChange, inBusinessHours, speakVisit } from './yelp-booking.js';
-import { guardBody, BIG_JOB } from './lisa-guards.js';
+import { guardBody } from './lisa-guards.js';
+import { estimateJob, estimatePrompt, estimateNote, PRICE_ASK } from './estimate-agent.js';
 import { lisaIdentity, lisaSoul } from './lisa-soul.js';
 import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
@@ -101,7 +102,7 @@ function firstNameOf(name) {
 // v1.50.0 (2026-11-03) on, so text Lisa answered nobody for eight days.
 // Who Lisa is and every rule she follows live in lisa-soul.js, shared with
 // Yelp (and the phone prompt). Only text's own format and fields are here.
-function systemPrompt({ now, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, catalog, fees = serviceFees([]), history = '', slots = [], visits = [] }) {
+function systemPrompt({ now, clientName, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, catalog, estimate = '', fees = serviceFees([]), history = '', slots = [], visits = [] }) {
   const times = slots?.length
     ? slots.map((x) => `- ${x.spoken} [${x.start}]${x.asked ? ' (a day they asked about)' : ''}`).join('\n')
       + (slots.fullDays?.length ? `\nFully booked, checked just now: ${slots.fullDays.join(', ')}.` : '')
@@ -132,7 +133,8 @@ FORMAT
 - Short: one or two sentences, under 300 characters. It is a text, not an email.
 - Do not sign your name on every message, and no greeting after the first one.
 - Do not write the more-or-less-in-person line after a price, it is added for you.
-${catalog ? `\nPRICE BOOK (name - price). Quote from it under the PRICES rules, and if you file, put the ONE best-matching name in services.\n${catalog}` : '\n(No price book for this one: do NOT quote any job price. The service call fee is still fine.)'}
+${estimate || '\n(No ESTIMATE this turn: give no job price. The service call fee is still fine.)'}
+${catalog ? `\nSERVICE NAMES (only for "services" when you file, put the ONE best match; never a source of prices):\n${catalog}` : ''}
 
 RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
 {
@@ -161,8 +163,9 @@ async function priceCatalog() {
   const rows = await select('saved_items?select=name,price&order=name.asc&limit=120');
   if (!Array.isArray(rows) || !rows.length) return { text: '', prices: [] };
   return {
-    // Names WITH prices, same as Yelp: names alone left text Lisa nothing to quote.
-    text: rows.filter((r) => r.name && Number(r.price) > 0).map((r) => `${r.name} - $${Number(r.price)}`).join('\n'),
+    // Names only, for `services` when she files. Prices come from the
+    // estimate agent now (2026-11-12), never from here.
+    text: rows.map((r) => r.name).filter(Boolean).join('\n'),
     prices: rows.map((r) => ({ name: r.name, price: Number(r.price) })),
   };
 }
@@ -274,14 +277,18 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
     return { skip: 'the last word in this thread is already ours' };
   }
 
-  const { text: catalogAll, prices } = await priceCatalog();
-  // Same as Yelp: what they wrote decides whether a price book is offered at
-  // all, real open times are offered by name, and their visits are listed.
   const customerText = rows.filter((r) => r.direction === 'inbound').map((r) => String(r.body || '')).join('\n');
-  const catalog = BIG_JOB.test(customerText) ? '' : catalogAll;
   const lastIn = String(rows[rows.length - 1]?.body || '');
+  // They asked about price: the estimate agent prices the job while the rest
+  // of the context loads (same as Yelp). It has a deadline so a slow search
+  // never costs the customer their reply.
+  const estimating = PRICE_ASK.test(lastIn) && !hasOpenEstimate
+    ? estimateJob({ job: customerText.slice(-2500), deadlineMs: 15000 }).catch((e) => ({ ok: false, error: String(e.message || e) }))
+    : null;
+  const { text: catalog, prices } = await priceCatalog();
   const slots = hasOpenEstimate ? [] : await openSlots({ prefer: requestedDates(lastIn) }).catch(() => []);
   const visits = clientId ? await upcomingVisits(clientId).catch(() => []) : [];
+  const est = estimating ? await estimating : null;
   const res = await fetch(ANTHROPIC, {
     method: 'POST',
     headers: {
@@ -300,6 +307,7 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
         openEstimateProblem,
         openEstimateUrgency,
         catalog,
+        estimate: estimatePrompt(est),
         slots,
         visits,
         fees: serviceFees(prices),
@@ -336,12 +344,13 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
   // The checks every channel shares (lisa-guards.js): prices from the book as
   // a range, big jobs and the owner's name held, only 808-444-5450.
   if (out.reply) {
-    const g = guardBody(out.reply, { prices, customerText });
+    const g = guardBody(out.reply, { prices, estimate: est });
     out.reply = g.text;
     out.flags = g.flags;
     if (g.hold) out.hold = g.hold;
   }
   out.action = String(out.action || 'none').trim();
+  if (est) out.estimate = est;
 
   // Never book a time the calendar has not cleared. The suggested slot is
   // offered in the reply only, not written to `appointment`: the customer has
@@ -581,7 +590,8 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
 
   // A reply that failed a shared check is not sent: Jake gets it, same as Yelp.
   if (out.hold) {
-    await telegramNotify(`Text to ${clientName || phone} held for you\nWhy: ${out.hold}\nDraft: "${String(out.reply).slice(0, 400)}"\nThey wrote: "${String(body || '').slice(0, 200)}"\n${phone}`)
+    await telegramNotify(`Text to ${clientName || phone} held for you\nWhy: ${out.hold}\nDraft: "${String(out.reply).slice(0, 400)}"\nThey wrote: "${String(body || '').slice(0, 200)}"\n${phone}`
+      + (out.estimate ? `\n\n${estimateNote(out.estimate, { quoted: false })}` : ''))
       .catch((e) => console.error('[sms-agent] telegram failed:', e.message || e));
     return `held: ${out.hold}`;
   }
@@ -620,6 +630,14 @@ export async function autoReply({ phone, body, clientName, clientId, secret }) {
 
   await sendTwilioSms({ to: phone, body: out.reply });
   await logOutbound({ secret, phone, body: out.reply });
+
+  // Every estimator run is one Telegram: what it priced, whether Lisa quoted
+  // it, and anything it found underpriced in past jobs.
+  if (out.estimate) {
+    const quoted = /\$\s?\d/.test(out.reply);
+    await telegramNotify(`Text estimate for ${out.name || clientName || phone}\n${estimateNote(out.estimate, { quoted })}\nThey wrote: "${String(body || '').slice(0, 200)}"\n${phone}`)
+      .catch((e) => console.error('[sms-agent] telegram failed:', e.message || e));
+  }
 
   // needs_human used to reach only the log line. It, and any reply that
   // promises a call or a follow-up, is one Telegram to Jake (v1.76.0).

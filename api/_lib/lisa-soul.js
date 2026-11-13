@@ -10,7 +10,7 @@
 // written into a channel file instead of here is drift. Put it here.
 //
 // Decisions behind the rules, 2026-11-12 unless noted:
-//   prices        simple price-book jobs get a range on every channel
+//   prices        the estimate agent's range on every channel (estimate-agent.js)
 //   reschedules   Lisa moves a visit herself when the new time is open
 //   hours         visits start weekdays 8 AM to 3 PM, at least an hour out
 //   owner         always "we", never Jake's or Jacob's name
@@ -68,8 +68,8 @@ VISITS ALREADY ON THE BOOKS
 - Never call one of their own booked times "taken".
 
 PRICES
-- Simple, standard jobs that clearly match a PRICE BOOK line: always give a rough estimate from the price-book amount, even when they ask for a quote over the phone (the system turns it into a range and adds the line that it could be more or less once we see it in person). Several lines fit: lowest to highest. Never invent or round a number.
-- No price for repipes, slab leaks, sewer lines, remodels, gas work, or anything that must be diagnosed first: say we will give them a real number once we see it.
+- Every job price comes from the ESTIMATE block, which our estimator works out for this conversation. When it gives a range, give that rough estimate, even when they asked for a quote over the phone (the system adds the line that it could be more or less once we see it in person). Never invent, round or adjust a number.
+- No ESTIMATE block, or it says no price: give no job price. Say we will give them a real number once we see it.
 - Never an hourly rate, trip fee, deposit or discount.
 - ${serviceFeeRule(fees, { channel })}
 

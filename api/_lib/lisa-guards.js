@@ -4,14 +4,16 @@
 // message BODY: the channel adds its own greeting and sign-off afterwards.
 //
 // Each returns { text, flags, hold }. A hold means "do not send this, show
-// Jake": a price not in the book, a big job quoted, the owner's name left in.
+// Jake": a price the estimator did not give, a quote over $1,000, the owner's name left in.
 
 import { serviceFees } from './service-fees.js';
+import { AUTO_SEND_MAX } from './estimate-agent.js';
 
 // Jake, 2026-11-12: a rough estimate, "it could be more or less when we see it in person".
 export const DISCLAIMER = "That's a rough estimate, it could be more or less once we see it in person.";
 export const BIG_JOB = /\b(re-?pip\w*|whole[- ]house|sewer|main line|slab|remodel|renovat\w*|gas line|gas pipe|tankless|commercial|high[- ]rise|hydro[- ]?jet\w*|excavat\w*|trench\w*)\b/i;
-export const MAX_AUTO_QUOTE = 2500;
+// Lisa sends an estimate on her own only up to this (Jake, 2026-11-12).
+export const MAX_AUTO_QUOTE = AUTO_SEND_MAX;
 const WRONG_NUMBERS = /\(?808\)?[-. ]?393[-. ]?0015|8083930015/g;
 const BANNED = ['reach out', 'reaching out', 'reached out', 'touch base', 'circle back', 'happy to help',
   'feel free', 'at your earliest convenience', 'rest assured', 'look no further', 'seamless', 'delve',
@@ -62,12 +64,14 @@ export function cleanStyle(raw) {
 }
 
 /**
- * Prices: every dollar figure must be a price-book price (the service call fee
- * is fine when that is what is being discussed). One price becomes a range,
- * big jobs and anything over MAX_AUTO_QUOTE are held, and a quote gets the
- * "call or text" line and the sight-unseen disclaimer, added by code.
+ * Prices: every dollar figure must come from this turn's estimate (the
+ * estimate agent, estimate-agent.js; the price book is no longer a price
+ * source, Jake 2026-11-12). The service call fee is fine when that is what is
+ * being discussed. A lone low number becomes the estimate's range, anything
+ * over AUTO_SEND_MAX is held, and a quote gets the "call or text" line and the
+ * more-or-less disclaimer, added by code.
  */
-export function checkPrices(body, { prices, customerText }) {
+export function checkPrices(body, { prices, estimate = null }) {
   const flags = [];
   let t = body;
   const fee = serviceFees(prices);
@@ -77,23 +81,18 @@ export function checkPrices(body, { prices, customerText }) {
   const wordy = /\b\d+\s*(dollars|per hour|an hour|\/hr)\b/i.test(t) || /\b(trip fee|deposit|hourly rate|discount|% off)\b/i.test(t);
   if (wordy) return { text: t, flags, hold: 'It mentioned an hourly rate, trip fee, deposit or discount.' };
   if (!amounts.length) return { text: t, flags, hold: null, quoted: null };
-  const book = new Set((prices || []).map((x) => x.price));
-  if (!book.size) return { text: t, flags, hold: 'A price appeared but the price book could not be loaded.' };
-  const off = amounts.filter((a) => !book.has(a));
-  if (off.length) return { text: t, flags, hold: `A price not in the price book: $${off.join(', $')}.` };
-  let quoted = { amounts, low: Math.min(...amounts), high: Math.max(...amounts) };
-  // A single price becomes "P to H": H is P plus 25%, rounded up to the next $25.
+  const est = estimate?.ok && estimate.auto_send ? estimate : null;
+  if (!est) return { text: t, flags, hold: `A price appeared without a sendable estimate: $${amounts.join(', $')}.` };
+  const allowed = new Set([est.low, est.high, ...(est.items || []).flatMap((i) => [Number(i.low), Number(i.high)])]);
+  const off = amounts.filter((a) => !allowed.has(a));
+  if (off.length) return { text: t, flags, hold: `A price the estimator did not give: $${off.join(', $')} (estimate $${est.low} to $${est.high}).` };
+  // "About $600" alone becomes the range the estimator gave.
   const distinct = [...new Set(amounts)];
-  if (distinct.length === 1) {
-    const P = distinct[0];
-    const H = Math.max(P + 25, Math.ceil((P * 1.25) / 25) * 25);
-    const shown = P.toLocaleString('en-US');
-    t = t.replace(new RegExp(`\\$\\s?${shown.replace(',', ',?')}(?:\\.00)?(?!\\d)`), `$${shown} to $${H.toLocaleString('en-US')}`);
-    quoted = { amounts: [P, H], low: P, high: H };
+  if (distinct.length === 1 && distinct[0] === est.low && est.high > est.low) {
+    const shown = est.low.toLocaleString('en-US');
+    t = t.replace(new RegExp(`\\$\\s?${shown.replace(',', ',?')}(?:\\.00)?(?!\\d)`), `$${shown} to $${est.high.toLocaleString('en-US')}`);
   }
-  if (BIG_JOB.test(`${customerText || ''}\n${t}`)) {
-    return { text: t, flags, hold: 'It quoted a big or open-ended job (repipe, sewer, slab, remodel, gas). Jake reviews these.' };
-  }
+  const quoted = { amounts, low: Math.min(...amounts, est.low), high: Math.max(...amounts, est.high) };
   if (quoted.high > MAX_AUTO_QUOTE) {
     return { text: t, flags, hold: `It quoted over $${MAX_AUTO_QUOTE} (up to $${quoted.high}). Jake reviews anything that large.` };
   }
@@ -136,9 +135,9 @@ export function styleFlags(body) {
 }
 
 /** All of the above in order, on a message body. */
-export function guardBody(body, { prices, customerText }) {
+export function guardBody(body, { prices, estimate = null }) {
   const a = cleanStyle(body);
-  const b = checkPrices(a.text, { prices, customerText });
+  const b = checkPrices(a.text, { prices, estimate });
   if (b.hold) return { text: b.text, flags: [...a.flags, ...b.flags], hold: b.hold };
   const c = scrubOwner(b.text);
   return {

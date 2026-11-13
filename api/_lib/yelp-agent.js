@@ -26,7 +26,8 @@ import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
 import { notifyAll } from './notify.js';
 import { sentEstimates, sentEstimatesPrompt, bookOnEstimate } from './estimate-booking.js';
-import { cleanStyle, checkPrices, scrubOwner, styleFlags, BIG_JOB } from './lisa-guards.js';
+import { cleanStyle, checkPrices, scrubOwner, styleFlags } from './lisa-guards.js';
+import { estimateJob, estimatePrompt, estimateNote, PRICE_ASK } from './estimate-agent.js';
 import { lisaIdentity, lisaSoul } from './lisa-soul.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
 import { verifyAddress, addressQuestion, sameAddress } from './address-verify.js';
@@ -187,7 +188,7 @@ function clientBlock({ match, visits, omw, thread }) {
 
 // Who Lisa is and every rule she follows live in lisa-soul.js, shared with
 // text (and the phone prompt). Only Yelp's own format and fields are here.
-function systemPrompt({ firstName, isFirstReply, now, client, form, slots, catalog, fees = serviceFees([]), history = '' }) {
+function systemPrompt({ firstName, isFirstReply, now, client, form, slots, catalog, estimate = '', fees = serviceFees([]), history = '' }) {
   const times = (slots?.length
     ? slots.map((s) => `- ${s.spoken} [${s.start}]${s.asked ? ' (a day they asked about)' : ''}`).join('\n')
     : '(The calendar could not be read right now. Ask what day and time window works for them instead of offering times.)')
@@ -213,14 +214,15 @@ ON YELP
 - When they pick a time, confirm it and ask for everything still missing (address with unit, best phone number) in that same message. After booking, if STILL MISSING FOR THEIR CLIENT PROFILE lists their full name or email, ask for those in the same friendly sentence as the confirmation.
 - Booking: once you have an agreed time, the address and a phone number, set ready_to_book true with appointment set to that time. For work on an estimate already sent, set estimate_id and ready_to_book; no address or phone needed.
 - Moving a visit: action "reschedule" with visit_start and new_time. Cancelling: action "cancel" with visit_start. Where is the tech: action "where_is_tech".
-- If they sent photos, look closely. When the photos and their words make a simple price-book job clear, give the price in this reply.
-${isFirstReply ? `- First reply: if the quote form gives the job type and a clear answer that matches the price book, lead with the price and offer a time, no question. Otherwise ask the one useful question and offer a time. If they asked to schedule, the times come first.
+- If they sent photos, look closely. When there is an ESTIMATE range, give it in this reply.
+${isFirstReply ? `- First reply: if there is an ESTIMATE range, lead with it and offer a time, no question. Otherwise ask the one useful question and offer a time. If they asked to schedule, the times come first.
 ` : ''}
 FORMAT
 - ${isFirstReply ? '2 to 4 sentences.' : '1 to 3 sentences.'} One idea per sentence.
 - No sign-off, it is added for you. ${isFirstReply ? 'No greeting either: "Aloha <name>," is added for you.' : 'No greeting: this is a running conversation.'}
 - Do not write the more-or-less-in-person line after a price, it is added for you.
-${catalog ? `\nPRICE BOOK (name - price):\n${catalog}` : '\n(No price book for this one: do NOT quote any job price. The service call fee is still fine.)'}
+${estimate || '\n(No ESTIMATE this turn: give no job price. The service call fee is still fine.)'}
+${catalog ? `\nSERVICE NAMES (only for "services"; never a source of prices):\n${catalog}` : ''}
 ${firstName ? `\nTheir first name is ${firstName}.` : ''}
 
 RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
@@ -236,7 +238,7 @@ RESPOND WITH ONLY THIS JSON, no markdown fences, no narration:
   "appointment": "YYYY-MM-DDTHH:MM Hawaii time they agreed to or proposed, else empty",
   "ready_to_book": false,
   "estimate_id": "the estimate number when the appointment is for work on an estimate already sent to them, else empty",
-  "services": ["exact price book name that best matches, if any"],
+  "services": ["exact SERVICE NAMES entry that best matches, if any"],
   "action": "none | where_is_tech | reschedule | cancel",
   "visit_start": "the [visit_start] value of the visit they mean, else empty",
   "new_time": "YYYY-MM-DDTHH:MM for a reschedule, else empty",
@@ -258,7 +260,7 @@ function parseJson(text) {
 // the draft must not be sent.
 // Topics Lisa never quotes sight unseen, and the ceiling on any auto quote.
 
-function polish(raw, { firstName, isFirstReply, prices, customerText }) {
+function polish(raw, { firstName, isFirstReply, prices, estimate = null }) {
   // The checks every channel shares (lisa-guards.js) run on the body; this
   // function adds only what is Yelp's: the Aloha opener and the sign-off.
   const cleaned = cleanStyle(raw);
@@ -286,7 +288,7 @@ function polish(raw, { firstName, isFirstReply, prices, customerText }) {
     return { text: assemble(body), flags, hold: 'The draft had no real message in it.' };
   }
 
-  const priced = checkPrices(body, { prices, customerText });
+  const priced = checkPrices(body, { prices, estimate });
   flags.push(...priced.flags);
   if (priced.hold) return { text: assemble(priced.text), flags, hold: priced.hold };
   const owner = scrubOwner(priced.text);
@@ -418,12 +420,14 @@ export async function draftYelpReply(p) {
     if (media.length) incoming.media = media;
   };
 
+  let est = null; // this turn's estimate agent result, set before drafting
   const hold = async (why) => {
     await attachPhotos();
     row.held_reason = why;
     await saveThread(row);
     out.skip_reason = why;
-    await telegramNotify(`Yelp thread held for you\n${firstName || 'A customer'}: "${message.slice(0, 300)}"\nWhy: ${why}\nLead ${leadId}`);
+    await telegramNotify(`Yelp thread held for you\n${firstName || 'A customer'}: "${message.slice(0, 300)}"\nWhy: ${why}\nLead ${leadId}`
+      + (est ? `\n\n${estimateNote(est, { quoted: false })}` : ''));
     return out;
   };
 
@@ -477,7 +481,15 @@ export async function draftYelpReply(p) {
     if (m?.client) { row.client_id = m.client.id; row.match_level = m.level; }
   };
   linkMatch(match);
-  const visits = match.client ? await upcomingVisits(match.client.id).catch(() => []) : [];
+  // A new lead, or they asked about price: the estimate agent prices the job
+  // while the rest of the context loads. Deadline so a slow search never
+  // costs them their reply (the Zap waits on this answer).
+  const jobText = [row.form, ...messages.filter((m) => m.role === 'consumer').map((m) => m.text), p.job].filter(Boolean).join('\n');
+  const estimating = (isFirstReply || PRICE_ASK.test(message)) && !row.estimate_id
+    ? estimateJob({ job: jobText.slice(-2500), address: row.address || '', photos: photoUrls, deadlineMs: 15000 })
+      .catch((e) => ({ ok: false, error: String(e.message || e) }))
+    : null;
+  const visits =match.client ? await upcomingVisits(match.client.id).catch(() => []) : [];
   const omw = visits.length ? await onMyWayToday(visits.map((v) => v.doc)).catch(() => null) : null;
   const now = hawaiiNow();
   // Estimates already sent to them (phone or a verified match, never a
@@ -493,10 +505,9 @@ export async function draftYelpReply(p) {
   // thread itself is excluded: it is already the conversation turns.
   const history = await otherChannelsBlock({ clientId: row.client_id, phone: row.phone, exclude: 'yelp' });
   const prices = await loadCatalog();
-  // A big or open-ended job gets no price book at all, so Lisa answers it with
-  // "we'll get you a real number after we see it" instead of a held draft.
-  const allCustomerText = messages.filter((m) => m.role === 'consumer').map((m) => m.text).join('\n') + (p.job ? `\n${p.job}` : '');
-  const catalogText = BIG_JOB.test(allCustomerText) ? '' : prices.map((x) => `${x.name} - $${x.price}`).join('\n');
+  // Names only, for `services`. Prices come from the estimate agent (2026-11-12).
+  const catalogText = prices.map((x) => x.name).join('\n');
+  if (estimating) est = await estimating;
 
   const callModel = (urls) => fetch(ANTHROPIC, {
     method: 'POST',
@@ -513,7 +524,7 @@ export async function draftYelpReply(p) {
       output_config: { effort: 'medium' },
       fallbacks: 'default',
       system: systemPrompt({
-        firstName: row.first_name, isFirstReply, now, catalog: catalogText, fees: serviceFees(prices), form: row.form, slots,
+        firstName: row.first_name, isFirstReply, now, catalog: catalogText, estimate: estimatePrompt(est), fees: serviceFees(prices), form: row.form, slots,
         client: [clientBlock({ match, visits, omw, thread: row }), sentEstimatesPrompt(ests)].filter(Boolean).join('\n\n'),
         history,
       }),
@@ -676,8 +687,7 @@ export async function draftYelpReply(p) {
   if (addressAsk) text = out.reschedule?.ok ? `${text} ${addressAsk}` : addressAsk;
 
   const polished = polish(text, {
-    firstName: row.first_name, isFirstReply, prices,
-    customerText: messages.filter((m) => m.role === 'consumer').map((m) => m.text).join('\n') + (p.job ? `\n${p.job}` : ''),
+    firstName: row.first_name, isFirstReply, prices, estimate: est,
   });
   out.flags = polished.flags;
   if (polished.hold) { out.reply = polished.text; return hold(polished.hold); }
@@ -787,11 +797,12 @@ export async function draftYelpReply(p) {
   if (contact.phone) {
     await telegramNotify(`Yelp customer gave a number\n${firstName || 'A customer'}: ${contact.phone}\nLead ${leadId}`);
   }
-  if (polished.quoted) {
-    out.quoted = polished.quoted;
-    const q = polished.quoted;
-    const range = q.low === q.high ? `$${q.low}` : `$${q.low} to $${q.high}`;
-    await telegramNotify(`Lisa quoted a Yelp lead ${range}\n${firstName || 'A customer'} wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
+  if (polished.quoted) out.quoted = polished.quoted;
+  // Every estimator run is one Telegram: the price, whether Lisa quoted it,
+  // and anything it found underpriced in past jobs.
+  if (est) {
+    await telegramNotify(`Yelp estimate for ${who}\n${estimateNote(est, { quoted: !!polished.quoted })}\nThey wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
+    out.estimate = est;
   }
   out.should_send = true;
   out.reply = polished.text;

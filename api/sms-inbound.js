@@ -47,7 +47,7 @@ import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_
 import { proposeInBackground } from './_lib/lead-estimate.js';
 import { draftYelpReply, logYelpBusinessMessage, setYelpPhone, generateYelpBump, sendYelpMessage } from './_lib/yelp-agent.js';
 
-export const config = { runtime: 'nodejs', maxDuration: 30 };
+export const config = { runtime: 'nodejs', maxDuration: 60 };
 
 // Same origin this route is served from; hardcoded so a Twilio retry hitting a
 // preview deployment still mails through production.
