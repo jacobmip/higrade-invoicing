@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.80.1 — 2026-11-12
+
+- Lisa no longer offers a rough estimate over the phone (Jake: "we don't give estimates over the phone"). `serviceFeeRule()` (every channel, via lisa-soul) now says: having us come take a look is a minimum of the service call fee, credited back on any repair; never offer a phone estimate or send them to call for a price. Replaces the 2026-11-11 wording. Dry run: "Can you give me a quote over the phone?" now gets "we'll give you a real number once we see it" plus the fee and two open times.
+
 ## v1.80.0 — 2026-11-12
 
 - One Lisa on every channel (Jake: "when I adjust Lisa, she stays consistent and her soul or personality and reasoning stays the same"). Text and Yelp had drifted into different rules: text refused prices, sent reschedules to the office, booked any hour and named "Jacob"; Yelp quoted ranges, moved visits herself, booked 8 to 3 and never named the owner.
