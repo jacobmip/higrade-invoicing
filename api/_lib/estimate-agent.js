@@ -41,7 +41,15 @@ export function travelFor(minutes) {
 export async function driveMinutes(address, when = null) {
   const key = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
   if (!key || !address) return null;
-  const t = when instanceof Date && when.getTime() > Date.now() ? Math.floor(when.getTime() / 1000) : 'now';
+  // No visit time yet: the next weekday at 8 AM Hawaii (UTC-10, no DST), the
+  // first slot Lisa usually offers, so a 9 PM question does not price in
+  // empty roads.
+  let at = when instanceof Date && when.getTime() > Date.now() ? when : null;
+  if (!at) {
+    at = new Date(); at.setUTCHours(18, 0, 0, 0);
+    while (at.getTime() <= Date.now() || [0, 6].includes(new Date(at.getTime() - 10 * 3600e3).getUTCDay())) at = new Date(at.getTime() + 86400e3);
+  }
+  const t = Math.floor(at.getTime() / 1000);
   const url = 'https://maps.googleapis.com/maps/api/distancematrix/json'
     + `?origins=${encodeURIComponent(HOME)}&destinations=${encodeURIComponent(address)}`
     + `&departure_time=${t}&traffic_model=best_guess&key=${key}`;

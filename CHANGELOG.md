@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.2 — 2026-11-12
+
+- Estimate agent: drive time is checked for the visit time, or the next weekday at 8 AM when there is none yet, not the moment the customer writes (a 9 PM question priced Kailua at 22 min, in-town).
+
 ## v1.81.1 — 2026-11-12
 
 - Estimate agent: a `drive_time` tool, so a customer who only names a town or neighborhood ("I'm in Kailua") gets real Google drive time in traffic instead of a zone guess. Called in the same turn as past_jobs and parts_cost, so no extra wait. Found on the first live preview of v1.81.0 (Kailua toilet: $750 to $1,000, 16s end to end, travel guessed).
