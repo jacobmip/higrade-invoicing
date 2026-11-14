@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.5 — 2026-11-14
+
+- Bottom nav: brightened the active-tab glow (added a hot inner layer and raised the outer layers' opacity), since v1.81.4's glow read too subtle.
+
 ## v1.81.4 — 2026-11-14
 
 - Bottom nav: the active tab no longer turns solid orange. It stays white/readable and gets an orange glow around the icon and label instead (drop-shadow on the icon, matching text-shadow on the label).
