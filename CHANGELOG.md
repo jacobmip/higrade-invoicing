@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.6 — 2026-11-14
+
+- Client data from Lisa (Marianne / Neil Hannahs, EST1211 and EST1213):
+  - A reply to "what's your service address?" is captured only when it is just an address and the map lookup verifies it, and it is saved split (street, unit, city, zip) with `updated_at` bumped. "4545A Sierra Dr. Low water pressure in upstairs bathroom faucets." had gone on file whole as the street, because `_lib/sms-reply-capture.js` skipped the v1.78.0 lookup and the v1.79.3 split. Anything else falls through to Lisa.
+  - Migration 126: couples get first and last name ("Neil & Mariane Hannahs" -> "Neil & Mariane" / "Hannahs"). Migration 125 skipped any name with "&", so the edit form showed blank First and Last.
+  - Lisa's soul: a couple's name means both names or none, never one (Marianne was called "Neil" twice); never say a second contact number was "noted", it goes in the note for the office.
+
 ## v1.81.5 — 2026-11-14
 
 - Bottom nav: brightened the active-tab glow (added a hot inner layer and raised the outer layers' opacity), since v1.81.4's glow read too subtle.

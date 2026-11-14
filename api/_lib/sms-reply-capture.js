@@ -13,6 +13,7 @@
 
 import { getSetting, sendTwilioSms, supabaseUrl } from './sms.js';
 import { logOutbound } from './sms-agent.js';
+import { verifyAddress, sameAddress, clientAddressFields } from './address-verify.js';
 
 const WAIT_WINDOW_HOURS = 48;
 const ESTIMATE_WINDOW_DAYS = 7;
@@ -50,6 +51,13 @@ export function looksLikeAddress(body) {
   if (t.length < 6 || t.length > 150) return false;
   if (NOT_INFO.test(t) || t.includes('@') || t.includes('?')) return false;
   return /\d/.test(t) && (t.match(/[A-Za-z]{2,}/g) || []).length >= 2;
+}
+
+// One sentence, or a second one that is just the town ("4545A Sierra Dr.
+// Kaimuki."). A second sentence about the job means it is not only an address.
+export function onlyAddress(body) {
+  const s = String(body || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!])\s+(?=\S)/).filter(x => /[A-Za-z]/.test(x));
+  return s.length === 1 || (s.length === 2 && /^[A-Za-zʻ'\s-]{3,20}\.?$/.test(s[1]) && s[1].trim().split(/\s+/).length <= 2);
 }
 
 export function extractEmail(body) {
@@ -100,7 +108,17 @@ export async function handleInfoReply({ phone, body, secret }) {
   if (!want.address && !want.email) return null;
 
   const email = want.email ? extractEmail(body) : '';
-  const address = !email && want.address && looksLikeAddress(body) ? String(body).trim() : '';
+  // Only a reply that is just an address, and only once the map lookup
+  // verifies it. "4545A Sierra Dr. Low water pressure in upstairs bathroom
+  // faucets." was saved whole as the street (Marianne, 2026-11-13) because this
+  // path skipped the lookup and split every other channel uses. Anything else
+  // goes to Lisa, who verifies addresses herself and reads the rest.
+  let parts = null;
+  if (!email && want.address && looksLikeAddress(body) && onlyAddress(body)) {
+    const v = await verifyAddress(body);
+    if (v.status === 'verified') parts = v;
+  }
+  const address = parts ? parts.formatted : '';
   if (!email && !address) return null;
 
   const estSince = new Date(Date.now() - ESTIMATE_WINDOW_DAYS * 86400e3).toISOString();
@@ -114,23 +132,28 @@ export async function handleInfoReply({ phone, body, secret }) {
   const clientPath = inv.client_id ? `clients?id=eq.${encodeURIComponent(inv.client_id)}` : null;
 
   if (address) {
-    await patch(invPath, {
-      job_address: { label: 'Service address', line1: address, line2: '', city: '', state: 'HI', zip: '' },
-    });
+    const line3 = [parts.city, 'HI', parts.zip].filter(Boolean).join(' ');
+    const entry = { label: 'Service address', line1: parts.line1, line2: parts.unit || '', city: parts.city || '', state: 'HI', zip: parts.zip || '', line3 };
+    // updated_at so an open form cannot save the old address back over it.
+    if (!sameAddress(inv.job_address?.line1, parts.line1)) {
+      await patch(invPath, { job_address: { ...entry }, updated_at: new Date().toISOString() });
+    }
     if (clientPath) {
-      const c = (await get(`${clientPath}&select=addresses&limit=1`))?.[0];
+      const c = (await get(`${clientPath}&select=address1,addresses&limit=1`))?.[0];
       const list = Array.isArray(c?.addresses) ? [...c.addresses] : [];
-      const entry = { label: 'Service address', line1: address, line2: '', city: '', state: 'HI', zip: '' };
-      const same = list.findIndex(a => String(a?.line1 || '').trim().toLowerCase() === address.toLowerCase());
+      const same = list.findIndex(a => sameAddress(a?.line1, parts.line1));
       const blank = list.findIndex(a => !String(a?.line1 || '').trim());
+      const body = {};
       if (same < 0) {
         if (blank >= 0) list[blank] = { ...list[blank], ...entry, label: list[blank].label || entry.label };
         else list.push(entry);
-        await patch(clientPath, { addresses: list });
+        body.addresses = list;
       }
+      if (!String(c?.address1 || '').trim()) Object.assign(body, clientAddressFields(parts));
+      if (Object.keys(body).length) await patch(clientPath, body);
     }
   } else {
-    await patch(invPath, { client_info: { ...(inv.client_info || {}), email } });
+    await patch(invPath, { client_info: { ...(inv.client_info || {}), email }, updated_at: new Date().toISOString() });
     if (clientPath) await patch(clientPath, { email });
   }
 
