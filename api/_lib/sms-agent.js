@@ -20,7 +20,7 @@
 // api/ai-estimator.js, which is also all this file needs.
 
 import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split.js';
-import { otherChannelsBlock } from './client-history.js';
+import { otherChannelsBlock, clientFactsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
 import { openSlots, requestedDates, upcomingVisits, moveVisit, requestChange, inBusinessHours, speakVisit } from './yelp-booking.js';
@@ -177,10 +177,9 @@ async function priceCatalog() {
 // address" and offered to file the lead against the September address. Every
 // word of that was true of September and wrong about today.
 //
-// So a thread ends at a gap. More than CONVERSATION_GAP_HOURS of silence means
-// whatever came before was a different conversation and is not context for this
-// one. Also capped at 14 days, because a reply that references a fortnight-old
-// detail reads as creepy even when it is correct.
+// So the conversation being answered ends at a gap: more than
+// CONVERSATION_GAP_HOURS of silence starts a new one. Everything before it is
+// still given to Lisa, dated, as history (otherChannelsBlock), never as turns.
 const CONVERSATION_GAP_HOURS = 12;
 const THREAD_MAX_AGE_DAYS = 14;
 
@@ -200,13 +199,10 @@ async function thread(phone) {
     if (gap > CONVERSATION_GAP_HOURS) break;
     start = i - 1;
   }
-  // What came before the gap is not the conversation, but it is context:
-  // Zoe asked about an ice maker box, got estimate EST1209, and 21 hours later
-  // "When are you available to come and install it?" got "What is it you'd
-  // like us to install?" (2026-11-12). It rides along as background.
-  const out = rows.slice(start);
-  out.earlier = rows.slice(Math.max(0, start - 12), start);
-  return out;
+  // What came before the gap is not the conversation, but it is context
+  // (Zoe, 2026-11-12: "install it" 21 hours later got "install what?"). It
+  // reaches the prompt through otherChannelsBlock, the whole history.
+  return rows.slice(start);
 }
 
 // Estimates already sent to this phone (last 60 days, not deleted): number,
@@ -235,13 +231,6 @@ If they want to schedule work from an estimate that is not scheduled yet, book i
   } catch { return ''; }
 }
 
-function earlierBlock(rows) {
-  const e = (rows?.earlier || []).filter((r) => String(r.body || '').trim() && r.body !== '(no text)');
-  if (!e.length) return '';
-  return `EARLIER IN THIS TEXT THREAD (before a long break; background only, the conversation below is what you are answering):
-${e.map((r) => `${r.direction === 'inbound' ? 'Customer' : 'Us'} (${String(r.created_at).slice(0, 10)}): ${String(r.body).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n')}`;
-}
-
 function asMessages(rows) {
   // Their texts are the user turns, ours are the assistant turns. Consecutive
   // same-role messages are legal and the API merges them.
@@ -266,7 +255,7 @@ function parseJson(text) {
  * Exported so the preview path and the live path share one prompt.
  */
 // testRows: a made-up thread for dry runs (nothing is sent from draftReply).
-export async function draftReply({ phone, clientName, clientId = null, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, testRows = null }) {
+export async function draftReply({ phone, clientName, clientId = null, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, testRows = null, testHistory = null, testVisits = null }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
@@ -287,7 +276,7 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
     : null;
   const { text: catalog, prices } = await priceCatalog();
   const slots = hasOpenEstimate ? [] : await openSlots({ prefer: requestedDates(lastIn) }).catch(() => []);
-  const visits = clientId ? await upcomingVisits(clientId).catch(() => []) : [];
+  const visits = testVisits || (clientId ? await upcomingVisits(clientId).catch(() => []) : []);
   const est = estimating ? await estimating : null;
   const res = await fetch(ANTHROPIC, {
     method: 'POST',
@@ -311,11 +300,12 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
         slots,
         visits,
         fees: serviceFees(prices),
-        // Yelp, calls and emails for this number (migration 122). Texts are
-        // excluded: the thread above already is the text conversation.
-        history: [
-          await otherChannelsBlock({ phone, exclude: 'text' }),
-          earlierBlock(rows),
+        // Everything ever said with this customer, every channel and every
+        // number on their record, plus what is on file (Jake, 2026-11-14).
+        // Only the conversation being answered is left out: it is the turns.
+        history: testHistory != null ? testHistory : [
+          await clientFactsBlock(clientId),
+          await otherChannelsBlock({ clientId, phone, exclude: 'text', currentFrom: rows[0]?.created_at || null }),
           await sentEstimatesBlock(phone),
         ].filter(Boolean).join('\n\n'),
       }),

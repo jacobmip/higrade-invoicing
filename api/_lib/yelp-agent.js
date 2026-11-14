@@ -501,9 +501,13 @@ export async function draftYelpReply(p) {
   // Real open times to offer, unless this thread already booked a visit.
   const slots = row.estimate_id ? [] : await openSlots({ prefer: requestedDates(message) }).catch(() => []);
 
-  // Texts, calls and emails with this customer (migration 122). The Yelp
-  // thread itself is excluded: it is already the conversation turns.
-  const history = await otherChannelsBlock({ clientId: row.client_id, phone: row.phone, exclude: 'yelp' });
+  // Everything ever said with this customer on texts, calls and email, every
+  // number on their record, no time limit (Jake, 2026-11-14). The Yelp thread
+  // is the conversation turns. A name-only match is a guess, so it never
+  // brings another person's history in.
+  const history = await otherChannelsBlock({
+    clientId: match.client && match.level !== 'name' ? match.client.id : null, phone: row.phone, exclude: 'yelp',
+  });
   const prices = await loadCatalog();
   // Names only, for `services`. Prices come from the estimate agent (2026-11-12).
   const catalogText = prices.map((x) => x.name).join('\n');

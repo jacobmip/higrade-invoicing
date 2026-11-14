@@ -1,5 +1,15 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.7 — 2026-11-14
+
+- Lisa remembers every conversation ever had with a customer (Jake: "There shouldn't be any time limit, Lisa should have the entire context of every conversation ever had with the customer").
+  - `_lib/client-history.js`: `otherChannelsBlock()` now gives the whole timeline (texts, calls, Yelp, documents sent), every number on the client record, no day limit (300-row safety cap; the biggest client has 37 texts). Only the conversation being answered is left out, because it is the turns. New `clientFactsBlock()`: name (a couple flagged "both names or none"), phones, email, service addresses, "never ask for these again". Text Lisa gets both; Yelp Lisa gets the full history for a phone or verified match (never a name-only guess). The 12-message `earlierBlock` slice is gone.
+- No more blind templates to customers on file:
+  - `_lib/sms-reply-capture.js` no longer captures addresses or answers "Our team will confirm your time"; address replies go to Lisa. The email capture stays, only for a reply that is just an email.
+  - `api/vapi-call-ended.js`: a caller who is already a client gets no "send your address and photos" kickoff and no drip (a booked one also gets no new lead, v1.81.3). New callers unchanged.
+  - `AI-OS/scripts/sms_drip.py` (outside this repo) stops a drip when the number has booked or got a new estimate since the call.
+- `tests/lisa/`: replay test of real conversations Lisa got wrong (Marianne, Neil, Zoe, Michael, a returning customer), run through the real `draftReply` with hard checks plus a grader. Sends nothing. `tests/lisa/run.sh` before any push that touches Lisa; 6/6 pass. `draftReply` takes `testHistory` and `testVisits` for it.
+
 ## v1.81.6 — 2026-11-14
 
 - Client data from Lisa (Marianne / Neil Hannahs, EST1211 and EST1213):

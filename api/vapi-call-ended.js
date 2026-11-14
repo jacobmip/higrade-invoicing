@@ -115,16 +115,17 @@ async function buildConfirmationSms(to, estimateId) {
   }
 }
 
-// The caller's next booked visit (today onward, Hawaii), else null. Any lookup
-// failure is null, so the normal lead path still runs.
-async function bookedVisitFor(phone) {
+// Who the caller is on file: { client, visit } where visit is their next
+// booked visit (today onward, Hawaii) or null. Null when the number is not a
+// client, or on any lookup failure, so the normal lead path still runs.
+async function callerOnFile(phone) {
   try {
     const { client } = await matchClient({ phone });
     if (!client) return null;
     const [v] = await upcomingVisits(client.id);
-    return v ? { doc: v.doc, start: v.start, client: client.id } : null;
+    return { client: client.id, visit: v ? { doc: v.doc, start: v.start } : null };
   } catch (e) {
-    console.error('[vapi-call-ended] booked-visit lookup failed:', e.message || e);
+    console.error('[vapi-call-ended] caller lookup failed:', e.message || e);
     return null;
   }
 }
@@ -506,7 +507,8 @@ export default async function handler(req, res) {
   // got a duplicate estimate (EST1213), the "send your address and photos"
   // kickoff and a queued drip. Link the call to the booked job and stop there.
   // The call record email still goes out; the return is just before the texts.
-  const booked = outbound ? null : await bookedVisitFor(to);
+  const onFile = outbound ? null : await callerOnFile(to);
+  const booked = onFile?.visit ? { ...onFile.visit, client: onFile.client } : null;
   if (booked) console.log('[vapi-call-ended] booked customer, no lead/kickoff/drip', { to, callId, doc: booked.doc });
 
   let rescued = booked ? { estimate_id: booked.doc, booked: true } : null;
@@ -620,6 +622,7 @@ export default async function handler(req, res) {
   // messages 2 and 3 are queued; when it did not, all three are. Never throws.
   let kickoffSent = false;
   const inboundDrip = async () => {
+    if (onFile) return { queued: 0, reason: 'caller is an existing client' };
     const decision = shouldQueueDrip(params?.message || params || {});
     console.log('[vapi-call-ended] inbound drip decision', { to, callId, drip: decision.drip, reason: decision.reason });
     if (!decision.drip) return { queued: 0, reason: decision.reason };
@@ -673,6 +676,14 @@ export default async function handler(req, res) {
         twilioSid: sentC?.sid || null, twilioStatus: sentC?.status || null,
         matchedClient: loggedC?.client_name || null,
       });
+    }
+    // The kickoff and drip are templates for a stranger ("send your address
+    // and photos", "sorry we got cut off"). A customer already on file has a
+    // history Lisa reads when they text, and Jake gets the call email, so they
+    // get neither (Jake, 2026-11-14: no more blind messages to customers).
+    if (onFile) {
+      console.log('[vapi-call-ended] caller on file, no kickoff or drip', { to, callId, client: onFile.client });
+      return json(res, 200, { ok: true, skipped: 'caller is an existing client' });
     }
     if (await alreadySentMessage(to, KICKOFF)) {
       console.log('[vapi-call-ended] kickoff already sent, skipping', { to, callId });

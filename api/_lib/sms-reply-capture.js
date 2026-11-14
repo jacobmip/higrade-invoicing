@@ -1,19 +1,13 @@
-// A customer's reply to "Could you reply with your service address?" or
-// "what's your email address?" (the booking confirmation text from
-// vapi-call-ended.js).
-//
-// The reply arrives as a fresh inbound with no link to the estimate it belongs
-// to, so the agent used to log it and say nothing. This looks at our most recent
-// outbound text, and if we were waiting on an address or an email and the reply
-// looks like one, writes it onto the newest open estimate for that phone, onto
-// the client record, and confirms. Anything that does not match returns null and
-// the caller falls through to the normal agent.
+// A customer's reply to "what's your email address?" (the booking
+// confirmation text from vapi-call-ended.js) that is just an email: written to
+// the newest estimate for that phone and the client, then confirmed. Anything
+// else returns null and the caller falls through to Lisa. Address replies
+// always go to Lisa since v1.81.7 (she verifies them and knows the booking).
 //
 // A helper, not a route: the project is at the 12-function cap.
 
 import { getSetting, sendTwilioSms, supabaseUrl } from './sms.js';
 import { logOutbound } from './sms-agent.js';
-import { verifyAddress, sameAddress, clientAddressFields } from './address-verify.js';
 
 const WAIT_WINDOW_HOURS = 48;
 const ESTIMATE_WINDOW_DAYS = 7;
@@ -35,29 +29,12 @@ function fuzzy(last10, wildcard) {
   return wildcard + last10.split('').join(wildcard) + wildcard;
 }
 
-// What our last text was waiting on: 'address', 'email', or both.
+// Whether our last text was waiting on an email.
 function expectations(outboundBody) {
   const t = String(outboundBody || '').toLowerCase();
   return {
-    address: /service address/.test(t),
     email: /email address/.test(t),
   };
-}
-
-// Basic heuristic: a house number plus some words. Not "yes", not a question,
-// not a paragraph about the leak.
-export function looksLikeAddress(body) {
-  const t = String(body || '').trim();
-  if (t.length < 6 || t.length > 150) return false;
-  if (NOT_INFO.test(t) || t.includes('@') || t.includes('?')) return false;
-  return /\d/.test(t) && (t.match(/[A-Za-z]{2,}/g) || []).length >= 2;
-}
-
-// One sentence, or a second one that is just the town ("4545A Sierra Dr.
-// Kaimuki."). A second sentence about the job means it is not only an address.
-export function onlyAddress(body) {
-  const s = String(body || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!])\s+(?=\S)/).filter(x => /[A-Za-z]/.test(x));
-  return s.length === 1 || (s.length === 2 && /^[A-Za-zʻ'\s-]{3,20}\.?$/.test(s[1]) && s[1].trim().split(/\s+/).length <= 2);
 }
 
 export function extractEmail(body) {
@@ -105,21 +82,16 @@ export async function handleInfoReply({ phone, body, secret }) {
     + `&direction=eq.outbound&created_at=gte.${encodeURIComponent(since)}`
     + '&select=body,created_at&order=created_at.desc&limit=1');
   const want = expectations(out?.[0]?.body);
-  if (!want.address && !want.email) return null;
+  if (!want.email) return null;
 
-  const email = want.email ? extractEmail(body) : '';
-  // Only a reply that is just an address, and only once the map lookup
-  // verifies it. "4545A Sierra Dr. Low water pressure in upstairs bathroom
-  // faucets." was saved whole as the street (Marianne, 2026-11-13) because this
-  // path skipped the lookup and split every other channel uses. Anything else
-  // goes to Lisa, who verifies addresses herself and reads the rest.
-  let parts = null;
-  if (!email && want.address && looksLikeAddress(body) && onlyAddress(body)) {
-    const v = await verifyAddress(body);
-    if (v.status === 'verified') parts = v;
-  }
-  const address = parts ? parts.formatted : '';
-  if (!email && !address) return null;
+  // Email only. Address replies go to Lisa, who verifies them and knows the
+  // whole conversation: this canned path saved "4545A Sierra Dr. Low water
+  // pressure in upstairs bathroom faucets." as the street and answered a
+  // booked customer "Our team will confirm your time" (Marianne, 2026-11-13).
+  // And only when the reply is basically just the email: anything more is a
+  // conversation, and Lisa answers it.
+  const email = extractEmail(body);
+  if (!email || String(body).trim().length > email.length + 25) return null;
 
   const estSince = new Date(Date.now() - ESTIMATE_WINDOW_DAYS * 86400e3).toISOString();
   const inv = (await get(
@@ -131,35 +103,12 @@ export async function handleInfoReply({ phone, body, secret }) {
   const invPath = `invoices?id=eq.${encodeURIComponent(inv.id)}`;
   const clientPath = inv.client_id ? `clients?id=eq.${encodeURIComponent(inv.client_id)}` : null;
 
-  if (address) {
-    const line3 = [parts.city, 'HI', parts.zip].filter(Boolean).join(' ');
-    const entry = { label: 'Service address', line1: parts.line1, line2: parts.unit || '', city: parts.city || '', state: 'HI', zip: parts.zip || '', line3 };
-    // updated_at so an open form cannot save the old address back over it.
-    if (!sameAddress(inv.job_address?.line1, parts.line1)) {
-      await patch(invPath, { job_address: { ...entry }, updated_at: new Date().toISOString() });
-    }
-    if (clientPath) {
-      const c = (await get(`${clientPath}&select=address1,addresses&limit=1`))?.[0];
-      const list = Array.isArray(c?.addresses) ? [...c.addresses] : [];
-      const same = list.findIndex(a => sameAddress(a?.line1, parts.line1));
-      const blank = list.findIndex(a => !String(a?.line1 || '').trim());
-      const body = {};
-      if (same < 0) {
-        if (blank >= 0) list[blank] = { ...list[blank], ...entry, label: list[blank].label || entry.label };
-        else list.push(entry);
-        body.addresses = list;
-      }
-      if (!String(c?.address1 || '').trim()) Object.assign(body, clientAddressFields(parts));
-      if (Object.keys(body).length) await patch(clientPath, body);
-    }
-  } else {
-    await patch(invPath, { client_info: { ...(inv.client_info || {}), email }, updated_at: new Date().toISOString() });
-    if (clientPath) await patch(clientPath, { email });
-  }
+  await patch(invPath, { client_info: { ...(inv.client_info || {}), email }, updated_at: new Date().toISOString() });
+  if (clientPath) await patch(clientPath, { email });
 
   const slot = prettySlot(inv.gcal_date);
-  const reply = `Perfect, got it! We have your ${address ? 'address' : 'email'} as ${address || email}.`
-    + (slot ? ` See you ${slot}.` : ' Our team will confirm your time.') + ' Mahalo!';
+  const reply = `Perfect, got it! We have your email as ${email}.`
+    + (slot ? ` See you ${slot}.` : '') + ' Mahalo!';
 
   let sent = false;
   if (String(await getSetting('sms_outbound_enabled') || 'false').toLowerCase() === 'true') {
@@ -167,5 +116,5 @@ export async function handleInfoReply({ phone, body, secret }) {
     await logOutbound({ secret, phone, body: reply });
     sent = true;
   }
-  return `captured ${address ? 'address' : 'email'} on ${inv.id}${sent ? ', confirmed' : ', outbound off, no confirmation'}`;
+  return `captured email on ${inv.id}${sent ? ', confirmed' : ', outbound off, no confirmation'}`;
 }
