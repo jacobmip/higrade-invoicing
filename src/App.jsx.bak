@@ -766,8 +766,8 @@ async function sendInvoiceEmail(invoice, client, message, viewLink, toAddresses 
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
-const Icon = ({ name, size = 20, color = "currentColor" }) => {
-  const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2 };
+const Icon = ({ name, size = 20, color = "currentColor", style }) => {
+  const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, style };
   const icons = {
     invoice:   <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>,
     estimates: <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>,
@@ -14976,9 +14976,9 @@ export default function App() {
           zIndex: 1300, boxShadow: "0 10px 26px rgba(0,0,0,0.30), 0 2px 6px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.15)",
         }}>
           {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: tab === n.id ? ORANGE : "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "color .15s" }}>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: tab === n.id ? "0 1px 2px rgba(0,0,0,0.5), 0 0 9px rgba(232,98,42,0.95), 0 0 16px rgba(232,98,42,0.6)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "text-shadow .15s" }}>
               <span style={{ position: "relative", display: "inline-flex" }}>
-                <Icon name={n.icon} size={20} color={tab === n.id ? ORANGE : "#f0f2f8"} />
+                <Icon name={n.icon} size={20} color="#f0f2f8" style={{ filter: tab === n.id ? "drop-shadow(0 0 5px rgba(232,98,42,0.95)) drop-shadow(0 0 10px rgba(232,98,42,0.6))" : "none", transition: "filter .15s" }} />
                 {n.id === "messages" && unreadMessages > 0 && (
                   <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
                 )}
@@ -14986,8 +14986,8 @@ export default function App() {
               {n.label}
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: isMoreTab ? ORANGE : "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "color .15s" }}>
-            <Icon name="more" size={20} color={isMoreTab ? ORANGE : "#f0f2f8"} />
+          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: isMoreTab ? "0 1px 2px rgba(0,0,0,0.5), 0 0 9px rgba(232,98,42,0.95), 0 0 16px rgba(232,98,42,0.6)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "text-shadow .15s" }}>
+            <Icon name="more" size={20} color="#f0f2f8" style={{ filter: isMoreTab ? "drop-shadow(0 0 5px rgba(232,98,42,0.95)) drop-shadow(0 0 10px rgba(232,98,42,0.6))" : "none", transition: "filter .15s" }} />
             More
           </button>
         </nav>
