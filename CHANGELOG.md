@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.8 — 2026-11-14
+
+- One memory for every Lisa (Jake: "the phone and text and yelp Lisa always need to share the same memory for everything ... Lisa is true to the same memory for every interaction with customers"). Migration 127:
+  - `lookup_client_by_phone()`, what phone Lisa calls first on every call, returns the whole history in `recent_contact` (every channel, up to 300 items, 1200 characters each) instead of 10 items from 30 days at 200 characters, plus `phones`.
+  - Its `appointments` include visits booked by text or Yelp (`gcal_date`). Marianne called to confirm her 4:30 on EST1211 and was told it "isn't on the live schedule".
+  - `client_timeline_internal()` (behind text, Yelp and phone Lisa) matches every number on the client record, so texts logged before the client existed are found from any of their numbers (Hannahs: 18 of 36 items from Neil's number before, 36 now).
+- Phone Lisa's Vapi prompt ([Recent contact]) now says it is the same memory as text and Yelp, that a visit in `appointments` is real even if booked by text, and to ask which of a couple is calling. Edited through the Vapi API; tools and model unchanged.
+
 ## v1.81.7 — 2026-11-14
 
 - Lisa remembers every conversation ever had with a customer (Jake: "There shouldn't be any time limit, Lisa should have the entire context of every conversation ever had with the customer").
