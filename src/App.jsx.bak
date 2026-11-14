@@ -12678,6 +12678,21 @@ export default function App() {
   // Clean up the stale nav-restore key written by a bad deploy — if left in
   // localStorage it could re-open client edit forms unexpectedly.
   useEffect(() => { try { localStorage.removeItem('higrade_clients_nav'); } catch {} }, []);
+  // Messages matches each thread's client_id against data.clients, which
+  // otherwise only refreshes once per launch (loadAll) or an explicit
+  // pull-to-refresh. A client created or linked to a thread after that keeps
+  // showing its phone number instead of its name until the app is relaunched,
+  // even though the thread's own messages (fetched independently) are fresh.
+  // Refresh just the clients table whenever Messages is opened, and again if
+  // the app comes back to the foreground while still on it.
+  useEffect(() => {
+    if (tab !== "messages") return;
+    const refreshClients = () => { db.loadClients().then(clients => setData(d => ({ ...d, clients }))).catch(() => {}); };
+    refreshClients();
+    const onVis = () => { if (document.visibilityState === "visible") refreshClients(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [tab]);
   const [view, setView] = useState("list");
   const [openingDoc, setOpeningDoc] = useState(false);
   const [selected, setSelected] = useState(null);
