@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.81.4 — 2026-11-14
+
+- Bottom nav: the active tab no longer turns solid orange. It stays white/readable and gets an orange glow around the icon and label instead (drop-shadow on the icon, matching text-shadow on the label).
+
 ## v1.81.3 — 2026-11-13
 
 - Phone Lisa: a caller who already has a visit booked (today onward) no longer gets a new estimate, the "send your address and photos" text or the follow-up drip after the call. The call links to the booked job and the call record email still goes out. Marianne called to confirm her 4:30 and got all three (EST1213).
