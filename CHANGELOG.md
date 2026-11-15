@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.7 — 2026-11-15
+
+- Bottom nav: widened the active-tab glow further (bigger blur radii on both the icon drop-shadow and label text-shadow layers).
+
 ## v1.82.6 — 2026-11-15
 
 - Lisa tests read the grader's verdict even when it reasons before its JSON (a live phone case was marked FAIL as "grader unreadable" while Lisa's answer was right). Test only.
