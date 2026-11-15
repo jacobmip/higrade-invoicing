@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.83.0 — 2026-11-15
+
+- Bottom nav: new active-tab style, a solid orange circle behind the icon that slides smoothly (spring easing) from tab to tab, Instagram-style, instead of the glow. The glow from v1.82.9/v1.82.10 is preserved in git history (tag: v1.82.10) if we want to go back to it.
+
 ## v1.82.10 — 2026-11-15
 
 - Bottom nav glow: eased the halo blob and text glow down a notch from v1.82.9 (smaller spread, lower opacity) — confirmed visible, just a bit much.
