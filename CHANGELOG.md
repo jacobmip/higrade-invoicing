@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.1 — 2026-11-15
+
+- Check-in caller, from the first live call (#43, ServiceChannel, tracking 368567332). Keys were right: 1 for English, PIN with #, tracking, confirm. But it spoke ("Wait for the next prompt" twice, "Goodbye"), and on the retry it sent the PIN and the tracking number in one turn. ServiceChannel accepts spoken answers, so a stray word can count as one. The prompt now says text is spoken into the call and an empty reply is the way to wait, has a "one prompt, one entry" rule, ends after the same value is rejected twice, and never uses * or 0. The dtmf and endCall tools get blank request-start messages so endCall stops saying "Goodbye". Checked by creating the assistant on Vapi and deleting it (201, 200).
+
 ## v1.85.0 — 2026-11-15
 
 - **Stripe rail, server side.** New `api/stripe-create-session.js` and `api/stripe-webhook.js`, both `runtime: 'edge'`, so the Stripe rail costs **zero** of the 12 Node function slots. Node count is unchanged at 12 of 12; routes went 22 to 24. PayPal is untouched and still live, so the two can run side by side while Stripe is proven.

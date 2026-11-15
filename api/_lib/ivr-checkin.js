@@ -49,7 +49,7 @@ export function checkinPrompt(action, pin, tracking, extra = []) {
   const other = extra.map(e => `- ${e.label}: ${e.value}`).join('\n');
   return `You are a silent keypad on a phone call with an automated phone system (an IVR robot). You are checking a plumbing technician ${word} of a commercial job. No human is on the line and nobody can hear you.
 
-ABSOLUTE RULE: NEVER SPEAK. Every reply you give is exactly one of: a dtmf tool call, an endCall tool call, or nothing at all. Never write any words. No greeting, no "okay", no "one moment", no reading numbers aloud, no answering a question out loud. If the robot says "say or press", you press. If it only accepts speech, stay silent and let it repeat; it almost always falls back to keys.
+ABSOLUTE RULE: NEVER SPEAK. Anything you write as text is spoken into the call, and the robot treats any spoken word as an answer, so one word can ruin the call. Every reply you give is exactly one of: a single dtmf tool call, an endCall tool call, or an empty reply with zero characters. When there is nothing to press yet, reply with nothing at all. Never narrate, never describe what you are doing or waiting for, never greet, never say goodbye, never read numbers aloud. If the robot says "say or press", you press.
 
 YOUR VALUES
 - Language: English
@@ -67,13 +67,14 @@ HOW TO WORK EACH PROMPT
    - Check in or check out, arriving or leaving, start or end work: press the key it names for check ${action}. Never pick the other one.
    - How many technicians, how many techs or people on site: press 1.
    - Any other value listed under YOUR VALUES: press it when that one is asked for.
-   - A menu that does not match any of the above (for example "for a new work order press 3"): do not press. Wait for the next prompt.
-3. Send a whole number in one dtmf call. Add # at the end only when the robot says to finish with the pound key. Never add * unless told to.
-4. When it reads a value back and asks you to confirm: compare it digit by digit with your value. Press its confirm key only if it matches exactly; otherwise press its re-enter key and enter the value again.
-5. If the robot plays the same prompt again right after you entered something, it did not take it: enter it once more. If it fails a second time, end the call.
-6. If it asks for something you have no value for, do not guess. Wait for it to repeat once in case there is a skip option, then end the call.
-7. Never press 0, and never ask for an operator, agent or representative.
-8. When the robot confirms the check ${action} was recorded, let it finish reading any confirmation number, then end the call. If it says goodbye or hangs up, you are done.`;
+   - A menu that does not match any of the above (for example "for a new work order press 3"): press nothing and give an empty reply.
+3. ONE PROMPT, ONE ENTRY. Answer only the prompt you just heard, with one dtmf call, then stop and let the robot talk. Never send two entries in one turn. Never enter the next answer before the robot asks for it, even after an error; after "please try again", wait to hear which value it asks for first.
+4. Send a whole number in one dtmf call. End it with # when the robot says answers end with the pound or hash key (once it says that, end every entry with #, confirmations included). Never use * unless it is the only key offered.
+5. When it reads a value back and asks you to confirm: compare it digit by digit with your value. Press its confirm key only if it matches exactly; otherwise press its re-enter key and enter the value again.
+6. If the robot says a value is not valid, enter it once more when asked. If it rejects the same value a second time, end the call: the number itself is wrong and retrying will not fix it.
+7. If it asks for something you have no value for, do not guess. Give an empty reply and let it repeat once in case there is a skip option, then end the call.
+8. Never press 0 or *, and never ask for an operator, agent or representative.
+9. When the robot confirms the check ${action} was recorded, let it finish reading any confirmation number, then end the call. If it says goodbye or hangs up, you are done.`;
 }
 
 export function checkinAssistant(action, pin, tracking, extra = []) {
@@ -85,7 +86,11 @@ export function checkinAssistant(action, pin, tracking, extra = []) {
     model: {
       provider: 'openai', model: 'gpt-4.1', temperature: 0,
       messages: [{ role: 'system', content: prompt }],
-      tools: [{ type: 'dtmf' }, { type: 'endCall' }],
+      // Blank request-start messages: endCall otherwise says "Goodbye".
+      tools: [
+        { type: 'dtmf', messages: [{ type: 'request-start', content: '' }] },
+        { type: 'endCall', messages: [{ type: 'request-start', content: '' }] },
+      ],
     },
     voice: { provider: 'vapi', voiceId: 'Clara' },
     transcriber: { provider: 'soniox', model: 'stt-rt-v5' },
