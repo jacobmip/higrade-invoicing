@@ -97,7 +97,6 @@ export function checkinAssistant(action, pin, tracking, extra = []) {
     // Hold music and long pauses are normal on these lines.
     silenceTimeoutSeconds: 45,
     maxDurationSeconds: 300,
-    voicemailDetection: { provider: 'vapi', enabled: false },
     analysisPlan: {
       summaryPlan: {
         enabled: true,

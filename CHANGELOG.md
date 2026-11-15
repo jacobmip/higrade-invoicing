@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.84.1 — 2026-11-15
+
+- Fix: check-in calls never dialed. Vapi refused the one-off assistant ("assistant.voicemailDetection.property enabled should not exist"), so call #42 (tracking 368567332) failed before ringing. The voicemail setting is gone; voicemail detection stays off by default. The whole assistant was checked by creating it on Vapi and deleting it again (201, then 200).
+
 ## v1.84.0 — 2026-11-15
 
 - **Online payment surcharge is now OFF.** Customers paying an invoice online are no longer charged the 3.49% + $0.49 processing fee. It was live from launch until today and was applied to 16 payments, $400.33 in all.
