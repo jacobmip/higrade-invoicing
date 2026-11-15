@@ -14976,9 +14976,9 @@ export default function App() {
           zIndex: 1300, boxShadow: "0 10px 26px rgba(0,0,0,0.30), 0 2px 6px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.15)",
         }}>
           {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ position: "relative", flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: tab === n.id ? "0 0 10px rgba(255,200,150,1), 0 0 22px rgba(232,98,42,1)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", transition: "text-shadow .15s" }}>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ position: "relative", flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: tab === n.id ? "0 0 8px rgba(255,200,150,0.85), 0 0 17px rgba(232,98,42,0.85)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", transition: "text-shadow .15s" }}>
               {tab === n.id && (
-                <span aria-hidden="true" style={{ position: "absolute", inset: -6, borderRadius: 24, background: "radial-gradient(ellipse 60% 65% at 50% 38%, rgba(255,210,160,1) 0%, rgba(255,140,60,1) 30%, rgba(232,98,42,0.9) 52%, rgba(232,98,42,0) 76%)", filter: "blur(7px)", zIndex: 0, pointerEvents: "none" }} />
+                <span aria-hidden="true" style={{ position: "absolute", inset: -4, borderRadius: 22, background: "radial-gradient(ellipse 56% 60% at 50% 40%, rgba(255,210,160,0.9) 0%, rgba(255,140,60,0.85) 30%, rgba(232,98,42,0.7) 52%, rgba(232,98,42,0) 76%)", filter: "blur(6px)", zIndex: 0, pointerEvents: "none" }} />
               )}
               <span style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
                 <span style={{ position: "relative", display: "inline-flex" }}>
@@ -14991,9 +14991,9 @@ export default function App() {
               </span>
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ position: "relative", flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: isMoreTab ? "0 0 10px rgba(255,200,150,1), 0 0 22px rgba(232,98,42,1)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", transition: "text-shadow .15s" }}>
+          <button onClick={() => setShowMore(true)} style={{ position: "relative", flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: isMoreTab ? "0 0 8px rgba(255,200,150,0.85), 0 0 17px rgba(232,98,42,0.85)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", transition: "text-shadow .15s" }}>
             {isMoreTab && (
-              <span aria-hidden="true" style={{ position: "absolute", inset: -6, borderRadius: 24, background: "radial-gradient(ellipse 60% 65% at 50% 38%, rgba(255,210,160,1) 0%, rgba(255,140,60,1) 30%, rgba(232,98,42,0.9) 52%, rgba(232,98,42,0) 76%)", filter: "blur(7px)", zIndex: 0, pointerEvents: "none" }} />
+              <span aria-hidden="true" style={{ position: "absolute", inset: -4, borderRadius: 22, background: "radial-gradient(ellipse 56% 60% at 50% 40%, rgba(255,210,160,0.9) 0%, rgba(255,140,60,0.85) 30%, rgba(232,98,42,0.7) 52%, rgba(232,98,42,0) 76%)", filter: "blur(6px)", zIndex: 0, pointerEvents: "none" }} />
             )}
             <span style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <Icon name="more" size={20} color="#f0f2f8" />
