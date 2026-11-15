@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.2 — 2026-11-15
+
+- Bottom nav: fixed the sliding orange circle (v1.83.0) being too small and off-center. It was positioned by a percentage-of-nav-width guess, which didn't account for the nav's own padding and the gaps between buttons, so it drifted away from the icon it's supposed to sit behind. Now it measures the actual active button's position with refs (`offsetLeft`/`offsetTop`) and centers on it exactly, at a larger 46px (was 36px). Verified against all 6 tab positions including the end slots.
+
 ## v1.85.1 — 2026-11-15
 
 - Check-in caller, from the first live call (#43, ServiceChannel, tracking 368567332). Keys were right: 1 for English, PIN with #, tracking, confirm. But it spoke ("Wait for the next prompt" twice, "Goodbye"), and on the retry it sent the PIN and the tracking number in one turn. ServiceChannel accepts spoken answers, so a stray word can count as one. The prompt now says text is spoken into the call and an empty reply is the way to wait, has a "one prompt, one entry" rule, ends after the same value is rejected twice, and never uses * or 0. The dtmf and endCall tools get blank request-start messages so endCall stops saying "Goodbye". Checked by creating the assistant on Vapi and deleting it (201, 200).

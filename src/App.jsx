@@ -14721,8 +14721,21 @@ export default function App() {
   const isMoreTab = moreNavItems.some(n => n.id === tab);
   // Which of the N nav slots (main items + the trailing "More" slot) is lit,
   // so the sliding indicator circle knows where to animate to.
-  const navSlotCount = mainNavItems.length + 1;
   const activeNavSlot = isMoreTab ? mainNavItems.length : mainNavItems.findIndex(n => n.id === tab);
+  // Measure the actual button the indicator should sit behind (not a %
+  // guess) so it's pixel-centered regardless of nav padding/gaps/width.
+  const navBtnRefs = useRef([]);
+  const [indicatorRect, setIndicatorRect] = useState(null);
+  useLayoutEffect(() => {
+    const btn = navBtnRefs.current[activeNavSlot];
+    if (!btn) { setIndicatorRect(null); return; }
+    const size = 46;
+    setIndicatorRect({
+      left: btn.offsetLeft + btn.offsetWidth / 2,
+      top: btn.offsetTop + btn.offsetHeight / 2 - size / 2,
+      size,
+    });
+  }, [activeNavSlot, keyboardOpen]);
 
   return (
     <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: textZoom === 1 ? "0 auto" : "0", position: "relative", paddingTop: globalHeaderH, paddingBottom: NAV_CLEARANCE, zoom: textZoom }}>
@@ -14994,18 +15007,18 @@ export default function App() {
           display: "flex", alignItems: "center", gap: 2, padding: 4,
           zIndex: 1300, boxShadow: "0 10px 26px rgba(0,0,0,0.30), 0 2px 6px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.15)",
         }}>
-          {activeNavSlot > -1 && (
+          {indicatorRect && (
             <span aria-hidden="true" style={{
-              position: "absolute", top: 4, left: `${((activeNavSlot + 0.5) / navSlotCount) * 100}%`,
-              transform: "translateX(-50%)", width: 36, height: 36, borderRadius: "50%",
+              position: "absolute", top: indicatorRect.top, left: indicatorRect.left,
+              transform: "translateX(-50%)", width: indicatorRect.size, height: indicatorRect.size, borderRadius: "50%",
               background: "rgba(232,98,42,0.88)",
               boxShadow: "0 3px 10px rgba(232,98,42,0.5), inset 0 1px 1px rgba(255,255,255,0.3)",
               transition: "left .32s cubic-bezier(0.34, 1.56, 0.64, 1)",
               zIndex: 0, pointerEvents: "none",
             }} />
           )}
-          {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ position: "relative", zIndex: 1, flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          {mainNavItems.map((n, i) => (
+            <button key={n.id} ref={el => navBtnRefs.current[i] = el} onClick={() => setTab(n.id)} style={{ position: "relative", zIndex: 1, flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <span style={{ position: "relative", display: "inline-flex" }}>
                 <Icon name={n.icon} size={20} color="#f0f2f8" />
                 {n.id === "messages" && unreadMessages > 0 && (
@@ -15015,7 +15028,7 @@ export default function App() {
               {n.label}
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ position: "relative", zIndex: 1, flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          <button ref={el => navBtnRefs.current[mainNavItems.length] = el} onClick={() => setShowMore(true)} style={{ position: "relative", zIndex: 1, flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
             <Icon name="more" size={20} color="#f0f2f8" />
             More
           </button>
