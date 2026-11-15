@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.1 — 2026-11-15
+
+- One reply per burst of texts. Alana, 2026-11-14: "Just in case" plus two photo texts, six seconds apart, each started its own reply; all three read the thread before any reply existed, so she got three texts in seven seconds. `autoReply()` now takes the logged `messageId`, waits `BURST_WAIT_MS` (8 s) and stands down if a newer text from that number has arrived (`newerInbound()`); the newest text answers with the whole burst in front of it.
+- `api/sms-inbound.js` answers Twilio as soon as the text is logged, photos attached and Jake emailed; Lisa's part runs under `waitUntil`, so the wait plus the model call never hits Twilio's 15 s webhook limit.
+- Lisa sees photos. A picture-only text was dropped from her thread (`asMessages()` filtered "(no text)"), so she asked Alana "what did you want to check?". Now a text with pictures reads "[sent 2 photos]".
+- `tests/lisa/`: new case for Alana; the Neil 3 PM case no longer depends on what day "tomorrow" is. 7/7 pass.
+
 ## v1.82.0 — 2026-11-15
 
 - Check in / check out from the AI chat (Jake: "if it's wired in to lisa i should be able to do it from my app"). Say "call to check in, tracking 12345678" or "call to check out" and the new `ivr_checkin` tool dials the commercial contractor's check-in robot line straight away. A one-off Vapi assistant presses the keys: English, Jake's IVR PIN, the tracking number, in or out, and 1 technician. A check-out with no tracking number reuses today's check-in.

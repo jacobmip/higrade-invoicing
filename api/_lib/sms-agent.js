@@ -188,7 +188,7 @@ async function thread(phone) {
   const rows = await select(
     `client_messages?phone_number=eq.${encodeURIComponent(phone)}` +
     `&created_at=gte.${encodeURIComponent(since)}` +
-    '&select=direction,body,created_at,media&order=created_at.asc&limit=40'
+    '&select=id,direction,body,created_at,media&order=created_at.asc&limit=40'
   );
   if (!Array.isArray(rows) || !rows.length) return [];
 
@@ -231,15 +231,38 @@ If they want to schedule work from an estimate that is not scheduled yet, book i
   } catch { return ''; }
 }
 
-function asMessages(rows) {
+/** "[sent 2 photos]" for a text that carried pictures, '' for none. */
+export function photoNote(media) {
+  const n = Array.isArray(media) ? media.filter((m) => m && !m.failed).length : 0;
+  return n ? `[sent ${n === 1 ? 'a photo' : `${n} photos`}]` : '';
+}
+
+export function asMessages(rows) {
   // Their texts are the user turns, ours are the assistant turns. Consecutive
-  // same-role messages are legal and the API merges them.
+  // same-role messages are legal and the API merges them. A picture-only text
+  // is a turn too (Alana, 2026-11-14: two photos of her faucet were dropped
+  // from the thread, so Lisa asked "what did you want to check?").
   return rows
-    .filter((r) => String(r.body || '').trim() && r.body !== '(no text)')
-    .map((r) => ({
-      role: r.direction === 'inbound' ? 'user' : 'assistant',
-      content: String(r.body),
-    }));
+    .map((r) => {
+      const text = r.body === '(no text)' ? '' : String(r.body || '').trim();
+      const content = [text, photoNote(r.media)].filter(Boolean).join('\n');
+      return content ? { role: r.direction === 'inbound' ? 'user' : 'assistant', content } : null;
+    })
+    .filter(Boolean);
+}
+
+// Customers send a burst: "Just in case" then two photos, six seconds apart
+// (Alana, 2026-11-14). Each text used to start its own reply, all three read
+// the thread before any reply existed, and she got three texts in seven
+// seconds. Now each text waits, and only the newest one in the burst answers,
+// with the whole burst in front of it.
+export const BURST_WAIT_MS = 8000;
+/** True when a newer text from them has arrived since messageId. */
+export function newerInbound(rows, messageId) {
+  if (!messageId) return false;
+  const ins = rows.filter((r) => r.direction === 'inbound');
+  const newest = ins[ins.length - 1];
+  return !!newest && newest.id !== messageId && ins.some((r) => r.id === messageId);
 }
 
 function parseJson(text) {
@@ -483,9 +506,13 @@ const fuzzyPhone = (d) => `*${d.slice(0, 3)}*${d.slice(3, 6)}*${d.slice(6)}*`;
  * The live path: called from the inbound webhook after the message is logged.
  * Returns a short description of what it did, for the log line.
  */
-export async function autoReply({ phone, body, clientName, clientId, secret }) {
+export async function autoReply({ phone, body, clientName, clientId, secret, messageId = null }) {
   if (String(await getSetting('sms_autoreply_enabled') || '').toLowerCase() !== 'true') {
     return 'autoreply off';
+  }
+  if (messageId) {
+    await new Promise((r) => setTimeout(r, BURST_WAIT_MS));
+    if (newerInbound(await thread(phone), messageId)) return 'a newer text from them answers the burst';
   }
   if (clientId) {
     const [c] = await select(`clients?id=eq.${encodeURIComponent(clientId)}&select=lisa_autoreply`);

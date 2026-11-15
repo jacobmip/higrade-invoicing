@@ -452,41 +452,51 @@ export default async function handler(req, res) {
     // on the job and Jake is already emailed, so a bad day for the model or
     // for Anthropic cannot cost us the message itself. Gated by
     // settings.sms_autoreply_enabled.
-    let replied = 'not attempted';
-    // A reply to our own "what's your service address / email?" text is handled
-    // first; anything that does not match falls through to the agent.
-    let captured = null;
-    // A YES to a change order we texted approves it (api/_lib/change-order.js).
-    // Only a short, plain yes from the number it was sent to; anything else
-    // falls through.
-    try {
-      captured = await handleChangeOrderReply({ phone: from, body: String(body) });
-    } catch (e) {
-      console.error('[sms-inbound] change order reply failed:', e.message || e);
-    }
-    try {
-      if (!captured) captured = await handleInfoReply({ phone: from, body: String(body), secret });
-    } catch (e) {
-      console.error('[sms-inbound] info-reply capture failed:', e.message || e);
-    }
-    try {
-      replied = captured || await autoReply({
-        phone: from,
-        body: String(body),
-        clientName: result?.client_name || null,
-        clientId: result?.client_id || null,
-        secret,
-      });
-    } catch (e) {
-      replied = `failed: ${e.message || e}`;
-      console.error('[sms-inbound] autoreply failed:', e.message || e);
-    }
+    // Twilio gets its answer now and Lisa answers in the background: she waits
+    // out a burst of texts first (BURST_WAIT_MS in sms-agent), which with the
+    // model call would pass Twilio's 15 second webhook limit.
+    const lisa = (async () => {
+      let replied = 'not attempted';
+      // A reply to our own "what's your service address / email?" text is handled
+      // first; anything that does not match falls through to the agent.
+      let captured = null;
+      // A YES to a change order we texted approves it (api/_lib/change-order.js).
+      // Only a short, plain yes from the number it was sent to; anything else
+      // falls through.
+      try {
+        captured = await handleChangeOrderReply({ phone: from, body: String(body) });
+      } catch (e) {
+        console.error('[sms-inbound] change order reply failed:', e.message || e);
+      }
+      try {
+        if (!captured) captured = await handleInfoReply({ phone: from, body: String(body), secret });
+      } catch (e) {
+        console.error('[sms-inbound] info-reply capture failed:', e.message || e);
+      }
+      try {
+        replied = captured || await autoReply({
+          phone: from,
+          body: String(body),
+          clientName: result?.client_name || null,
+          clientId: result?.client_id || null,
+          secret,
+          messageId: result?.message_id || null,
+        });
+      } catch (e) {
+        replied = `failed: ${e.message || e}`;
+        console.error('[sms-inbound] autoreply failed:', e.message || e);
+      }
 
-    console.log('[sms-inbound] logged', {
-      from, matched: result?.matched, client: result?.client_name || null,
-      media: media.length, attachedTo: attached?.estimate_id || null,
-      replied,
-    });
+      console.log('[sms-inbound] logged', {
+        from, matched: result?.matched, client: result?.client_name || null,
+        media: media.length, attachedTo: attached?.estimate_id || null,
+        replied,
+      });
+    })().catch((e) => console.error('[sms-inbound] lisa failed:', e.message || e));
+    let waitUntil = null;
+    try { ({ waitUntil } = await import('@vercel/functions')); } catch { /* inline */ }
+    if (typeof waitUntil === 'function') waitUntil(lisa);
+    else await lisa;
   } catch (e) {
     // Swallow: returning non-200 makes Twilio retry, and a retry storm would
     // duplicate the message once the underlying issue clears.

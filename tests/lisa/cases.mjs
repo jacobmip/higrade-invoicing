@@ -27,6 +27,7 @@ const spoken = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US',
 /** An ISO timestamp n hours ago. */
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 const msg = (direction, body, hoursAgo) => ({ direction, body, created_at: ago(hoursAgo), media: null });
+const photos = (n, hoursAgo) => ({ direction: 'inbound', body: '(no text)', created_at: ago(hoursAgo), media: Array.from({ length: n }, (_, i) => ({ url: `https://example.com/p${i}.jpg`, type: 'image/jpeg' })) });
 const hist = (channel, who, body, hoursAgo) => ({ at: ago(hoursAgo), channel, who, body });
 
 // Phrases no reply should ever contain, on top of each case's own checks.
@@ -79,7 +80,7 @@ export function cases() {
       name: 'booked customer adds a detail; their own time is never "taken"',
       why: 'Neil, 2026-11-12: booked for 3 PM, his next text got "That time\'s taken, we have 4:30"',
       thread: [
-        msg('inbound', 'Tomorrow is ok @ 9 am. Is there any prep work that we need to do? (like clearing under the sinks)', 0.2),
+        msg('inbound', `${spoken(d1)} at 3 is ok. Is there any prep work that we need to do? (like clearing under the sinks)`, 0.2),
         msg('outbound', `You're all set for ${spoken(d1)} at 3 PM. Clearing under those two sinks would help. Mahalo!`, 0.19),
         msg('inbound', 'Fridge valve taken care of, just need to resolve water pressure issue.', 0.1),
       ],
@@ -151,6 +152,25 @@ export function cases() {
       mustNot: [[ASKS_ADDRESS, 'asked for the address on file'], [/what('?s| is) your name/i, 'asked the name on file']],
       must: [],
       expect: 'Recognises a returning customer (it can mention the earlier clog), uses the address on file or confirms it, and moves to scheduling.',
+    },
+    {
+      name: 'booked customer sends "just in case" and photos',
+      why: 'Alana, 2026-11-14: "Just in case" plus two photo texts got three replies in seven seconds, none mentioning the photos ("what did you want to check?")',
+      thread: [
+        msg('outbound', `Mahalo Alana, you're all set for ${spoken(d1)} at 8 AM at 1502 Farrington St. We'll come ready for that Delta two-handle.`, 4),
+        msg('inbound', 'Thank you so much!', 0.03),
+        msg('outbound', `You're welcome, Alana. See you ${spoken(d1)} morning.`, 0.03),
+        msg('inbound', 'Just in case', 0.01),
+        photos(2, 0.01),
+        photos(2, 0.005),
+      ],
+      facts: { name: 'Alana', first_name: 'Alana', mobile: '+18085550147', address1: '1502 Farrington St', address2: 'Honolulu HI' },
+      history: [hist('text', 'customer', 'Hi there. Omg tub faucet started dripping again. Is there anyway to do a consult over the phone?', 4.5), hist('text', 'customer', '2 handle. Rotor rooter came and said it\'s something behind the knobs. Knobs are delta 2 gen double handle', 4.4)],
+      visits: [{ start: `${d1}T08:00`, what: 'Tub faucet drip, Delta two-handle', doc: 'EST1214', on_calendar: true }],
+      open: { date: `${d1}T08:00`, problem: 'Tub faucet dripping, Delta two-handle' },
+      mustNot: [[/what (did|do) you want to check|something you'?d like us to know|what did you want/i, 'did not see the photos'], [/\?\s*$/, 'asked her a question she does not need to answer']],
+      must: [[/photo|picture|pic/i, 'did not acknowledge the photos']],
+      expect: 'One short reply that thanks her for the photos (they help the tech come prepared) and keeps the existing 8 AM visit. No questions.',
     },
   ].map((c) => ({
     ...c,
