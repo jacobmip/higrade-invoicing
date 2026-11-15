@@ -301,60 +301,11 @@ export async function convertEstimateToInvoice(estimateId, via = 'customer_signe
 // in-app list/dashboard UI keys off `invoices.status`, so without this
 // update a paid invoice keeps showing as 'outstanding' until the user
 // edits it manually.
-export async function reconcileInvoiceStatus(invoiceId) {
-  const { url, headers } = supabaseCfg();
-
-  // Pull the invoice + its items + all payments. We need the same fields
-  // the client uses to compute totals (tax %, discount, items, payments).
-  const [invRes, itemsRes, paysRes] = await Promise.all([
-    fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}&select=id,type,status,tax,discount,discount_type&limit=1`, { headers }),
-    fetch(`${url}/rest/v1/invoice_items?invoice_id=eq.${encodeURIComponent(invoiceId)}&select=qty,price,discount,discount_type,taxable`, { headers }),
-    fetch(`${url}/rest/v1/payments?invoice_id=eq.${encodeURIComponent(invoiceId)}&select=amount`, { headers }),
-  ]);
-  const invs = await invRes.json();
-  const items = await itemsRes.json();
-  const pays = await paysRes.json();
-  if (!Array.isArray(invs) || invs.length === 0) return;
-  const inv = invs[0];
-  if (inv.type === 'estimate') return;
-
-  const itemTotal = (it) => {
-    const qty = parseFloat(it.qty ?? 1);
-    const price = parseFloat(it.price ?? 0);
-    const base = qty * price;
-    const disc = parseFloat(it.discount ?? 0);
-    if (it.discount_type === '%') return base * (1 - disc / 100);
-    return Math.max(0, base - disc);
-  };
-  const sub = (items || []).reduce((s, it) => s + itemTotal(it), 0);
-  const taxableSub = (items || []).filter(it => it.taxable !== false).reduce((s, it) => s + itemTotal(it), 0);
-  let disc = 0;
-  if (inv.discount) {
-    if (inv.discount_type === '%') disc = sub * (parseFloat(inv.discount) / 100);
-    else disc = parseFloat(inv.discount);
-  }
-  const taxBase = Math.max(0, taxableSub - disc * (taxableSub / Math.max(sub, 1)));
-  const taxAmt = taxBase * (parseFloat(inv.tax || 4.712) / 100);
-  const total = Math.max(0, sub - disc + taxAmt);
-  const paid = (pays || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-  const balance = +(total - paid).toFixed(2);
-
-  // Flip status based on balance. Use a 1-cent tolerance so floating-point
-  // rounding doesn't leave a paid invoice in 'partial' forever.
-  let newStatus = inv.status;
-  if (balance <= 0.01) newStatus = 'paid';
-  else if (paid > 0) newStatus = 'partial';
-  // If nothing was paid yet (shouldn't happen on this code path) leave it.
-
-  if (newStatus !== inv.status) {
-    await fetch(`${url}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ status: newStatus, updated_at: new Date().toISOString() }),
-    });
-  }
-}
-
+// reconcileInvoiceStatus moved to ./invoice-money.js so the edge Stripe
+// webhook can use the same implementation (this module imports node:crypto,
+// which an edge route cannot). Re-exported here so every existing importer
+// keeps working unchanged. Do not re-add a local copy.
+export { reconcileInvoiceStatus } from './invoice-money.js';
 
 // Telegram message to Jake. Best effort: needs TELEGRAM_TOKEN in the Vercel env
 // (the HI Grade Manager bot's token; chat id defaults to Jake's).

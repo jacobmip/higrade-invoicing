@@ -1,5 +1,17 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.0 — 2026-11-15
+
+- **Stripe rail, server side.** New `api/stripe-create-session.js` and `api/stripe-webhook.js`, both `runtime: 'edge'`, so the Stripe rail costs **zero** of the 12 Node function slots. Node count is unchanged at 12 of 12; routes went 22 to 24. PayPal is untouched and still live, so the two can run side by side while Stripe is proven.
+- **Nothing is customer-facing yet.** The public viewer still shows only PayPal. These routes are inert until `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set in the Vercel env.
+- **ACH is recorded only when the money settles.** A bank debit can clear checkout and fail days later, so the webhook writes a payment row on `payment_intent.succeeded` only, never on `checkout.session.completed`. Checkout and failure events send a notification instead. The ledger must never show an invoice paid before the funds move, because that is the number used to decide whether to chase someone.
+- **Webhook signatures are verified against the Web Crypto API** (`t` + `v1` HMAC-SHA256 over `t.rawBody`, 300 second replay window, non-`v1` schemes ignored so the check cannot be downgraded, constant-time compare). Eleven tests cover valid, tampered body, tampered signature, replayed, future-dated, wrong secret, `v0`-only, key rotation, missing and garbage headers, and uppercase hex. No Stripe SDK: it reaches for `node:https` and would not run on edge.
+- Migration 128 adds `payments.stripe_session_id` and `payments.stripe_payment_intent_id`, with a partial unique index on the intent as the dedupe key. Applied and verified; a duplicate intent raises `unique_violation`, and the 061/064 trigger still canonicalizes a Stripe `card` to `Credit Card`.
+- **New `api/_lib/invoice-money.js`, edge-safe on purpose**, now the single server implementation of what an invoice owes. `api/_lib/convert-estimate.js` re-exports `reconcileInvoiceStatus` from it instead of keeping a second copy, since that file imports `node:crypto` and cannot be used from an edge route. No behaviour change: all four of its exports still resolve.
+- Stripe payment dates use `honoluluDate()`, not `toISOString()`. **Known bug left alone:** `api/paypal-capture-order.js` still dates payments in UTC, which is already tomorrow in Hawaii after 2pm. It is in the rail being retired, so it was not touched in this push.
+- Invoices only for now. The PayPal estimate down-payment path, which auto-converts an estimate on deposit, is the only thing needing the Node-only conversion library, and it has never fired in production: zero rows in 12 months.
+- Corrected in `CLAUDE.md`: the edge route count said six, it is twelve.
+
 ## v1.84.1 — 2026-11-15
 
 - Fix: check-in calls never dialed. Vapi refused the one-off assistant ("assistant.voicemailDetection.property enabled should not exist"), so call #42 (tracking 368567332) failed before ringing. The voicemail setting is gone; voicemail detection stays off by default. The whole assistant was checked by creating it on Vapi and deleting it again (201, then 200).
