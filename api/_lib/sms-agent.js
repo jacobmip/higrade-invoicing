@@ -23,8 +23,9 @@ import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split
 import { otherChannelsBlock, clientFactsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
-import { openSlots, requestedDates, upcomingVisits, moveVisit, requestChange, inBusinessHours, speakVisit } from './yelp-booking.js';
+import { openSlots, requestedDates, upcomingVisits, requestChange, inBusinessHours, speakVisit } from './yelp-booking.js';
 import { guardBody } from './lisa-guards.js';
+import { lisaMoveVisit } from './visit-move.js';
 import { estimateJob, estimatePrompt, estimateNote, PRICE_ASK } from './estimate-agent.js';
 import { lisaIdentity, lisaSoul } from './lisa-soul.js';
 import { telegramNotify } from './convert-estimate.js';
@@ -619,24 +620,13 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
     const newTime = String(out.new_time || '').trim().slice(0, 16);
     if (!clientId) {
       out.reply = 'Could you send the service address on the booking so I can pull it up and move it?';
-    } else if (newTime && !inBusinessHours(newTime)) {
-      out.reply = 'We book visits on weekdays between 8 AM and 3 PM. What time in that window works for you?';
     } else if (newTime) {
-      const chk = await checkAppointment(newTime);
-      if (chk.status === 'free') {
-        const r = await moveVisit({ clientId, visitStart: out.visit_start, newTime }).catch((e) => ({ ok: false, reason: e.message || String(e) }));
-        out.reschedule = r;
-        if (r.ok && !r.unchanged) {
-          await telegramNotify(`Lisa moved ${who}'s visit by text: ${speakVisit(r.from)} -> ${speakVisit(r.to)} (${r.doc}). Calendar and app updated.`).catch(() => {});
-        } else if (!r.ok) {
-          out.reply = `I'm updating your appointment to ${speakVisit(newTime)} now and will confirm shortly.`;
-          await telegramNotify(`Text reschedule NOT applied for ${who}: ${r.reason}.\nWants: ${speakVisit(newTime)}${out.visit_start ? ` (was ${speakVisit(out.visit_start)})` : ''}\nMove it in the app and confirm by text.\n${phone}`).catch(() => {});
-        }
-      } else if (chk.status === 'busy') {
-        out.reply = 'That time is already taken. What other time works for you?';
-      } else {
-        out.reply = "I couldn't check that time just yet. What day and time window works best for you?";
-      }
+      const r = await lisaMoveVisit({ clientId, visitStart: out.visit_start, newTime, who, phone, channel: 'text' });
+      out.reschedule = r;
+      if (r.status === 'outside_hours') out.reply = 'We book visits on weekdays between 8 AM and 3 PM. What time in that window works for you?';
+      else if (r.status === 'failed') out.reply = `I'm updating your appointment to ${speakVisit(newTime)} now and will confirm shortly.`;
+      else if (r.status === 'busy') out.reply = 'That time is already taken. What other time works for you?';
+      else if (r.status === 'check_failed') out.reply = "I couldn't check that time just yet. What day and time window works best for you?";
     }
   } else if (out.action === 'cancel') {
     const r = await requestChange({ phone, action: 'cancel', visitStart: out.visit_start, reason: String(body || '') }).catch(() => null);

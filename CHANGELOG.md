@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.2 — 2026-11-15
+
+- One Lisa on the phone too (Jake, 2026-11-14: "Lisa is true to the same memory for every interaction with customers"). Phone Lisa's Vapi prompt is now generated from `api/_lib/lisa-soul.js`, the rulebook text and Yelp use, by `scripts/phone-prompt.mjs` (date block + `lisaIdentity('phone')` + a phone-only section on voice, tools and call flow + `lisaSoul()`). `node scripts/vapi-sync.mjs` installs it (backs up the assistant first; `--dry` prints it). Run it after any change to `lisa-soul.js`.
+  - Gone from the phone: "I will pencil you in and the team will confirm", "weekdays 9 to 5", "the team will confirm the quote", saying the owner's name on a transfer, and asking texting customers for text consent.
+- Phone Lisa moves a visit herself, like text. New `_lib/visit-move.js` `lisaMoveVisit()` (hours check, calendar check, calendar event and app moved, one Telegram) used by text Lisa and by the new secret-only `op: 'phone_move_visit'` in `sms-inbound.js` (caller found from caller ID, never a name). The Vapi `rescheduleAppointment` tool points at it; it used to only file a request.
+- `tests/lisa/phone.mjs` (`tests/lisa/run.sh --phone`, `--all` for both): phone cases through Vapi's chat API on gpt-4.1 with tool results in the prompt; nothing is dialled or filed. The old live prompt failed 4 of 6, the new one passes 6/6 three runs in a row. Text cases 7/7.
+
 ## v1.82.1 — 2026-11-15
 
 - One reply per burst of texts. Alana, 2026-11-14: "Just in case" plus two photo texts, six seconds apart, each started its own reply; all three read the thread before any reply existed, so she got three texts in seven seconds. `autoReply()` now takes the logged `messageId`, waits `BURST_WAIT_MS` (8 s) and stands down if a newer text from that number has arrived (`newerInbound()`); the newest text answers with the whole burst in front of it.

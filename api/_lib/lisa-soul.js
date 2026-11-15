@@ -4,7 +4,7 @@
 // 2026-11-12: "when I adjust Lisa, she stays consistent and her soul or
 // personality and reasoning stays the same").
 //
-// Channel files (sms-agent.js, yelp-agent.js, scripts/vapi-sync) add only what
+// Channel files (sms-agent.js, yelp-agent.js, scripts/phone-prompt.mjs) add only what
 // is truly about the channel: message length, greeting and sign-off, the JSON
 // they return, and the context blocks for this customer. A customer-facing rule
 // written into a channel file instead of here is drift. Put it here.

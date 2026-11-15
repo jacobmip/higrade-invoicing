@@ -48,6 +48,8 @@ import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_
 import { proposeInBackground } from './_lib/lead-estimate.js';
 import { draftYelpReply, logYelpBusinessMessage, setYelpPhone, generateYelpBump, sendYelpMessage } from './_lib/yelp-agent.js';
 import { placeCheckinCall } from './_lib/ivr-checkin.js';
+import { lisaMoveVisit } from './_lib/visit-move.js';
+import { matchClient, upcomingVisits, speakVisit } from './_lib/yelp-booking.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
@@ -223,6 +225,13 @@ async function appSend(req, res) {
       if (!result) return jsonOut(res, 404, { error: 'thread not found or no reply yet' });
       return jsonOut(res, 200, { ok: true, ...result, ...(typeof result.reply === 'string' ? { content: result.reply } : {}) });
     }
+    // Phone Lisa moves a booked visit herself, same as text (Vapi tool
+    // rescheduleAppointment, webhook secret only). The caller is found from
+    // caller ID, never from a name, so a call can only move its own visits.
+    if (params.op === 'phone_move_visit') {
+      if (!viaSecret) return jsonOut(res, 403, { error: 'secret required' });
+      return jsonOut(res, 200, await phoneMoveVisit(params));
+    }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
       return await appPlaceCall(res, user, params);
@@ -284,6 +293,26 @@ async function appSend(req, res) {
     console.error('[sms-inbound] app send failed:', e.message || e);
     return jsonOut(res, 500, { error: String(e.message || e) });
   }
+}
+
+// What phone Lisa hears back from rescheduleAppointment. Plain words, so she
+// can say them; never a doc number.
+async function phoneMoveVisit(params) {
+  const phone = toE164(params.phone) || String(params.phone || '').trim();
+  const newTime = String(params.new_time || params.p_new_time || '').trim().slice(0, 16);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(newTime)) return { ok: false, reason: 'bad_time', say: 'Ask which day and time they want.' };
+  const m = await matchClient({ phone }).catch(() => null);
+  if (!m?.client) return { ok: false, reason: 'no_account', say: 'You are not seeing an appointment under this number. Take a message.' };
+  const visits = await upcomingVisits(m.client.id).catch(() => []);
+  if (!visits.length) return { ok: false, reason: 'no_appointment', say: 'You are not seeing an appointment under this number. Take a message.' };
+  const visitStart = String(params.visit_start || params.p_visit_start || '').slice(0, 16) || null;
+  if (!visitStart && visits.length > 1) return { ok: false, reason: 'which_one', options: visits.map((v) => speakVisit(v.start)) };
+  const r = await lisaMoveVisit({ clientId: m.client.id, visitStart, newTime, who: m.client.name || phone, phone, channel: 'phone' });
+  if (r.status === 'moved' || r.status === 'unchanged') return { ok: true, moved_to: speakVisit(r.to), say: `It is done: their visit is now ${speakVisit(r.to)}. Tell them plainly.` };
+  if (r.status === 'outside_hours') return { ok: false, reason: 'outside_hours', say: 'Visits start on weekdays between 8 AM and 3 PM. Ask for a time in that window.' };
+  if (r.status === 'busy') return { ok: false, reason: 'busy', next_open: r.next?.label ? `${speakVisit(newTime.slice(0, 10))}, ${r.next.label}` : null, say: 'That time is taken. Offer the next open time.' };
+  if (r.status === 'check_failed') return { ok: false, reason: 'check_failed', say: 'You could not check the calendar. Ask what day and time window works and say the team will text to confirm.' };
+  return { ok: false, reason: 'failed', say: `Say you are updating it to ${speakVisit(newTime)} and the team will text to confirm.` };
 }
 
 // Stamp every unsent, unstopped drip row for this number as stopped. Matches on
