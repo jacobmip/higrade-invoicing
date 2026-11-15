@@ -27,7 +27,8 @@
 // reason it lives here: the 12-function cap. The AI chat's send_sms uses the same
 // call. The same send also accepts the webhook secret as the Bearer token (Lani
 // on Telegram) and an optional invoice_id for an sms_sent snapshot. Its place_call sends `{ op: 'place_call', phone, name, about, context }`
-// and queues an outbound call (see appPlaceCall).
+// and queues an outbound call (see appPlaceCall). `{ op: 'ivr_checkin', action, tracking }`
+// dials the contractor's check-in robot line at once (see _lib/ivr-checkin.js).
 //
 // GET ?preview=<phone>&k=<secret> returns what Lisa WOULD reply to that
 // thread, without sending anything. That is how a change to her prompt gets
@@ -46,6 +47,7 @@ import { handleInfoReply } from './_lib/sms-reply-capture.js';
 import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_lib/change-order.js';
 import { proposeInBackground } from './_lib/lead-estimate.js';
 import { draftYelpReply, logYelpBusinessMessage, setYelpPhone, generateYelpBump, sendYelpMessage } from './_lib/yelp-agent.js';
+import { placeCheckinCall } from './_lib/ivr-checkin.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
@@ -224,6 +226,12 @@ async function appSend(req, res) {
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
       return await appPlaceCall(res, user, params);
+    }
+    // Contractor IVR check-in/out: dials at once (see ./_lib/ivr-checkin.js). Session only.
+    if (params.op === 'ivr_checkin') {
+      if (!user) return jsonOut(res, 403, { error: 'admin only' });
+      const r = await placeCheckinCall(user, params);
+      return jsonOut(res, r.status, r.body);
     }
     // The exact email and text a change order send would produce. Session only.
     if (params.op === 'preview_change_order') {

@@ -22,7 +22,7 @@
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
-import { sendLisaText, queueLisaCall, approveLisaCall } from './lisaActions.js';
+import { sendLisaText, queueLisaCall, approveLisaCall, checkinCall } from './lisaActions.js';
 import { runChangeOrderAction, jobInvoiceId } from './ChangeOrders.jsx';
 
 const MAX_STEPS = 12;            // model calls per message
@@ -723,6 +723,17 @@ async function placeCall(input, ctx) {
   return { ok: true, queued: true, dialing, call_id: r.id, vapiCallId, note };
 }
 
+// The contractor's IVR check-in line. No confirm step: Jake saying "call to
+// check in" is the instruction, and the call talks only to a robot.
+async function ivrCheckin(input) {
+  try {
+    const r = await checkinCall({ action: input.action, tracking: input.tracking, note: input.note });
+    return { ok: true, dialing: true, call_id: r.id, tracking: r.tracking, note: r.text };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
+}
+
 function sendDocumentEmail(input, ctx) {
   const id = String(input.document_id || '').trim().toUpperCase();
   const inv = ctx.getData().invoices.find(i => i.id === id);
@@ -836,6 +847,7 @@ const TOOLS = {
   send_sms: sendSms,
   send_yelp: sendYelp,
   place_call: placeCall,
+  ivr_checkin: ivrCheckin,
   delete_document: deleteDocument,
   lisa_switch: lisaSwitch,
   yelp_threads: yelpThreads,
@@ -844,7 +856,7 @@ const TOOLS = {
 const WRITE_TOOLS = new Set([
   'create_client', 'update_client', 'add_job_site', 'create_document', 'add_line_items', 'update_line_item',
   'remove_line_item', 'update_document', 'record_payment', 'save_price', 'schedule_job',
-  'send_document_email', 'send_sms', 'send_yelp', 'place_call', 'delete_document', 'draft_change_order', 'lisa_switch',
+  'send_document_email', 'send_sms', 'send_yelp', 'place_call', 'ivr_checkin', 'delete_document', 'draft_change_order', 'lisa_switch',
 ]);
 
 // What the chat shows while a tool runs.
@@ -877,6 +889,7 @@ const PROGRESS = {
   send_yelp: (i) => `Drafting a Yelp message${i.name ? ` to ${i.name}` : ''}`,
   draft_change_order: (i) => `Writing a change order on ${i.document_id || 'the invoice'}`,
   place_call: (i) => `Dialing ${i.name || i.phone || 'customer'}…`,
+  ivr_checkin: (i) => `Calling the check-in line (${i.action === 'out' ? 'out' : 'in'})…`,
   delete_document: (i) => `Deleting ${i.document_id || 'document'}`,
 };
 const progressLabel = (name, input) => {

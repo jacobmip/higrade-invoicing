@@ -66,6 +66,16 @@ export async function queueLisaCall({ phone, name, about, context, invoiceId }) 
   return { ...out, text };
 }
 
+// The contractor's check-in robot line. Dials at once; no approval step.
+// tracking may be omitted on a check-out to reuse today's check-in.
+export async function checkinCall({ action, tracking, note }) {
+  const a = String(action || '').toLowerCase();
+  if (a !== 'in' && a !== 'out') throw new Error('Check in or check out?');
+  const out = await post({ op: 'ivr_checkin', action: a, tracking: digits(tracking), note });
+  const reuse = out.reusedTracking ? ' (same tracking as this morning)' : '';
+  return { ...out, text: `Calling the check-in line to check ${a.toUpperCase()}, tracking ${out.tracking}${reuse}. The result comes by email when the call ends.` };
+}
+
 export async function approveLisaCall({ callToken }) {
   if (!callToken) throw new Error('Call token is required to approve a call.');
   const { data } = await supabase.auth.getSession();

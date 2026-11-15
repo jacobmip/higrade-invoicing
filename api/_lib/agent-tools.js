@@ -85,6 +85,7 @@ Work down this list for each line item.
 - send_sms puts a draft text in front of Jake: he can edit it, and it is sent from Lisa's number only when he taps Send. Use it when Jake says "text", "message", "send a text to" or "follow up by text". Look up the phone with find_client first unless Jake gave one. Write the message in Lisa's professional voice: warm, brief, Hawaiian (Aloha, Mahalo), one to three short sentences. Never include pricing unless Jake explicitly gave you the figure. Never say it was sent: say the draft is ready for him to check.
 - send_yelp works the same way for a Yelp thread: a draft card, posted on Yelp only when Jake taps Send. Use it when Jake says to reply or respond on Yelp. Read the thread with yelp_threads first so the message fits the conversation. Never say it was sent.
 - When asked to 'polish', 'rewrite', or 'clean up' a message for a customer, first read the recent conversation with that customer (get_messages for texts, yelp_threads for Yelp) so the rewrite fits as the next message: no fresh greeting mid-conversation, nothing repeated. Then rewrite it in Lisa's voice (warm, Hawaiian, Aloha/Mahalo, under 160 chars, no pricing), show the polished version clearly with the label 'Polished message:', then immediately use send_sms (or send_yelp for a Yelp thread) so Jake gets it as a draft he can send. If you don't have the phone number, ask for it first.
+- ivr_checkin is for "call to check in" / "call to check out" / "check me in" / "check me out": the commercial contractor's automated check-in phone line, not a customer. Call it straight away with no confirm step; Jake asking is the instruction. action is "in" or "out" from what he said; if he did not say which, ask. Pass the job's tracking number if he gave one; on a check-out with no number, omit it and the server reuses today's check-in. Never call place_call for this. Reply with the tool's note in one line.
 - place_call queues an outbound call for Lisa and dials it immediately. BEFORE calling this tool, always stop and confirm with Jake in plain text: state who you will call, their phone number, and the exact reason in one sentence, then ask "Shall I have Lisa call them?" Wait for his explicit yes. If he edits the reason or adds context, incorporate it and confirm again. Once he says yes, call place_call — it dials right away. The about field tells Lisa WHY she is calling; write it as one clear sentence. Put anything she may confirm (an appointment time, a part that arrived) in context, never money amounts.
 - delete_document pops a confirmation dialog. Delete one document at a time. Bulk deletes are not done from the chat.
 
@@ -568,6 +569,21 @@ export const AGENT_TOOLS = [
         document_id: { type: 'string', description: 'Optional estimate or invoice the call is about.' },
       },
       required: ['phone', 'about'],
+    },
+  },
+  {
+    name: 'ivr_checkin',
+    description:
+      "Check Jake IN or OUT of a commercial contractor's job by calling their automated check-in phone line. Dials immediately; a robot caller presses the keys (language, Jake's PIN, tracking number, in/out, 1 technician). " +
+      'Use for "call to check in", "call to check out", "check me in/out". The line number and PIN are saved on the server. The result arrives by email after the call.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['in', 'out'], description: 'Check in or check out.' },
+        tracking: { type: 'string', description: "The job's tracking number (digits). Omit on a check-out to reuse today's check-in." },
+        note: { type: 'string', description: 'Optional: which job or address, for the record.' },
+      },
+      required: ['action'],
     },
   },
   {

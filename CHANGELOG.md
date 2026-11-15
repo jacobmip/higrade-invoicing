@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.0 — 2026-11-15
+
+- Check in / check out from the AI chat (Jake: "if it's wired in to lisa i should be able to do it from my app"). Say "call to check in, tracking 12345678" or "call to check out" and the new `ivr_checkin` tool dials the commercial contractor's check-in robot line straight away. A one-off Vapi assistant presses the keys: English, Jake's IVR PIN, the tracking number, in or out, and 1 technician. A check-out with no tracking number reuses today's check-in.
+  - Server half in `api/_lib/ivr-checkin.js`, reached through `/api/sms-inbound` `op: 'ivr_checkin'` (admin session). Number and PIN come from settings `checkin_ivr_phone` / `checkin_ivr_pin` and never reach the phone.
+  - No approval link, calling hours or outbound switch: it never talks to a customer. The `call_queue` row is filed as `calling` with `queued_by 'checkin'`, so the runner never dials or redials it. The result is emailed by AI-OS `outbound_call.py check` like every outbound call.
+
 ## v1.81.8 — 2026-11-14
 
 - One memory for every Lisa (Jake: "the phone and text and yelp Lisa always need to share the same memory for everything ... Lisa is true to the same memory for every interaction with customers"). Migration 127:
