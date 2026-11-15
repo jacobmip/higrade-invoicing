@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.5 — 2026-11-15
+
+- Check-in caller rewritten as a silent keypad (Jake: "lisa shouldn't talk at all just listen to the robot on the phone and enter the keys necessary when asked"). Every turn is a key press, end call, or nothing. It waits for the whole menu, maps each prompt (language, PIN, tracking, in/out, technicians, read-back confirmations) to a value, re-enters once on a rejected entry, and hangs up rather than guess. Silence timeout 30 to 45 s for hold music.
+- `ivr_checkin` reads the numbers off the screenshot Jake attaches: new `phone`, `pin` and `extra` (store number, location code and the like) inputs. Saved settings are only the fallback now.
+
 ## v1.82.4 — 2026-11-15
 
 - `tests/lisa/phone.mjs`: the transfer check flags only an offer ("let me see if I can get someone", "I can connect you"), not "I'm not able to connect you". Live phone prompt 6/6 twice. Test only.

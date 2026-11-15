@@ -727,7 +727,10 @@ async function placeCall(input, ctx) {
 // check in" is the instruction, and the call talks only to a robot.
 async function ivrCheckin(input) {
   try {
-    const r = await checkinCall({ action: input.action, tracking: input.tracking, note: input.note });
+    const r = await checkinCall({
+      action: input.action, tracking: input.tracking, phone: input.phone, pin: input.pin,
+      extra: input.extra, note: input.note,
+    });
     return { ok: true, dialing: true, call_id: r.id, tracking: r.tracking, note: r.text };
   } catch (e) {
     return { error: e.message || String(e) };

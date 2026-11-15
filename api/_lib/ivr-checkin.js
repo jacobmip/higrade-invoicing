@@ -9,8 +9,10 @@
 // and these jobs run at night.
 //
 // Reached through /api/sms-inbound `op: 'ivr_checkin'`, admin session only.
-// The line's number and the PIN live in settings (checkin_ivr_phone,
-// checkin_ivr_pin) and never leave the server.
+// Jake usually attaches a screenshot with every number on it; the chat reads
+// phone, pin, tracking and any other values (extra) off it. settings
+// checkin_ivr_phone / checkin_ivr_pin are the fallback when it has none. The
+// PIN is never written to call_queue.
 //
 // The prompt is mirrored in AI-OS scripts/outbound_call.py (`checkin`), which
 // Lani on Telegram runs. Change one, change the other. That script's `check`
@@ -30,26 +32,53 @@ function toE164(raw) {
   return '';
 }
 
-export function checkinAssistant(action, pin, tracking) {
+// extra: [{ label, value }] for anything else on Jake's screenshot (store
+// number, work order, location code). Values are digits only.
+export function cleanExtra(extra) {
+  return (Array.isArray(extra) ? extra : [])
+    .map(e => ({
+      label: String(e?.label || '').replace(/[^\w #/().-]/g, '').trim().slice(0, 40),
+      value: String(e?.value || '').replace(/[^\d*#]/g, '').slice(0, 30),
+    }))
+    .filter(e => e.label && e.value)
+    .slice(0, 6);
+}
+
+export function checkinPrompt(action, pin, tracking, extra = []) {
   const word = action === 'in' ? 'IN' : 'OUT';
-  const prompt = `You are placing a call to an automated phone system (IVR) to check a plumbing technician ${word} of a job. No human will answer. You navigate the menus by pressing keypad keys with the dtmf tool. You do not speak unless a prompt explicitly asks for a spoken answer and gives no keypad option.
+  const other = extra.map(e => `- ${e.label}: ${e.value}`).join('\n');
+  return `You are a silent keypad on a phone call with an automated phone system (an IVR robot). You are checking a plumbing technician ${word} of a commercial job. No human is on the line and nobody can hear you.
 
-The answers you have:
-- Language: English.
-- IVR PIN: ${pin}
-- Tracking number: ${tracking}
+ABSOLUTE RULE: NEVER SPEAK. Every reply you give is exactly one of: a dtmf tool call, an endCall tool call, or nothing at all. Never write any words. No greeting, no "okay", no "one moment", no reading numbers aloud, no answering a question out loud. If the robot says "say or press", you press. If it only accepts speech, stay silent and let it repeat; it almost always falls back to keys.
+
+YOUR VALUES
+- Language: English
 - Checking: ${word}
-- Number of technicians on the job: 1
+- PIN: ${pin}
+- Tracking number: ${tracking}
+- Number of technicians: 1${other ? `\n${other}` : ''}
 
-How to behave:
-- Listen to the whole prompt before pressing anything. Press only the keys that prompt asks for.
-- When it asks for the PIN or tracking number, send the digits in one dtmf call. Add # at the end only if the prompt says to end with pound or #.
-- When it asks whether you are checking in or out, press the key it names for ${action === 'in' ? 'check in' : 'check out'}.
-- When it asks how many technicians, press 1 (add # only if told to).
-- When it reads back a value and asks you to confirm, confirm only if it matches the answers above exactly. If it does not match, choose the option to re-enter it.
-- If it asks for something not in your answers, or the same prompt fails twice, end the call. Do not guess.
-- Once the system confirms the check-${action} was recorded, listen for any confirmation number, then end the call.
-- Never press 0 for an operator.`;
+HOW TO WORK EACH PROMPT
+1. Wait until the robot has finished the whole prompt or menu before pressing anything. Menus list several options; hear them all. Hold music or silence means wait.
+2. Work out what it is asking for, match it to one value above, and press exactly that:
+   - Language menu: press the key it names for English.
+   - PIN, technician PIN, IVR PIN, password, access code: press the PIN.
+   - Tracking number, tracking ID, work order number: press the tracking number.
+   - Check in or check out, arriving or leaving, start or end work: press the key it names for check ${action}. Never pick the other one.
+   - How many technicians, how many techs or people on site: press 1.
+   - Any other value listed under YOUR VALUES: press it when that one is asked for.
+   - A menu that does not match any of the above (for example "for a new work order press 3"): do not press. Wait for the next prompt.
+3. Send a whole number in one dtmf call. Add # at the end only when the robot says to finish with the pound key. Never add * unless told to.
+4. When it reads a value back and asks you to confirm: compare it digit by digit with your value. Press its confirm key only if it matches exactly; otherwise press its re-enter key and enter the value again.
+5. If the robot plays the same prompt again right after you entered something, it did not take it: enter it once more. If it fails a second time, end the call.
+6. If it asks for something you have no value for, do not guess. Wait for it to repeat once in case there is a skip option, then end the call.
+7. Never press 0, and never ask for an operator, agent or representative.
+8. When the robot confirms the check ${action} was recorded, let it finish reading any confirmation number, then end the call. If it says goodbye or hangs up, you are done.`;
+}
+
+export function checkinAssistant(action, pin, tracking, extra = []) {
+  const word = action === 'in' ? 'IN' : 'OUT';
+  const prompt = checkinPrompt(action, pin, tracking, extra);
   return {
     name: `HI Grade IVR Check-${action}`,
     firstMessageMode: 'assistant-waits-for-user',
@@ -65,7 +94,8 @@ How to behave:
       waitSeconds: 1.5,
       transcriptionEndpointingPlan: { onPunctuationSeconds: 0.8, onNoPunctuationSeconds: 2.5, onNumberSeconds: 2 },
     },
-    silenceTimeoutSeconds: 30,
+    // Hold music and long pauses are normal on these lines.
+    silenceTimeoutSeconds: 45,
     maxDurationSeconds: 300,
     voicemailDetection: { provider: 'vapi', enabled: false },
     analysisPlan: {
@@ -108,11 +138,13 @@ export async function placeCheckinCall(user, params) {
     reused = true;
   }
 
+  // Values read off Jake's screenshot win; settings are the fallback.
   const phone = toE164(params.phone || (await getSetting('checkin_ivr_phone')));
-  const pin = String((await getSetting('checkin_ivr_pin')) || '').replace(/\D/g, '');
+  const pin = String(params.pin || (await getSetting('checkin_ivr_pin')) || '').replace(/\D/g, '');
+  const extra = cleanExtra(params.extra);
   const vapiKey = process.env.VAPI_PRIVATE_KEY || (await getSetting('vapi_private_key'));
-  if (!phone) return { status: 409, body: { error: 'No check-in line number saved (settings.checkin_ivr_phone).' } };
-  if (!pin) return { status: 409, body: { error: 'No IVR PIN saved (settings.checkin_ivr_pin).' } };
+  if (!phone) return { status: 409, body: { error: 'Which number do I call? None on the screenshot and none saved (settings.checkin_ivr_phone).' } };
+  if (!pin) return { status: 409, body: { error: 'What is the PIN? None on the screenshot and none saved (settings.checkin_ivr_pin).' } };
   if (!vapiKey) return { status: 500, body: { error: 'Vapi key missing' } };
 
   // Filed as already 'calling' so the queue runner never sees it as queued.
@@ -138,7 +170,7 @@ export async function placeCheckinCall(user, params) {
       body: JSON.stringify({
         phoneNumberId: PHONE_NUMBER_ID,
         customer: { number: phone, name: 'Check-in line' },
-        assistant: checkinAssistant(action, pin, tracking),
+        assistant: checkinAssistant(action, pin, tracking, extra),
       }),
     });
     const vd = await vr.json().catch(() => ({}));
