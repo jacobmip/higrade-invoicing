@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.8 — 2026-11-15
+
+- Bottom nav: went much bigger and brighter on the active-tab glow (v1.82.7's was still too subtle) — wider blur radii, higher opacity, and a hotter near-white core on both the icon and label.
+
 ## v1.82.7 — 2026-11-15
 
 - Bottom nav: widened the active-tab glow further (bigger blur radii on both the icon drop-shadow and label text-shadow layers).
