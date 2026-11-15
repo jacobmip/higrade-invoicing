@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.3 — 2026-11-15
+
+- `scripts/vapi-sync.mjs` ran: phone Lisa's live prompt is the generated one (19,360 characters, gpt-4.1, tools kept) and `rescheduleAppointment` points at `op: 'phone_move_visit'`. Replay against the live assistant: 6/6.
+- `tests/lisa/phone.mjs`: `--model=claude-haiku-5-5` runs the cases on another model to compare (Vapi offers Claude up to Haiku 5.5, not Sonnet or Opus 5.5). Haiku scored 3/6 on 2026-11-15, partly because it tries to call the tools the test writes into the prompt, so phone Lisa stays on gpt-4.1 until a test call says otherwise. "I can't connect you" no longer counts as offering a transfer.
+
 ## v1.82.2 — 2026-11-15
 
 - One Lisa on the phone too (Jake, 2026-11-14: "Lisa is true to the same memory for every interaction with customers"). Phone Lisa's Vapi prompt is now generated from `api/_lib/lisa-soul.js`, the rulebook text and Yelp use, by `scripts/phone-prompt.mjs` (date block + `lisaIdentity('phone')` + a phone-only section on voice, tools and call flow + `lisaSoul()`). `node scripts/vapi-sync.mjs` installs it (backs up the assistant first; `--dry` prints it). Run it after any change to `lisa-soul.js`.

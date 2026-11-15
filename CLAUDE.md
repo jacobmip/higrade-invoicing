@@ -105,6 +105,8 @@ Read this file first. It captures everything an AI agent needs to safely continu
     `tests/lisa/run.sh --all`, then `node scripts/vapi-sync.mjs` (needs
     `/Users/jake/AIOS/.env`), or the phone drifts from text and Yelp again.
     Phone mistakes become cases in `tests/lisa/phone.mjs`.
+    Phone stays on gpt-4.1 (v1.82.3): Vapi offers Claude only up to Haiku 5.5,
+    which scored 3/6 in `--model=claude-haiku-5-5`; switch only after a test call.
 
 ## Stack
 - **Frontend**: Vite + React. `src/App.jsx` is ~10,300 lines and intentionally monolithic; a few later features live in their own files (see Source layout).

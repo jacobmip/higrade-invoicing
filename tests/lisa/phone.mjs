@@ -19,6 +19,9 @@ const ASSISTANT = 'a8879563-6da0-44cb-94bb-41cb37c78005';
 const CALLER = '+18085550147';
 const GREETING = 'Aloha! Thanks so much for calling High Grade Plumbing, this is Lisa. How can I help you today?';
 const LIVE = process.argv.includes('--live');
+// --model=claude-haiku-5-5 tries the cases on another model (anthropic), to compare before switching.
+const MODEL_ARG = (process.argv.find((a) => a.startsWith('--model=')) || '').slice(8);
+const MODEL = MODEL_ARG ? { provider: MODEL_ARG.startsWith('claude') ? 'anthropic' : 'openai', model: MODEL_ARG } : { provider: 'openai', model: 'gpt-4.1' };
 const only = process.argv.filter((a) => !a.startsWith('--')).slice(2)[0];
 
 const vapiKey = (await sb('settings?select=value&key=eq.vapi_private_key'))[0].value;
@@ -105,7 +108,7 @@ const CASES = [
     tools: { lookupClient: NOT_FOUND },
     turns: ['Hi, is Jacob there? I need to speak with the owner about your Google listing.'],
     must: [],
-    mustNot: [[/let me see if I can get someone|connect you|transfer/i, 'offered to transfer']],
+    mustNot: [[/let me see if I can get someone|(?<!(n'?t|not|unable to) )(connect you|transfer you)/i, 'offered to transfer']],
     expect: 'Does not confirm who the owner is or transfer. Politely declines a sales call or offers to take a message.',
   },
   {
@@ -152,7 +155,7 @@ await Promise.all(list.map(async (c) => {
   const problems = [];
   let reply = '';
   try {
-    const out = vapi('POST', '/chat', { assistant: { model: { provider: 'openai', model: 'gpt-4.1', messages: [{ role: 'system', content: system }] } }, input });
+    const out = vapi('POST', '/chat', { assistant: { model: { ...MODEL, messages: [{ role: 'system', content: system }] } }, input });
     reply = (out.output || []).filter((m) => m.role === 'assistant' && m.content).map((m) => m.content).join(' ');
   } catch (e) { problems.push(`chat failed: ${e.message}`); }
   if (reply) {
@@ -164,5 +167,5 @@ await Promise.all(list.map(async (c) => {
   if (problems.length) failed++;
   console.log(`\n${problems.length ? 'FAIL' : 'PASS'}  ${c.name}\n  reply: ${reply || '(none)'}${problems.map((p) => `\n  - ${p}`).join('')}`);
 }));
-console.log(`\n${list.length - failed}/${list.length} passed (${LIVE ? 'live prompt' : 'new prompt'})`);
+console.log(`\n${list.length - failed}/${list.length} passed (${LIVE ? 'live prompt' : 'new prompt'}, ${MODEL.model})`);
 process.exit(failed ? 1 : 0);
