@@ -14704,6 +14704,10 @@ export default function App() {
   ];
   // Highlight "More" when the active tab lives inside the sheet.
   const isMoreTab = moreNavItems.some(n => n.id === tab);
+  // Which of the N nav slots (main items + the trailing "More" slot) is lit,
+  // so the sliding indicator circle knows where to animate to.
+  const navSlotCount = mainNavItems.length + 1;
+  const activeNavSlot = isMoreTab ? mainNavItems.length : mainNavItems.findIndex(n => n.id === tab);
 
   return (
     <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: textZoom === 1 ? "0 auto" : "0", position: "relative", paddingTop: globalHeaderH, paddingBottom: NAV_CLEARANCE, zoom: textZoom }}>
@@ -14975,30 +14979,30 @@ export default function App() {
           display: "flex", alignItems: "center", gap: 2, padding: 4,
           zIndex: 1300, boxShadow: "0 10px 26px rgba(0,0,0,0.30), 0 2px 6px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.15)",
         }}>
+          {activeNavSlot > -1 && (
+            <span aria-hidden="true" style={{
+              position: "absolute", top: 4, left: `${((activeNavSlot + 0.5) / navSlotCount) * 100}%`,
+              transform: "translateX(-50%)", width: 36, height: 36, borderRadius: "50%",
+              background: "rgba(232,98,42,0.88)",
+              boxShadow: "0 3px 10px rgba(232,98,42,0.5), inset 0 1px 1px rgba(255,255,255,0.3)",
+              transition: "left .32s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              zIndex: 0, pointerEvents: "none",
+            }} />
+          )}
           {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ position: "relative", flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: tab === n.id ? "0 0 8px rgba(255,200,150,0.85), 0 0 17px rgba(232,98,42,0.85)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", transition: "text-shadow .15s" }}>
-              {tab === n.id && (
-                <span aria-hidden="true" style={{ position: "absolute", inset: -4, borderRadius: 22, background: "radial-gradient(ellipse 56% 60% at 50% 40%, rgba(255,210,160,0.9) 0%, rgba(255,140,60,0.85) 30%, rgba(232,98,42,0.7) 52%, rgba(232,98,42,0) 76%)", filter: "blur(6px)", zIndex: 0, pointerEvents: "none" }} />
-              )}
-              <span style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                <span style={{ position: "relative", display: "inline-flex" }}>
-                  <Icon name={n.icon} size={20} color="#f0f2f8" />
-                  {n.id === "messages" && unreadMessages > 0 && (
-                    <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
-                  )}
-                </span>
-                {n.label}
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ position: "relative", zIndex: 1, flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <span style={{ position: "relative", display: "inline-flex" }}>
+                <Icon name={n.icon} size={20} color="#f0f2f8" />
+                {n.id === "messages" && unreadMessages > 0 && (
+                  <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
+                )}
               </span>
+              {n.label}
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ position: "relative", flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: isMoreTab ? "0 0 8px rgba(255,200,150,0.85), 0 0 17px rgba(232,98,42,0.85)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", transition: "text-shadow .15s" }}>
-            {isMoreTab && (
-              <span aria-hidden="true" style={{ position: "absolute", inset: -4, borderRadius: 22, background: "radial-gradient(ellipse 56% 60% at 50% 40%, rgba(255,210,160,0.9) 0%, rgba(255,140,60,0.85) 30%, rgba(232,98,42,0.7) 52%, rgba(232,98,42,0) 76%)", filter: "blur(6px)", zIndex: 0, pointerEvents: "none" }} />
-            )}
-            <span style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-              <Icon name="more" size={20} color="#f0f2f8" />
-              More
-            </span>
+          <button onClick={() => setShowMore(true)} style={{ position: "relative", zIndex: 1, flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <Icon name="more" size={20} color="#f0f2f8" />
+            More
           </button>
         </nav>
       )}
