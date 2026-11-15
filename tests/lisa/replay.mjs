@@ -30,7 +30,7 @@ async function grade(c, reply) {
   });
   const j = await res.json().catch(() => ({}));
   const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-  try { return JSON.parse(text.replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch { return { pass: false, reason: `grader output unreadable: ${text.slice(0, 120) || res.status}` }; }
+  try { return JSON.parse((text.match(/\{[^{}]*"pass"[^{}]*\}/g) || []).pop() || text); } catch { return { pass: false, reason: `grader output unreadable: ${text.slice(0, 120) || res.status}` }; }
 }
 
 const only = process.argv[2];

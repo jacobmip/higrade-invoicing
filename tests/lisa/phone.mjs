@@ -143,7 +143,7 @@ async function grade(c, reply) {
   });
   const j = await res.json().catch(() => ({}));
   const text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-  try { return JSON.parse(text.replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch { return { pass: false, reason: `grader unreadable: ${text.slice(0, 120)}` }; }
+  try { return JSON.parse((text.match(/\{[^{}]*"pass"[^{}]*\}/g) || []).pop() || text); } catch { return { pass: false, reason: `grader unreadable: ${text.slice(0, 120)}` }; }
 }
 
 const list = CASES.filter((c) => !only || c.name.includes(only));

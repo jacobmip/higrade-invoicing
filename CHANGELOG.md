@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.6 — 2026-11-15
+
+- Lisa tests read the grader's verdict even when it reasons before its JSON (a live phone case was marked FAIL as "grader unreadable" while Lisa's answer was right). Test only.
+- Live end-to-end check on a throwaway client (808-555-1188), all removed after: a phone move changed the calendar event and the estimate (9 AM to 1 PM); a 4 PM move was refused as outside hours; three texts in 2 s got one reply; a caption plus two photo texts got one reply that thanked them for the photos.
+
 ## v1.82.5 — 2026-11-15
 
 - Check-in caller rewritten as a silent keypad (Jake: "lisa shouldn't talk at all just listen to the robot on the phone and enter the keys necessary when asked"). Every turn is a key press, end call, or nothing. It waits for the whole menu, maps each prompt (language, PIN, tracking, in/out, technicians, read-back confirmations) to a value, re-enters once on a rejected entry, and hangs up rather than guess. Silence timeout 30 to 45 s for hold music.

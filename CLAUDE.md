@@ -108,6 +108,8 @@ Read this file first. It captures everything an AI agent needs to safely continu
     what she said, not a negated phrase: see v1.82.4).
     Phone stays on gpt-4.1 (v1.82.3): Vapi offers Claude only up to Haiku 5.5,
     which scored 3/6 in `--model=claude-haiku-5-5`; switch only after a test call.
+    The grader may reason before its JSON; tests take the last {"pass": ...} object
+    in its text (v1.82.6), so "grader unreadable" means no verdict at all.
 
 ## Stack
 - **Frontend**: Vite + React. `src/App.jsx` is ~10,300 lines and intentionally monolithic; a few later features live in their own files (see Source layout).
