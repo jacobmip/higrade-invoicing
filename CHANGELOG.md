@@ -1,5 +1,13 @@
 # HI Grade Invoicing — Changelog
 
+## v1.84.0 — 2026-11-15
+
+- **Online payment surcharge is now OFF.** Customers paying an invoice online are no longer charged the 3.49% + $0.49 processing fee. It was live from launch until today and was applied to 16 payments, $400.33 in all.
+- Why: two of the three compliance conditions the code claimed to meet were not met. Visa caps a surcharge at 3% and we were at 3.49%, which is also above our own cost of acceptance (PayPal's card rate is 2.99%). And surcharging debit cards is barred nationwide, but nothing in `api/paypal-*.js` ever excluded debit, because the fee is set at order creation before the buyer picks how to pay. Disclosure, the third condition, was genuinely met.
+- Turned off in three places so they cannot drift apart again: a `surcharge_enabled=false` row in `settings`, the frontend default in `src/App.jsx`, and the server default in `api/paypal-create-order.js`. The server default mattered because `api/public-invoice.js` does not return settings and RLS blocks anon reads, so the public viewer computes the fee from the frontend default while the server computes it from the database. Those two agreed only because both defaults read 3.49%.
+- The surcharge machinery is kept, not deleted. It can be re-enabled from Settings, but not compliantly until debit detection is solved.
+- Costs about $336/yr at current online volume. Stripe ACH work is underway, which bills 0.8% capped at $5 and removes most of the reason to surcharge at all.
+
 ## v1.83.0 — 2026-11-15
 
 - Bottom nav: new active-tab style, a solid orange circle behind the icon that slides smoothly (spring easing) from tab to tab, Instagram-style, instead of the glow. The glow from v1.82.9/v1.82.10 is preserved in git history (tag: v1.82.10) if we want to go back to it.

@@ -122,7 +122,9 @@ function calcLateFee(inv, totals, settings) {
 
 function calcSurcharge(amount, settings) {
   const en = settings.surcharge_enabled;
-  const enabled = (en == null || en === '') ? true : (en === 'true' || en === true);
+  // Default OFF (2026-11-15). If the settings row is ever deleted this must
+  // not silently resume surcharging. See src/App.jsx for why.
+  const enabled = (en == null || en === '') ? false : (en === 'true' || en === true);
   if (!enabled) return 0;
   const sp = settings.surcharge_pct;
   const sf = settings.surcharge_flat;
