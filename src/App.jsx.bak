@@ -14976,9 +14976,9 @@ export default function App() {
           zIndex: 1300, boxShadow: "0 10px 26px rgba(0,0,0,0.30), 0 2px 6px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -1px 0 rgba(0,0,0,0.15)",
         }}>
           {mainNavItems.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: tab === n.id ? "0 1px 2px rgba(0,0,0,0.5), 0 0 9px rgba(232,98,42,0.95), 0 0 16px rgba(232,98,42,0.6)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "text-shadow .15s" }}>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: tab === n.id ? "0 1px 2px rgba(0,0,0,0.5), 0 0 5px rgba(255,154,89,1), 0 0 12px rgba(232,98,42,1), 0 0 20px rgba(232,98,42,0.8)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "text-shadow .15s" }}>
               <span style={{ position: "relative", display: "inline-flex" }}>
-                <Icon name={n.icon} size={20} color="#f0f2f8" style={{ filter: tab === n.id ? "drop-shadow(0 0 5px rgba(232,98,42,0.95)) drop-shadow(0 0 10px rgba(232,98,42,0.6))" : "none", transition: "filter .15s" }} />
+                <Icon name={n.icon} size={20} color="#f0f2f8" style={{ filter: tab === n.id ? "drop-shadow(0 0 3px rgba(255,154,89,1)) drop-shadow(0 0 8px rgba(232,98,42,1)) drop-shadow(0 0 14px rgba(232,98,42,0.8))" : "none", transition: "filter .15s" }} />
                 {n.id === "messages" && unreadMessages > 0 && (
                   <span style={{ position: "absolute", top: -4, right: -9, minWidth: 15, height: 15, borderRadius: 8, background: "#e53935", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unreadMessages > 99 ? "99+" : unreadMessages}</span>
                 )}
@@ -14986,8 +14986,8 @@ export default function App() {
               {n.label}
             </button>
           ))}
-          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: isMoreTab ? "0 1px 2px rgba(0,0,0,0.5), 0 0 9px rgba(232,98,42,0.95), 0 0 16px rgba(232,98,42,0.6)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "text-shadow .15s" }}>
-            <Icon name="more" size={20} color="#f0f2f8" style={{ filter: isMoreTab ? "drop-shadow(0 0 5px rgba(232,98,42,0.95)) drop-shadow(0 0 10px rgba(232,98,42,0.6))" : "none", transition: "filter .15s" }} />
+          <button onClick={() => setShowMore(true)} style={{ flex: 1, padding: "8px 2px 7px", background: "transparent", border: "none", borderRadius: 20, cursor: "pointer", color: "#f0f2f8", textShadow: isMoreTab ? "0 1px 2px rgba(0,0,0,0.5), 0 0 5px rgba(255,154,89,1), 0 0 12px rgba(232,98,42,1), 0 0 20px rgba(232,98,42,0.8)" : "0 1px 2px rgba(0,0,0,0.5)", fontSize: 9, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, transition: "text-shadow .15s" }}>
+            <Icon name="more" size={20} color="#f0f2f8" style={{ filter: isMoreTab ? "drop-shadow(0 0 3px rgba(255,154,89,1)) drop-shadow(0 0 8px rgba(232,98,42,1)) drop-shadow(0 0 14px rgba(232,98,42,0.8))" : "none", transition: "filter .15s" }} />
             More
           </button>
         </nav>
