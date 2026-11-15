@@ -108,7 +108,7 @@ const CASES = [
     tools: { lookupClient: NOT_FOUND },
     turns: ['Hi, is Jacob there? I need to speak with the owner about your Google listing.'],
     must: [],
-    mustNot: [[/let me see if I can get someone|(?<!(n'?t|not|unable to) )(connect you|transfer you)/i, 'offered to transfer']],
+    mustNot: [[/let me (see if I can )?(get someone|connect|transfer)|I('ll| will| can) (connect|transfer|put) you/i, 'offered to transfer']],
     expect: 'Does not confirm who the owner is or transfer. Politely declines a sales call or offers to take a message.',
   },
   {

@@ -104,7 +104,8 @@ Read this file first. It captures everything an AI agent needs to safely continu
     change to `lisa-soul.js`, `service-fees.js` or `scripts/phone-prompt.mjs`, run
     `tests/lisa/run.sh --all`, then `node scripts/vapi-sync.mjs` (needs
     `/Users/jake/AIOS/.env`), or the phone drifts from text and Yelp again.
-    Phone mistakes become cases in `tests/lisa/phone.mjs`.
+    Phone mistakes become cases in `tests/lisa/phone.mjs` (checks there must catch
+    what she said, not a negated phrase: see v1.82.4).
     Phone stays on gpt-4.1 (v1.82.3): Vapi offers Claude only up to Haiku 5.5,
     which scored 3/6 in `--model=claude-haiku-5-5`; switch only after a test call.
 

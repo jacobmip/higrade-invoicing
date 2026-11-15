@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.4 — 2026-11-15
+
+- `tests/lisa/phone.mjs`: the transfer check flags only an offer ("let me see if I can get someone", "I can connect you"), not "I'm not able to connect you". Live phone prompt 6/6 twice. Test only.
+
 ## v1.82.3 — 2026-11-15
 
 - `scripts/vapi-sync.mjs` ran: phone Lisa's live prompt is the generated one (19,360 characters, gpt-4.1, tools kept) and `rescheduleAppointment` points at `op: 'phone_move_visit'`. Replay against the live assistant: 6/6.
