@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.82.9 — 2026-11-15
+
+- Bottom nav glow: rebuilt it as an actual blurred orange halo blob behind the icon/label instead of stacking text-shadow and drop-shadow layers on thin icon strokes (which render faint on some WebKit builds, which is likely why v1.82.7/v1.82.8 looked unchanged even after a hard relaunch). Dramatically more visible now.
+
 ## v1.82.8 — 2026-11-15
 
 - Bottom nav: went much bigger and brighter on the active-tab glow (v1.82.7's was still too subtle) — wider blur radii, higher opacity, and a hotter near-white core on both the icon and label.
