@@ -1617,14 +1617,29 @@ VENMO
 // Default monthly finance-charge rate when an invoice goes >30 days past due.
 const DEFAULT_LATE_FEE_RATE = 1.5; // percent per month
 
-// Online payment surcharge defaults. Mirrors PayPal's standard processing
-// fee for US business accounts (3.49% + $0.49 per transaction). Hawaii
-// allows merchants to surcharge credit card payments as long as the rate
-// doesn't exceed actual cost of acceptance, the surcharge is disclosed up
-// front, and debit cards are excluded — all of which we do.
+// Online payment surcharge. OFF by default since 2026-11-15.
+//
+// It ran at 3.49% + $0.49 (PayPal's wallet rate, not its card rate) from
+// launch until then. The comment that used to sit here claimed three
+// compliance conditions were met. Two were not:
+//   * Visa caps a surcharge at 3% of the transaction. 3.49% is over that,
+//     and over our own cost of acceptance too, since PayPal's card rate is
+//     2.99% + $0.49.
+//   * Surcharging debit is barred nationwide (Durbin plus network rules).
+//     Nothing in api/paypal-*.js ever excluded debit. The fee is computed at
+//     order creation, before the buyer picks a funding source, so PayPal
+//     cannot tell us the card type in time to exclude it.
+// Disclosure, the third condition, was genuinely met.
+//
+// 16 payments were surcharged in all, $400.33 collected. Turning it off
+// costs about $336/yr at current online volume.
+//
+// The machinery is kept rather than deleted so it can be re-enabled from
+// Settings. Do not turn it back on without solving debit detection first.
+// Stripe ACH (0.8%, capped at $5) removes most of the reason to want it.
 const DEFAULT_SURCHARGE_PCT = 3.49;   // percent of balance
 const DEFAULT_SURCHARGE_FLAT = 0.49;  // flat fee in dollars
-const DEFAULT_SURCHARGE_ENABLED = true;
+const DEFAULT_SURCHARGE_ENABLED = false;
 
 // Substitute the supported template variables. Missing values fall back to
 // sensible blanks so customer-facing copy never shows raw placeholders.
