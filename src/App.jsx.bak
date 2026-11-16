@@ -14656,6 +14656,49 @@ export default function App() {
     setData(d => ({ ...d, savedItems: d.savedItems.filter(i => i.id !== id) }));
   };
 
+  // 4 main tabs visible in the bottom bar; the rest live inside a "More" sheet.
+  // Computed up here (not after the early returns below) because it owns
+  // Hook calls (useRef/useState/useLayoutEffect), which must run on every
+  // render in the same order — a Hook declared only on the post-login
+  // render path would mismatch the hook list built on the splash/login
+  // renders and crash the whole app blank.
+  const mainNavItems = [
+    { id: "invoices",  label: "Invoices",  icon: "invoice"   },
+    { id: "estimates", label: "Estimates", icon: "estimates" },
+    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
+    ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : []),
+    { id: "clients",   label: "Clients",   icon: "clients"   },
+  ];
+  const moreNavItems = [
+    ...(isAdmin ? [{ id: "calls", label: "Calls", icon: "phone" }] : []),
+    { id: "timeclock", label: "Time Clock", icon: "clock"    },
+    { id: "payments",  label: "Payments",   icon: "dollar"   },
+    { id: "pricebook", label: "Price Book", icon: "items"    },
+    { id: "reports",   label: "Reports",    icon: "chart"    },
+    { id: "expenses",  label: "Expenses",   icon: "receipt"  },
+    { id: "settings", label: "Settings", icon: "settings" },
+    { id: "recently-deleted", label: "Recently Deleted", icon: "trash" },
+  ];
+  // Highlight "More" when the active tab lives inside the sheet.
+  const isMoreTab = moreNavItems.some(n => n.id === tab);
+  // Which of the N nav slots (main items + the trailing "More" slot) is lit,
+  // so the sliding indicator circle knows where to animate to.
+  const activeNavSlot = isMoreTab ? mainNavItems.length : mainNavItems.findIndex(n => n.id === tab);
+  // Measure the actual button the indicator should sit behind (not a %
+  // guess) so it's pixel-centered regardless of nav padding/gaps/width.
+  const navBtnRefs = useRef([]);
+  const [indicatorRect, setIndicatorRect] = useState(null);
+  useLayoutEffect(() => {
+    const btn = navBtnRefs.current[activeNavSlot];
+    if (!btn) { setIndicatorRect(null); return; }
+    const size = 46;
+    setIndicatorRect({
+      left: btn.offsetLeft + btn.offsetWidth / 2,
+      top: btn.offsetTop + btn.offsetHeight / 2 - size / 2,
+      size,
+    });
+  }, [activeNavSlot, keyboardOpen]);
+
   // Public routes — must come before the auth + dbLoading gates so customers
   // can view/sign/pay invoices without an owner account.
   if (window.location.pathname === "/sign") return <SignaturePage />;
@@ -14698,44 +14741,6 @@ export default function App() {
   // counts stay consistent with what the user actually sees in tab content.
   const invoices = (filteredData.invoices || []).filter(i => i.type !== "estimate");
   const estimates = (filteredData.invoices || []).filter(i => i.type === "estimate");
-
-  // 4 main tabs visible in the bottom bar; the rest live inside a "More" sheet.
-  const mainNavItems = [
-    { id: "invoices",  label: "Invoices",  icon: "invoice"   },
-    { id: "estimates", label: "Estimates", icon: "estimates" },
-    { id: "calendar",  label: "Calendar",  icon: "calendar"  },
-    ...(isAdmin ? [{ id: "messages", label: "Messages", icon: "messages" }] : []),
-    { id: "clients",   label: "Clients",   icon: "clients"   },
-  ];
-  const moreNavItems = [
-    ...(isAdmin ? [{ id: "calls", label: "Calls", icon: "phone" }] : []),
-    { id: "timeclock", label: "Time Clock", icon: "clock"    },
-    { id: "payments",  label: "Payments",   icon: "dollar"   },
-    { id: "pricebook", label: "Price Book", icon: "items"    },
-    { id: "reports",   label: "Reports",    icon: "chart"    },
-    { id: "expenses",  label: "Expenses",   icon: "receipt"  },
-    { id: "settings", label: "Settings", icon: "settings" },
-    { id: "recently-deleted", label: "Recently Deleted", icon: "trash" },
-  ];
-  // Highlight "More" when the active tab lives inside the sheet.
-  const isMoreTab = moreNavItems.some(n => n.id === tab);
-  // Which of the N nav slots (main items + the trailing "More" slot) is lit,
-  // so the sliding indicator circle knows where to animate to.
-  const activeNavSlot = isMoreTab ? mainNavItems.length : mainNavItems.findIndex(n => n.id === tab);
-  // Measure the actual button the indicator should sit behind (not a %
-  // guess) so it's pixel-centered regardless of nav padding/gaps/width.
-  const navBtnRefs = useRef([]);
-  const [indicatorRect, setIndicatorRect] = useState(null);
-  useLayoutEffect(() => {
-    const btn = navBtnRefs.current[activeNavSlot];
-    if (!btn) { setIndicatorRect(null); return; }
-    const size = 46;
-    setIndicatorRect({
-      left: btn.offsetLeft + btn.offsetWidth / 2,
-      top: btn.offsetTop + btn.offsetHeight / 2 - size / 2,
-      size,
-    });
-  }, [activeNavSlot, keyboardOpen]);
 
   return (
     <div ref={rootRef} style={{ fontFamily: "'Barlow', sans-serif", background: LIGHT, minHeight: "100dvh", maxWidth: textZoom === 1 ? 480 : "none", width: `${100 / textZoom}%`, margin: textZoom === 1 ? "0 auto" : "0", position: "relative", paddingTop: globalHeaderH, paddingBottom: NAV_CLEARANCE, zoom: textZoom }}>
