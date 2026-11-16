@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.4 — 2026-11-15
+
+- Yelp: only Lisa's first reply is signed ("Mahalo, / Lisa / HI Grade Plumbing LLC / 808-444-5450"). Follow-ups and the 2-minute nudge go out with no sign-off, like a running chat (Jake, Alexander's thread: "Mahalo, Lisa" at the end of every message is unrealistic). Code appended it, so the fix is in `polish()`, the prompt, and AI-OS `scripts/yelp_followup.py`.
+- New `tests/lisa/yelp-format.mjs` (no model call), run first by `tests/lisa/run.sh --all`. `polish()` is exported for it.
+
 ## v1.85.3 — 2026-11-15
 
 - **Hotfix: v1.85.2 crashed to a white screen for anyone already logged in.** The new nav-indicator hooks (`useRef`/`useState`/`useLayoutEffect`) were declared after the app's auth/loading early-returns, so an already-authenticated session called more hooks on the dashboard render than it did on the splash render before it — React's "rendered more hooks than previous render" crash, with nothing above the component to catch it. Moved the whole nav-items/indicator block above the early-return gates so the same hooks run in the same order on every render, logged in or not. Verified the login/splash path loads clean with no console errors; the sliding-indicator math itself is unchanged.

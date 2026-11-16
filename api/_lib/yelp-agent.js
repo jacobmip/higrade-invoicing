@@ -219,7 +219,7 @@ ${isFirstReply ? `- First reply: if there is an ESTIMATE range, lead with it and
 ` : ''}
 FORMAT
 - ${isFirstReply ? '2 to 4 sentences.' : '1 to 3 sentences.'} One idea per sentence.
-- No sign-off, it is added for you. ${isFirstReply ? 'No greeting either: "Aloha <name>," is added for you.' : 'No greeting: this is a running conversation.'}
+- ${isFirstReply ? 'No sign-off and no greeting: "Aloha <name>," and the signature are added for you.' : 'No greeting and no sign-off: this is a running conversation, write it like a text from the front desk. Never end with "Mahalo, Lisa" or your name.'}
 - Do not write the more-or-less-in-person line after a price, it is added for you.
 ${estimate || '\n(No ESTIMATE this turn: give no job price. The service call fee is still fine.)'}
 ${catalog ? `\nSERVICE NAMES (only for "services"; never a source of prices):\n${catalog}` : ''}
@@ -260,7 +260,7 @@ function parseJson(text) {
 // the draft must not be sent.
 // Topics Lisa never quotes sight unseen, and the ceiling on any auto quote.
 
-function polish(raw, { firstName, isFirstReply, prices, estimate = null }) {
+export function polish(raw, { firstName, isFirstReply, prices, estimate = null }) {
   // The checks every channel shares (lisa-guards.js) run on the body; this
   // function adds only what is Yelp's: the Aloha opener and the sign-off.
   const cleaned = cleanStyle(raw);
@@ -280,7 +280,9 @@ function polish(raw, { firstName, isFirstReply, prices, estimate = null }) {
   body = body.replace(GREETING, '').replace(/^[a-z]/, (c) => c.toUpperCase()).trim();
   if (isFirstReply && !hadAloha) flags.push('model omitted the Aloha opener, added it');
 
-  const signOff = isFirstReply ? '\n\nMahalo,\n\n' + SIGNATURE : '\n\nMahalo,\nLisa';
+  // Only the first reply is signed. After that it is a running chat, and
+  // "Mahalo, Lisa" under every line read as a bot (Jake, 2026-11-15, Alexander).
+  const signOff = isFirstReply ? '\n\nMahalo,\n\n' + SIGNATURE : '';
   const assemble = (b) => (isFirstReply ? `${firstName ? `Aloha ${firstName},` : 'Aloha,'}\n\n` : '') + b.trim() + signOff;
 
   // Never send a message with nothing in it but greeting and sign-off.
@@ -902,7 +904,7 @@ export async function setYelpPhone(p) {
 /**
  * A short follow-up for a Yelp lead who has not answered Lisa yet (the
  * 2-minute bump in AI-OS scripts/yelp_followup.py). Drafts only: the caller
- * posts it, appends the sign-off, and calls saveBumpSent().
+ * posts it as is (no sign-off: it is mid-conversation) and calls saveBumpSent().
  * POST /api/sms-inbound { op: 'yelp_bump', lead_id } (webhook secret)
  * Returns null when there is no thread or Lisa has not replied yet.
  */
@@ -933,7 +935,7 @@ Write a 1 to 2 sentence follow-up that:
 - does NOT repeat anything we already said
 - names the job or timing they mentioned, e.g. "Still have openings this week for pressure regulator work if you would like to get it on the schedule."
 - ends with a soft call to action: reply here, or call or text 808-444-5450
-- has no greeting and no sign-off (both are added for you)
+- has no greeting and no sign-off: it is mid-conversation
 - has no em dashes, en dashes, emoji, exclamation marks, prices, or promised arrival times
 - never mentions AI, automation, Yelp or software, and never names the owner
 

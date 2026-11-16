@@ -10,5 +10,5 @@ set +a
 export SUPABASE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY:-$SUPABASE_SERVICE_KEY}"
 cd "$(dirname "$0")/../.."
 if [ "$1" = "--phone" ]; then shift; exec node --no-warnings tests/lisa/phone.mjs "$@"; fi
-if [ "$1" = "--all" ]; then shift; node --no-warnings tests/lisa/replay.mjs "$@"; a=$?; node --no-warnings tests/lisa/phone.mjs "$@"; b=$?; exit $((a|b)); fi
+if [ "$1" = "--all" ]; then shift; node --no-warnings tests/lisa/yelp-format.mjs; y=$?; node --no-warnings tests/lisa/replay.mjs "$@"; a=$?; node --no-warnings tests/lisa/phone.mjs "$@"; b=$?; exit $((y|a|b)); fi
 node --no-warnings tests/lisa/replay.mjs "$@"
