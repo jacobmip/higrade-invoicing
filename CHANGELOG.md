@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.7 — 2026-11-15
+
+- Estimate agent: electric water heater range raised from $1,400-$2,200 to $2,000-$3,000 to match the Honolulu market (HomeBlue puts a standard 50 gal electric at $2,300-$3,100; Jake's EST1207 high-rise swap is $2,600). The website estimator (`higrade-site`, plugin copy of `higrade-homepage-template.php`) got the same range in the same pass.
+
 ## v1.85.6 — 2026-11-15
 
 - Check-in calls can be played back (Jake: "i have no way to listen to that check in phone call"). The chat's reply now carries a listen link (`/?call=<vapi id>`, the same deep link the call email uses), and `placeCheckinCall()` writes the `vapi_calls` row the moment it dials (`recordCall()`), so the call is in the Calls tab as "Check-in line" and plays as soon as it ends instead of after the AI-OS check cron. The cron still merges in summary and transcript.
