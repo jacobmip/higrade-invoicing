@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.5 — 2026-11-15
+
+- Bottom nav: the sliding indicator is now a rounded square (16px corners) instead of a full circle, Instagram-style. Same position/size math as v1.85.3, just the shape.
+
 ## v1.85.4 — 2026-11-15
 
 - Yelp: only Lisa's first reply is signed ("Mahalo, / Lisa / HI Grade Plumbing LLC / 808-444-5450"). Follow-ups and the 2-minute nudge go out with no sign-off, like a running chat (Jake, Alexander's thread: "Mahalo, Lisa" at the end of every message is unrealistic). Code appended it, so the fix is in `polish()`, the prompt, and AI-OS `scripts/yelp_followup.py`.
