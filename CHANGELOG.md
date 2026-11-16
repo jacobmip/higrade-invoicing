@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.9 — 2026-11-16
+
+- Estimate agent: three ranges raised to the Honolulu market after a full price book review. Tankless $3,200-$5,500 to $3,500-$6,000. Sewer spot repair $1,800-$4,500 to $2,500-$6,000. Gas line $800-$2,500 to $1,200-$3,500 (Jake's gas line jobs have a $2,575 median). Website estimator changed in the same pass. The `saved_items` price book was updated directly in Supabase the same day (24 prices, 11 duplicates removed, 5 duplicate categories merged).
+
 ## v1.85.8 — 2026-11-15
 
 - Estimate agent: gas water heater 40-50 gal range raised from $1,800-$2,800 to $2,400-$3,600 (HomeBlue Honolulu: $2,300-$3,500 for a standard 50 gal gas, 2022 data). Gas now sits above electric ($2,000-$3,000, v1.85.7), as venting and gas work cost more. Website estimator changed in the same pass.
