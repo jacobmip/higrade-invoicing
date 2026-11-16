@@ -16,6 +16,7 @@ import { buildPrompt, sb } from '../../scripts/phone-prompt.mjs';
 import { day } from './cases.mjs';
 
 const ASSISTANT = 'a8879563-6da0-44cb-94bb-41cb37c78005';
+const OUTBOUND = 'ebd3867d-6226-403d-8a0b-60ba41357159';
 const CALLER = '+18085550147';
 const GREETING = 'Aloha! Thanks so much for calling High Grade Plumbing, this is Lisa. How can I help you today?';
 const LIVE = process.argv.includes('--live');
@@ -39,6 +40,10 @@ function vapi(method, path, body) {
 }
 
 const prompt = LIVE ? vapi('GET', `/assistant/${ASSISTANT}`).model.messages[0].content : await buildPrompt();
+const outPrompt = LIVE ? vapi('GET', `/assistant/${OUTBOUND}`).model.messages[0].content : await buildPrompt({ outbound: true });
+// An outbound case carries `call`: the call_queue fields Vapi fills into the prompt.
+const outGreeting = (c) => `Aloha, this is Lisa calling from High Grade Plumbing. Am I speaking with ${c.call.client_name}?`;
+const fill = (text, call) => Object.entries(call).reduce((t, [k, v]) => t.replaceAll(`{{${k}}}`, v), text);
 const d1 = day(1), d2 = day(2);
 const spoken = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
 const NOT_FOUND = { found: false, appointments: [], recent_contact: [] };
@@ -140,6 +145,50 @@ const CASES = [
     mustNot: [[/(team|someone)[^.?!]{0,30}(will|'ll) (email|reach out|send)/i, 'promised the team would send the email']],
     expect: 'Gives the email higradeplumbing@gmail.com clearly (spelled out for the phone is fine) and asks him to send the drawings. No promise that someone will email him first.',
   },
+  // Outbound: Lisa placed the call (call_queue). Same soul, same tools.
+  {
+    name: 'outbound: Yelp follow-up opens with the reason',
+    why: 'Outbound Lisa ran on a separate hand-written prompt until 2026-11-16 (Jake: "the same Lisa with all the context")',
+    call: { client_name: 'Dana', purpose: 'Following up on their Yelp request about: a slow-filling toilet that needs a fill valve. Goal is to get them on the schedule.', context: '', invoice_id: '' },
+    tools: { lookupClient: { found: false, appointments: [], recent_contact: [{ when: 'yesterday', channel: 'yelp', from: 'customer', said: 'Hi, my toilet takes forever to fill. Can someone take a look? I\'m in Kaimuki.' }] } },
+    turns: ['Yeah, this is Dana.'],
+    must: [[/toilet|yelp/i, 'did not say why she called']],
+    mustNot: [[/what can (I|we) help|how can I help/i, 'asked what they need'], [/what('?s| is) (the )?problem|what'?s going on/i, 'asked for the problem it already knows']],
+    expect: 'Says she is following up on the Yelp message about the slow-filling toilet and asks if now is an okay time, or offers to get it scheduled.',
+  },
+  {
+    name: 'outbound: agreed time is booked, not penciled',
+    why: 'Valente, 2026-11-16: outbound Lisa said "I\'ll pencil you in" and "the team will confirm"',
+    call: { client_name: 'Dana', purpose: 'Following up on their Yelp request about: a slow-filling toilet that needs a fill valve. Goal is to get them on the schedule.', context: '', invoice_id: '' },
+    tools: {
+      lookupClient: { found: false, appointments: [], recent_contact: [{ when: 'yesterday', channel: 'yelp', from: 'customer', said: 'Hi, my toilet takes forever to fill. Can someone take a look? I\'m at 3615 Waialae Ave.' }] },
+      checkAvailability: free(d1, '8 AM to 12 PM'), createEstimate: { ok: true },
+    },
+    turns: ['Yeah, this is Dana.', ['assistant', 'Hi Dana! I\'m following up on your Yelp message about the slow-filling toilet. Is now an okay time?'], 'Sure. Can someone come tomorrow at 9?', ['assistant', 'Let me check. Yes, 9 AM tomorrow is open. Still at 3615 Waialae Ave?'], 'Yep, that\'s it.'],
+    must: [[/all set|booked|see you/i, 'did not confirm the booking plainly']],
+    mustNot: [],
+    expect: 'Confirms tomorrow at 9 AM at 3615 Waialae Ave as booked, plainly, then a warm goodbye.',
+  },
+  {
+    name: 'outbound: contractor asks where to email drawings',
+    why: 'Valente, 2026-11-16: outbound Lisa said the team would email him instead of giving the address',
+    call: { client_name: 'Valente', purpose: 'Following up on their Yelp request about: plumbing bid for a commercial build-out at 275 Beach Walk. Goal is to get them on the schedule.', context: '', invoice_id: '' },
+    tools: { lookupClient: { found: false, appointments: [], recent_contact: [{ when: 'today', channel: 'yelp', from: 'customer', said: 'Need a plumbing bid for a build-out at 275 Beach Walk, Alphabet Construction. Bids due Nov 19.' }] } },
+    turns: ['This is Valente.', ['assistant', 'Hi Valente! I\'m following up on your Yelp message about the bid for 275 Beach Walk. Is now an okay time?'], 'Yeah. Where can I send you the drawings?'],
+    must: [[/H,? ?I,? grade plumbing|higradeplumbing/i, 'did not give the email'], [/gmail/i, 'did not say gmail']],
+    mustNot: [[/team will (email|send)|send (you )?(the|our) (email|address)/i, 'promised to send the address later']],
+    expect: 'Gives the email, H I grade plumbing at gmail dot com, asks for the drawings and the deadline, and does not push a site visit first.',
+  },
+  {
+    name: 'outbound: asked not to call again',
+    why: 'Outbound calls must stop the moment someone asks',
+    call: { client_name: 'Dana', purpose: 'Following up on their Yelp request about: a slow-filling toilet. Goal is to get them on the schedule.', context: '', invoice_id: '' },
+    tools: { lookupClient: { found: false, appointments: [], recent_contact: [] } },
+    turns: ['Who? No, please don\'t call this number again.'],
+    must: [[/of course|sorry|apolog|won'?t|make sure/i, 'did not agree to stop calling']],
+    mustNot: [[/\?\s*$/, 'kept asking questions']],
+    expect: 'Apologises or says of course, will make sure of it, and says goodbye. No questions, no pitch.',
+  },
 ];
 
 async function grade(c, reply) {
@@ -149,7 +198,7 @@ async function grade(c, reply) {
     body: JSON.stringify({
       model: 'claude-opus-5-5', max_tokens: 2000, output_config: { effort: 'low' },
       system: 'You grade one spoken reply a plumbing company phone receptionist (Lisa) gave a caller. Be strict about facts: any contradiction of the tool results, any question about something already known, any invented promise is a FAIL. Tone nitpicks are not failures. Answer with JSON only: {"pass": true|false, "reason": "one sentence"}',
-      messages: [{ role: 'user', content: `TOOL RESULTS SHE HAD\n${JSON.stringify(c.tools)}\n\nTHE CALL\n${c.turns.map((t) => (Array.isArray(t) ? `Lisa: ${t[1]}` : `Caller: ${t}`)).join('\n')}\n\nHER REPLY\n${reply}\n\nA GOOD REPLY\n${c.expect}` }],
+      messages: [{ role: 'user', content: `${c.call ? `LISA PLACED THIS CALL. Why: ${c.call.purpose}\n\n` : ''}TOOL RESULTS SHE HAD\n${JSON.stringify(c.tools)}\n\nTHE CALL\n${c.turns.map((t) => (Array.isArray(t) ? `Lisa: ${t[1]}` : `Caller: ${t}`)).join('\n')}\n\nHER REPLY\n${reply}\n\nA GOOD REPLY\n${c.expect}` }],
     }),
   });
   const j = await res.json().catch(() => ({}));
@@ -160,9 +209,9 @@ async function grade(c, reply) {
 const list = CASES.filter((c) => !only || c.name.includes(only));
 let failed = 0;
 await Promise.all(list.map(async (c) => {
-  const system = prompt.replaceAll('{{customer.number}}', CALLER)
+  const system = (c.call ? fill(outPrompt, c.call) : prompt).replaceAll('{{customer.number}}', CALLER)
     + `\n\nTOOL RESULTS (this is a test transcript: these tools already ran on this call, use their results)\n${Object.entries(c.tools).map(([k, v]) => `${k} returned: ${JSON.stringify(v)}`).join('\n')}`;
-  const input = [{ role: 'assistant', content: GREETING }, ...c.turns.map((t) => (Array.isArray(t) ? { role: t[0], content: t[1] } : { role: 'user', content: t }))];
+  const input = [{ role: 'assistant', content: c.call ? outGreeting(c) : GREETING }, ...c.turns.map((t) => (Array.isArray(t) ? { role: t[0], content: t[1] } : { role: 'user', content: t }))];
   const problems = [];
   let reply = '';
   try {

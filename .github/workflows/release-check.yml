@@ -73,6 +73,14 @@ jobs:
           VERSION=$(grep -oE 'APP_VERSION[^"]*"[^"]+"' src/version.js | grep -oE '"[^"]+"' | tr -d '"')
           echo "Version in this push: $VERSION"
 
+          # v1.85.10 shipped an empty src/version.js: a blank version matched every
+          # "## v" heading, the check went green and Vercel failed the build.
+          if [ -z "$VERSION" ]; then
+            echo ""
+            echo "FAILED: no APP_VERSION could be read from src/version.js. Is the file empty?"
+            exit 1
+          fi
+
           if ! grep -q "## v${VERSION}" CHANGELOG.md; then
             echo ""
             echo "FAILED: src/version.js says $VERSION but CHANGELOG.md has no '## v${VERSION}' section."

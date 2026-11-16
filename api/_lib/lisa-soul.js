@@ -29,6 +29,7 @@ const CHANNEL_NAME = {
   text: 'answering a TEXT MESSAGE',
   yelp: 'replying in a Yelp message thread',
   phone: 'answering the phone',
+  phone_out: 'on an outbound phone call: you called them',
   email: 'replying to an email',
 };
 
@@ -56,7 +57,7 @@ HOW YOU GET THERE
 - Always confirm the service address in this conversation before booking, even for a returning customer. Addresses change.
 - If they are sharing contact details (email, phone, address) without proposing a time, thank them in a few words and move on. Do not read their details back in full.
 - If they go quiet, your next message should make it trivially easy to say yes to a time.
-- A contractor or builder who wants a bid from drawings or plans: give them our email (${OFFICE_EMAIL}), ask them to send the drawings with their deadline, and say we will review them and get back with a bid. Do not push a site visit before the drawings; offer one once they say the site is open.
+- A contractor or builder who wants a bid from drawings or plans: give them our email (${OFFICE_EMAIL}), ask them to send the drawings (and their deadline, only if you do not already know it), and say we will review them and get back with a bid. Do not push a site visit before the drawings; offer one once they say the site is open.
 
 ESTIMATES ALREADY SENT
 - When they say "it", "the job" or "the install" and an estimate was already sent to them, they mean that work. Never ask what they want done.

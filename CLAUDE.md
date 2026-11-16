@@ -104,6 +104,10 @@ Read this file first. It captures everything an AI agent needs to safely continu
     change to `lisa-soul.js`, `service-fees.js` or `scripts/phone-prompt.mjs`, run
     `tests/lisa/run.sh --all`, then `node scripts/vapi-sync.mjs` (needs
     `/Users/jake/AIOS/.env`), or the phone drifts from text and Yelp again.
+    Outbound Lisa (v1.85.11, assistant ebd3867d) is the same build with
+    `buildPrompt({ outbound: true })`: only the start of the call differs (why we
+    called from `{{purpose}}`/`{{context}}`, someone else answering, voicemail,
+    do-not-call). vapi-sync patches both and gives outbound inbound's tool list.
     Phone mistakes become cases in `tests/lisa/phone.mjs` (checks there must catch
     what she said, not a negated phrase: see v1.82.4).
     Phone stays on gpt-4.1 (v1.82.3): Vapi offers Claude only up to Haiku 5.5,

@@ -8,8 +8,8 @@
 // A customer rule goes in api/_lib/lisa-soul.js, never here. Run this after
 // any change to lisa-soul.js or service-fees.js, or the phone drifts again.
 //
-//   node scripts/vapi-sync.mjs --dry     print the prompt, change nothing
-//   node scripts/vapi-sync.mjs           back up the assistant, then patch it
+//   node scripts/vapi-sync.mjs --dry     print the prompt, change nothing (--outbound for that one)
+//   node scripts/vapi-sync.mjs           back up both assistants, then patch them
 //
 // Needs SUPABASE_URL + SUPABASE_SERVICE_KEY (/Users/jake/AIOS/.env). The Vapi
 // key, the lead secret and the webhook secret are read from Supabase settings.
@@ -22,6 +22,9 @@ import { join } from 'node:path';
 import { buildPrompt, sb } from './phone-prompt.mjs';
 
 const ASSISTANT = 'a8879563-6da0-44cb-94bb-41cb37c78005';
+// Outbound Lisa (call_queue, api/approve-call.js, AI-OS scripts/outbound_call.py).
+// Same soul and the same tools as inbound; only the start of the call differs.
+const OUTBOUND = 'ebd3867d-6226-403d-8a0b-60ba41357159';
 const MOVE_URL = 'https://higrade-invoicing.vercel.app/api/sms-inbound';
 const DRY = process.argv.includes('--dry');
 
@@ -40,9 +43,10 @@ function vapi(method, path, body) {
 }
 
 const prompt = await buildPrompt();
+const outPrompt = await buildPrompt({ outbound: true });
 if (DRY) {
-  console.log(prompt);
-  console.error(`\n${prompt.length} characters`);
+  console.log(process.argv.includes('--outbound') ? outPrompt : prompt);
+  console.error(`\ninbound ${prompt.length} characters, outbound ${outPrompt.length}`);
   process.exit(0);
 }
 
@@ -79,10 +83,18 @@ for (const id of before.model.toolIds || []) {
   console.log('rescheduleAppointment now moves visits itself');
 }
 
-const messages = [{ ...before.model.messages[0], content: prompt }, ...before.model.messages.slice(1)];
-vapi('PATCH', `/assistant/${ASSISTANT}`, { model: { ...before.model, messages } });
-const after = vapi('GET', `/assistant/${ASSISTANT}`);
-const ok = after.model.messages[0].content === prompt && JSON.stringify(after.model.toolIds) === JSON.stringify(before.model.toolIds)
-  && after.model.model === before.model.model;
-console.log(`prompt ${prompt.length} chars, model ${after.model.provider}/${after.model.model}, tools kept: ${ok}`);
-if (!ok) process.exit(1);
+function install(id, text, cur, toolIds) {
+  const messages = [{ ...cur.model.messages[0], content: text }, ...cur.model.messages.slice(1)];
+  vapi('PATCH', `/assistant/${id}`, { model: { ...cur.model, messages, toolIds } });
+  const after = vapi('GET', `/assistant/${id}`);
+  const ok = after.model.messages[0].content === text && JSON.stringify(after.model.toolIds) === JSON.stringify(toolIds)
+    && after.model.model === cur.model.model;
+  console.log(`${after.name}: prompt ${text.length} chars, model ${after.model.provider}/${after.model.model}, ${toolIds.length} tools, ok: ${ok}`);
+  return ok;
+}
+
+const inOk = install(ASSISTANT, prompt, before, before.model.toolIds);
+const outBefore = vapi('GET', `/assistant/${OUTBOUND}`);
+writeFileSync(join(process.env.BACKUP_DIR || tmpdir(), `vapi_outbound_${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.json`), JSON.stringify(outBefore, null, 1));
+const outOk = install(OUTBOUND, outPrompt, outBefore, before.model.toolIds);
+if (!inOk || !outOk) process.exit(1);

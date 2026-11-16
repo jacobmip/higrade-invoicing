@@ -1,5 +1,14 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.11 — 2026-11-16
+
+- Outbound Lisa is now the same Lisa. Her Vapi prompt is built from `lisa-soul.js` like inbound's (`buildPrompt({ outbound: true })`), not the old hand-written one, so she books for real instead of "penciling in", follows every customer rule, and has the same tools: reschedule, cancel and transfer were missing. Only the opening differs: why we called, someone else answering, voicemail, do-not-call. `vapi-sync.mjs` patches both assistants.
+- A queued call about a job on file books its visit with `createEstimate`, with the document number at the start of `p_problem` so the office can join them.
+- The phone catalog read 120 price book items; the book has 138 now, so names late in the alphabet were missing. Limit raised to 400.
+- Contractor rule: ask for their deadline only when we do not already know it.
+- `src/version.js` was committed empty in v1.85.10, so Vercel failed that build and the live app stayed on v1.85.9: the known-name fix never deployed until now (the phone email fix was live, it is synced to Vapi directly). Restored, and the release check now fails when it cannot read a version.
+- Four outbound replay cases in `tests/lisa/phone.mjs` (a case with `call` runs on the outbound prompt).
+
 ## v1.85.10 — 2026-11-16
 
 - Lisa gives our email (higradeplumbing@gmail.com) whenever a customer asks where to send drawings, plans or photos, on every channel (`OFFICE_EMAIL` in `lisa-soul.js`). Phone Lisa spells it "H, I, grade plumbing" so it is not typed as "high". A contractor wanting a bid from drawings gets the email and a promise of a bid, not a push for a site visit. Valente asked four times on Yelp and once on a call and was told "the team will email you".
