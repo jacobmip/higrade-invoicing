@@ -76,7 +76,8 @@ export async function checkinCall({ action, tracking, phone, pin, extra, note })
     phone: digits(phone) || undefined, pin: digits(pin) || undefined, extra, note,
   });
   const reuse = out.reusedTracking ? ' (same tracking as this morning)' : '';
-  return { ...out, text: `Calling the check-in line to check ${a.toUpperCase()}, tracking ${out.tracking}${reuse}. The result comes by email when the call ends.` };
+  const listen = out.listenUrl ? ` Listen once it ends (about 2 minutes): ${out.listenUrl}` : '';
+  return { ...out, text: `Calling the check-in line to check ${a.toUpperCase()}, tracking ${out.tracking}${reuse}.${listen} It is also in the Calls tab, and the result comes by email.` };
 }
 
 export async function approveLisaCall({ callToken }) {

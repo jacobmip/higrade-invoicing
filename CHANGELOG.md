@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.6 — 2026-11-15
+
+- Check-in calls can be played back (Jake: "i have no way to listen to that check in phone call"). The chat's reply now carries a listen link (`/?call=<vapi id>`, the same deep link the call email uses), and `placeCheckinCall()` writes the `vapi_calls` row the moment it dials (`recordCall()`), so the call is in the Calls tab as "Check-in line" and plays as soon as it ends instead of after the AI-OS check cron. The cron still merges in summary and transcript.
+
 ## v1.85.5 — 2026-11-15
 
 - Bottom nav: the sliding indicator is now a rounded square (16px corners) instead of a full circle, Instagram-style. Same position/size math as v1.85.3, just the shape.

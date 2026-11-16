@@ -731,7 +731,7 @@ async function ivrCheckin(input) {
       action: input.action, tracking: input.tracking, phone: input.phone, pin: input.pin,
       extra: input.extra, note: input.note,
     });
-    return { ok: true, dialing: true, call_id: r.id, tracking: r.tracking, note: r.text };
+    return { ok: true, dialing: true, call_id: r.id, tracking: r.tracking, listen_url: r.listenUrl, note: r.text };
   } catch (e) {
     return { error: e.message || String(e) };
   }

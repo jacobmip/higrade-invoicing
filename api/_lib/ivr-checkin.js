@@ -20,6 +20,9 @@
 // every call_queue row; queued_by 'checkin' tells it never to redial.
 
 import { getSetting, supabaseUrl } from './sms.js';
+import { recordCall } from './call-recording.js';
+
+const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 
 // The advertised line, same as outbound Lisa (AI-OS outbound_call.py).
 const PHONE_NUMBER_ID = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID || '8bba3841-c1bc-4cf9-847f-2e07377fbd73';
@@ -194,5 +197,9 @@ export async function placeCheckinCall(user, params) {
   console.log('[ivr-checkin]', { id, action, by: user?.email || user?.id, vapiCallId, vapiError });
 
   if (!vapiCallId) return { status: 502, body: { error: `Check-in call did not go out: ${vapiError}`, id } };
-  return { status: 200, body: { ok: true, id, action, tracking, reusedTracking: reused, vapiCallId } };
+  // List it in the Calls tab now, so the recording plays as soon as the call
+  // ends. AI-OS `outbound_call.py check` later merges in summary and transcript.
+  await recordCall({ callId: vapiCallId, phone, direction: 'outbound', callQueueId: id });
+  const listenUrl = `${APP_URL}/?call=${vapiCallId}`;
+  return { status: 200, body: { ok: true, id, action, tracking, reusedTracking: reused, vapiCallId, listenUrl } };
 }
