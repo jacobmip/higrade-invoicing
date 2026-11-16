@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.3 — 2026-11-15
+
+- **Hotfix: v1.85.2 crashed to a white screen for anyone already logged in.** The new nav-indicator hooks (`useRef`/`useState`/`useLayoutEffect`) were declared after the app's auth/loading early-returns, so an already-authenticated session called more hooks on the dashboard render than it did on the splash render before it — React's "rendered more hooks than previous render" crash, with nothing above the component to catch it. Moved the whole nav-items/indicator block above the early-return gates so the same hooks run in the same order on every render, logged in or not. Verified the login/splash path loads clean with no console errors; the sliding-indicator math itself is unchanged.
+
 ## v1.85.2 — 2026-11-15
 
 - Bottom nav: fixed the sliding orange circle (v1.83.0) being too small and off-center. It was positioned by a percentage-of-nav-width guess, which didn't account for the nav's own padding and the gaps between buttons, so it drifted away from the icon it's supposed to sit behind. Now it measures the actual active button's position with refs (`offsetLeft`/`offsetTop`) and centers on it exactly, at a larger 46px (was 36px). Verified against all 6 tab positions including the end slots.
