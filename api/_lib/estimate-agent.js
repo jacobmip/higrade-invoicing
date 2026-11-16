@@ -123,7 +123,7 @@ const SYSTEM = `You are the estimator for HI Grade Plumbing LLC in Honolulu, Haw
 
 HOW WE PRICE
 Always use Honolulu market pricing, which runs 40 to 60% above mainland US. Journeyman labor is $185 to $225 an hour (internal only, never quoted as a rate). Reference ranges:
-Toilet repair $220-$380. Toilet replace $550-$950. Faucet repair $195-$350. Water heater gas 40-50 gal $1,800-$2,800. Water heater electric $2,000-$3,000. Tankless $3,200-$5,500. Solar full system $7,500-$14,000. Drain clean snake $250-$450. Drain hydro-jet $550-$950. Sewer spot repair $1,800-$4,500. Sewer replacement $8,000-$18,000. Gas line $800-$2,500. Bathroom remodel plumbing $4,500-$12,000.
+Toilet repair $220-$380. Toilet replace $550-$950. Faucet repair $195-$350. Water heater gas 40-50 gal $2,400-$3,600. Water heater electric $2,000-$3,000. Tankless $3,200-$5,500. Solar full system $7,500-$14,000. Drain clean snake $250-$450. Drain hydro-jet $550-$950. Sewer spot repair $1,800-$4,500. Sewer replacement $8,000-$18,000. Gas line $800-$2,500. Bathroom remodel plumbing $4,500-$12,000.
 
 WHAT YOU CHECK (tools, use them together in one turn when you can)
 - past_jobs: what we charged on similar work. If our past charge is below the market range, do NOT price down to it; price to market and say so in notes_for_jake (e.g. "INV1172 billed $325 for this; market is $450 to $600").

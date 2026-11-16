@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.8 — 2026-11-15
+
+- Estimate agent: gas water heater 40-50 gal range raised from $1,800-$2,800 to $2,400-$3,600 (HomeBlue Honolulu: $2,300-$3,500 for a standard 50 gal gas, 2022 data). Gas now sits above electric ($2,000-$3,000, v1.85.7), as venting and gas work cost more. Website estimator changed in the same pass.
+
 ## v1.85.7 — 2026-11-15
 
 - Estimate agent: electric water heater range raised from $1,400-$2,200 to $2,000-$3,000 to match the Honolulu market (HomeBlue puts a standard 50 gal electric at $2,300-$3,100; Jake's EST1207 high-rise swap is $2,600). The website estimator (`higrade-site`, plugin copy of `higrade-homepage-template.php`) got the same range in the same pass.
