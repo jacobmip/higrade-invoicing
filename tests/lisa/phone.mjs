@@ -129,6 +129,17 @@ const CASES = [
     mustNot: [[/\b(4|5|6)(:00)? ?(pm|p\.m\.)/i, 'offered a start after 3 PM']],
     expect: 'Says emergencies 24/7 and regular visits start weekdays between 8 AM and 3 PM, and offers a time.',
   },
+  {
+    name: 'caller asks where to email drawings',
+    why: 'Valente, 2026-11-16: wanted an email for drawings; outbound Lisa said the team would reach out with it',
+    tools: { lookupClient: NOT_FOUND },
+    turns: [
+      "Hi, I need a bid on a water pipe project. I have the drawings. What email can I send them to?",
+    ],
+    must: [[/higradeplumbing|\bH,? ?I,? grade plumbing/i, 'did not give the email (spelled HI)'], [/gmail/i, 'did not say gmail']],
+    mustNot: [[/(team|someone)[^.?!]{0,30}(will|'ll) (email|reach out|send)/i, 'promised the team would send the email']],
+    expect: 'Gives the email higradeplumbing@gmail.com clearly (spelled out for the phone is fine) and asks him to send the drawings. No promise that someone will email him first.',
+  },
 ];
 
 async function grade(c, reply) {

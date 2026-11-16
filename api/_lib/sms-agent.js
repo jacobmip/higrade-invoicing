@@ -19,6 +19,7 @@
 // Raw fetch rather than the Anthropic SDK, matching api/ai.js and
 // api/ai-estimator.js, which is also all this file needs.
 
+import { knownNameForPhone } from './known-name.js';
 import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split.js';
 import { otherChannelsBlock, clientFactsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
@@ -723,7 +724,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
       const lsecret = await leadSecret();
       filed = await rpc('create_estimate_from_lead', {
         p_secret: lsecret,
-        p_name: out.name || clientName || 'Text lead - no name given',
+        p_name: out.name || clientName || await knownNameForPhone(phone) || 'Text lead - no name given',
         p_phone: phone,
         p_caller_id: phone,
         p_address: out.address || null,

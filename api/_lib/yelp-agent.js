@@ -780,7 +780,7 @@ export async function draftYelpReply(p) {
     if (gotEmail) row.email = gotEmail;
     if (profileId) {
       const saved = await saveClientContact({
-        clientId: profileId, fullName: d.name, email: gotEmail || row.email, phone: row.phone, address: row.address, addressParts: addrParts,
+        clientId: profileId, fullName: d.name || row.first_name, email: gotEmail || row.email, phone: row.phone, address: row.address, addressParts: addrParts,
       });
       if (saved.length) out.profile_saved = saved;
     }

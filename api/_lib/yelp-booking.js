@@ -19,6 +19,7 @@
 import { clientAddressFields } from './address-verify.js';
 import { fixFiledAddress, splitAddress, clientFieldsFrom } from './address-split.js';
 import { rpc, getSetting } from './sms.js';
+import { isPlaceholderName } from './known-name.js';
 import { calendarFetch, getCredentials } from './gcal.js';
 
 function supabaseUrl() {
@@ -442,8 +443,15 @@ export async function saveClientContact({ clientId, fullName, email, phone, addr
   const addr = String(address || '').trim();
   // A verified address lands in the editor's own fields (v1.78.0).
   if (addr && !c.address1) Object.assign(patch, clientAddressFields(addressParts) || (splitAddress(addr) && clientFieldsFrom(splitAddress(addr))) || { address1: addr.slice(0, 300) });
-  const parts = String(fullName || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
-  if (parts.length >= 2 && parts.every((w) => /^[A-Za-z][A-Za-z'.-]*$/.test(w)) && !c.last_name && !c.company_name) {
+  const parts = String(fullName || '').trim().replace(/[.,]+$/, '').replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  // A placeholder ("Missed call - no name given") gives way to any real name,
+  // even a first name alone (Valente, 2026-11-16).
+  if (isPlaceholderName(c.name) && parts.length && parts.every((w) => /^[A-Za-z][A-Za-z'.-]*$/.test(w))) {
+    const nm = parts.map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+    patch.name = nm;
+    patch.first_name = nm.split(' ')[0];
+    if (parts.length >= 2) patch.last_name = nm.split(' ').slice(1).join(' ');
+  } else if (parts.length >= 2 && parts.every((w) => /^[A-Za-z][A-Za-z'.-]*$/.test(w)) && !c.last_name && !c.company_name) {
     const first = parts[0], last = parts.slice(1).join(' ');
     const known = String(c.first_name || String(c.name || '').split(' ')[0] || '').toLowerCase();
     if (!known || known === first.toLowerCase()) {

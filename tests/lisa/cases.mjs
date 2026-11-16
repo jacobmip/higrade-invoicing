@@ -172,6 +172,19 @@ export function cases() {
       must: [[/photo|picture|pic/i, 'did not acknowledge the photos']],
       expect: 'One short reply that thanks her for the photos (they help the tech come prepared) and keeps the existing 8 AM visit. No questions.',
     },
+    {
+      name: 'contractor asks where to email drawings',
+      why: 'Valente, 2026-11-16: asked four times on Yelp and once on a call where to email drawings for a bid; Lisa said "the team will email you" and pushed a site visit',
+      thread: [
+        msg('inbound', 'Good morning, my team and I are looking for a bid on a water pipe install at 275 Beach Walk. We have the drawings. Nobody is on site yet. Where can I email them?', 0.02),
+      ],
+      facts: { name: 'Valente', first_name: 'Valente', mobile: '+18085550148' },
+      history: [],
+      visits: [],
+      mustNot: [[/(team|someone)[^.?!]{0,30}(will|'ll) (email|reach|send)/i, 'promised the team would email instead of giving the address']],
+      must: [[/higradeplumbing@gmail\.com/i, 'did not give the email']],
+      expect: 'Gives higradeplumbing@gmail.com plainly, asks him to send the drawings (and the deadline), says we will review them for a bid. Does not push a site visit since nobody is on site.',
+    },
   ].map((c) => ({
     ...c,
     historyText: [clientFacts(c.facts), historyBlock(c.history), c.extraHistory].filter(Boolean).join('\n\n'),

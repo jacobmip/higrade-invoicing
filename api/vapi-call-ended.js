@@ -27,6 +27,7 @@ import {
   alreadySentMessage, recentOutboundSms, recordSmsSnapshot, supabaseUrl,
 } from './_lib/sms.js';
 import { recordCall, handleRecordingRequest } from './_lib/call-recording.js';
+import { knownNameForPhone } from './_lib/known-name.js';
 import { matchClient, upcomingVisits } from './_lib/yelp-booking.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 15 };
@@ -521,7 +522,8 @@ export default async function handler(req, res) {
       p_call_id: callId,
       p_transcript: extractTranscript(params),
       p_summary: extractSummary(params),
-      p_name: extractName(params),
+      // No name on the call: use one the customer gave on Yelp or a queued call.
+      p_name: extractName(params) || await knownNameForPhone(to),
       p_transferred: extractTransferred(params),
     });
     if (rescued?.created) {

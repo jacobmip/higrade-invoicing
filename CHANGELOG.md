@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.10 — 2026-11-16
+
+- Lisa gives our email (higradeplumbing@gmail.com) whenever a customer asks where to send drawings, plans or photos, on every channel (`OFFICE_EMAIL` in `lisa-soul.js`). Phone Lisa spells it "H, I, grade plumbing" so it is not typed as "high". A contractor wanting a bid from drawings gets the email and a promise of a bid, not a push for a site visit. Valente asked four times on Yelp and once on a call and was told "the team will email you".
+- A caller with no name on the call is filed under a name we already know for that number (Yelp thread first name, then a queued call's name) before falling back to "Missed call - no name given" (`_lib/known-name.js`). Same for text leads. A placeholder name on a client is replaced by any real name Yelp Lisa learns, even a first name alone.
+- Replay cases for both: "contractor asks where to email drawings" (text) and "caller asks where to email drawings" (phone).
+
 ## v1.85.9 — 2026-11-16
 
 - Estimate agent: three ranges raised to the Honolulu market after a full price book review. Tankless $3,200-$5,500 to $3,500-$6,000. Sewer spot repair $1,800-$4,500 to $2,500-$6,000. Gas line $800-$2,500 to $1,200-$3,500 (Jake's gas line jobs have a $2,575 median). Website estimator changed in the same pass. The `saved_items` price book was updated directly in Supabase the same day (24 prices, 11 duplicates removed, 5 duplicate categories merged).
