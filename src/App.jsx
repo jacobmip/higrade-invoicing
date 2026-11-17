@@ -2991,7 +2991,7 @@ function GlobalAIModal({ data, getData, userLabel, openDocId, msgs, setMsgs, onR
     setMsgs(p => p.map((m, i) => i === idx ? { ...m, card: { ...m.card, type: "email_sending" } } : m));
     try {
       const inv = data.invoices.find(i => i.id === invoiceId);
-      const client = data.clients.find(c => c.name === inv?.client);
+      const client = clientOfDoc(data.clients, inv);
       // Same first-send rule as autoUpdateDueDate in the invoice form: if this
       // outstanding invoice still has its default due date (dueDate === date),
       // bump it to today since the send date is most likely the job completion
@@ -3280,10 +3280,20 @@ function ItemModal({ item, onSave, onClose, onDelete, onSaveToLibrary }) {
   );
 }
 
+// The client a document belongs to: its client_id first, the name only for
+// old documents with no id. By name alone, Lisa's EST1207 ("Alexander", from
+// Yelp) lost Alexander Tacderan's profile once the client was renamed
+// (2026-11-17): no addresses, no link, Jake had to reassign it.
+function clientOfDoc(clients, doc) {
+  if (!doc || !Array.isArray(clients)) return undefined;
+  return (doc.client_id && clients.find(c => c.id === doc.client_id))
+    || clients.find(c => c.name === doc.client);
+}
+
 // ─── PDF Preview ──────────────────────────────────────────────────────────────
 function PDFPreview({ form, clients, photos = [], changeOrders = null, coJobId = null, showPendingCo = false }) {
   const t = calcTotals(form);
-  const clientRecord = clients.find(c => c.name === form.client) || {};
+  const clientRecord = clientOfDoc(clients, form) || {};
   const clientData = form.clientInfo || clientRecord;
   // Billing address (where the bill is sent — contractor / property manager)
   // and job site (where the work was performed) are shown as two labeled
@@ -4433,7 +4443,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       // mint a blank INV#### on the first debounce. Migration 105 enforces the
       // same rule in the database. The draft layer still keeps the local edit.
       if (!f.client || !String(f.client).trim()) return null;
-      const c = clients.find(x => x.name === f.client);
+      const c = clientOfDoc(clients, f);
       const cAddrs = Array.isArray(c?.addresses) ? c.addresses : [];
       // jobAddressId is session-only (never in DB); fall back to the snapshot's
       // embedded id so reopened invoices pick the right address, not the first.
@@ -4841,7 +4851,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     }
   };
 
-  const selectedClient = clients.find(c => c.name === form.client);
+  const selectedClient = clientOfDoc(clients, form);
   const clientAddresses = Array.isArray(selectedClient?.addresses) ? selectedClient.addresses : [];
   // What the document would print under "Billing Address", for the Clear
   // billing address button. PDFPreview has its own `bill`; this component did

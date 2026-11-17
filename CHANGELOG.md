@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.14 — 2026-11-17
+
+- A document finds its client by `client_id` first, the name only when there is no id (`clientOfDoc()` in App.jsx: the invoice form's save and address picker, the PDF preview, the chat email card). Lisa filed EST1207 as "Alexander" from Yelp; once the client was renamed Alexander Tacderan the name no longer matched, so the document showed no profile and no saved addresses, and Jake had to reassign it.
+
 ## v1.85.13 — 2026-11-17
 
 - `claimsBooking()` read "That day is booked up" as a booking claim (found scanning past threads: Dan's), which would have rewritten the reply and sent a false URGENT. Fixed and tested.
