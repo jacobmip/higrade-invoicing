@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.18 — 2026-11-17
+
+- Polish with AI reads Jake's open start times for the next five weekdays (from tomorrow) from `/api/availability`, the same calendar check Lisa books against: weekdays 8 AM to 3 PM starts with 90 minutes free. It only offers those, drops any day the draft names that is full, and names two or three when the draft just asks what works. On a fully booked Tuesday it offered "Tuesday, Wednesday, Thursday, Friday or Saturday".
+- `/api/availability` also accepts a signed-in admin's session (Authorization: Bearer), besides the webhook secret.
+
 ## v1.85.17 — 2026-11-17
 
 - On My Way text greets the client's `first_name` (migration 109). It used the first word of `name`, so Gaeta Construction got "Aloha Gaeta" instead of "Aloha Andreas". A company with no first name on file gets "Aloha there".

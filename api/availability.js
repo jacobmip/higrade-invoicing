@@ -55,6 +55,19 @@ function svcHeaders() {
   return { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
 }
 
+// True when the bearer token is a signed-in admin's Supabase session.
+async function isAdminSession(token) {
+  try {
+    const anon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const ur = await fetch(`${supaUrl()}/auth/v1/user`, { headers: { apikey: anon, Authorization: `Bearer ${token}` } });
+    if (!ur.ok) return false;
+    const user = await ur.json().catch(() => null);
+    if (!user?.id) return false;
+    const rows = await sbGet(`profiles?id=eq.${encodeURIComponent(user.id)}&select=role&limit=1`);
+    return rows?.[0]?.role === 'admin';
+  } catch { return false; }
+}
+
 async function sbGet(path) {
   const r = await fetch(`${supaUrl()}/rest/v1/${path}`, { headers: svcHeaders() });
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${(await r.text()).slice(0, 200)}`);
@@ -270,7 +283,11 @@ export default async function handler(req) {
   const url = new URL(req.url);
   const provided = req.headers.get('x-webhook-secret') || req.headers.get('x-vapi-secret') || url.searchParams.get('k');
   try {
-    if (!sameSecret(provided, await expectedSecret())) return respond(401, { error: 'unauthorized' });
+    // The app's Polish with AI reads Jake's open times with his own session
+    // (2026-11-17: it offered Tuesday on a fully booked Tuesday).
+    const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+    const ok = (provided && sameSecret(provided, await expectedSecret())) || (bearer && await isAdminSession(bearer));
+    if (!ok) return respond(401, { error: 'unauthorized' });
   } catch (e) {
     return respond(500, { error: 'auth unavailable', detail: e.message });
   }

@@ -166,9 +166,46 @@ function hawaiiWeek() {
   return `It is ${time} in Hawaii.\n${days.join('\n')}`;
 }
 
-function polishPrompt(channel) {
+// Jake's open START times for the next week, from /api/availability (the
+// same calendar check Lisa books against). Visits start weekdays 8 AM to 3 PM,
+// at least an hour out, with 90 minutes free. Null when it cannot be read.
+const hm = (t) => Number(t.slice(11, 13)) * 60 + Number(t.slice(14, 16));
+const clock = (m) => { const h = Math.floor(m / 60), mm = m % 60; return `${h % 12 || 12}${mm ? `:${String(mm).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`; };
+async function openTimes() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return null;
+    const now = new Date();
+    const ymd = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Pacific/Honolulu' });
+    const today = ymd(now);
+    const nowMin = hm(`xxxxxxxxxxx${now.toLocaleTimeString('en-GB', { timeZone: 'Pacific/Honolulu', hour: '2-digit', minute: '2-digit' })}`);
+    const days = [];
+    // From tomorrow: a same-day offer is Jake's call, not Polish's. A 90-minute
+    // gap before Alana made a fully booked Tuesday look open (2026-11-17).
+    for (let i = 1; days.length < 5 && i < 10; i++) {
+      const d = new Date(now.getTime() + i * 864e5);
+      const wd = d.toLocaleDateString('en-US', { timeZone: 'Pacific/Honolulu', weekday: 'short' });
+      if (wd !== 'Sat' && wd !== 'Sun') days.push({ date: ymd(d), name: d.toLocaleDateString('en-US', { timeZone: 'Pacific/Honolulu', weekday: 'long', month: 'short', day: 'numeric' }) });
+    }
+    const rows = await Promise.all(days.map(async (day) => {
+      const r = await fetch(api(`/api/availability?date=${day.date}`), { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      const lead = day.date === today ? Math.ceil((nowMin + 60) / 30) * 30 : 0;
+      const windows = (j.suggested_free_slots || []).map((x) => [Math.max(hm(x.start), 8 * 60, lead), Math.min(hm(x.end) - 90, 15 * 60)])
+        .filter(([a, b]) => a <= b).map(([a, b]) => (a === b ? clock(a) : `${clock(a)} to ${clock(b)}`));
+      return `${day.name}${day.date === today ? ' (today)' : ''}: ${windows.length ? `can start ${windows.join(', ')}` : 'FULL, do not offer'}`;
+    }));
+    return rows.join('\n');
+  } catch { return null; }
+}
+
+function polishPrompt(channel, open) {
   const yelp = channel === 'yelp';
   return `${hawaiiWeek()}
+
+${open ? `JAKE'S OPEN START TIMES (from his calendar right now)\n${open}` : "Jake's calendar could not be read just now."}
 
 You polish a reply Jake (owner of HI Grade Plumbing, Oahu) is about to send a customer by ${yelp ? 'Yelp message' : 'text message'}. Rewrite his draft in Lisa's voice: warm, professional, a little Hawaiian (Aloha, Mahalo), short sentences.
 
@@ -176,6 +213,7 @@ You are given the recent conversation, then the draft. Rules:
 - The rewrite must fit the conversation as the very next message. Do not greet again if the conversation is already going; open with a greeting only when it is a first message or the last contact was days ago.
 - Answer or follow on from the customer's latest message when the draft does. Do not repeat anything we already told them.
 - Keep every fact, time, date, address and dollar figure in the draft exactly. Do not add prices, times, promises or facts that are not in the draft.
+- ${open ? 'Offer only days and times from JAKE\'S OPEN START TIMES. Drop any day the draft names that is FULL or not listed, including today. When the draft asks what works without naming days, name two or three open ones.' : 'Do not name any day or time the draft does not.'}
 - Days must match the calendar above. "Tomorrow" is the day listed as Tomorrow; never name it again as a separate day. If the draft says a day that has already passed this week, use the next one and keep the weekday name right.
 - ${yelp ? 'End with "Mahalo," on its own line and "Lisa" on the next, unless the thread is a quick back-and-forth.' : 'Keep it under 320 characters, ideally under 160.'}
 - No em dashes, no emoji, no links.
@@ -229,11 +267,12 @@ function Thread({ messages: rawMessages, phone, canReply, onSent, height, footer
     if (!draft || polishing || sending) return;
     setPolishing(true); setErr('');
     try {
+      const open = await openTimes();
       const res = await fetch(api('/api/ai'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          systemPrompt: polishPrompt(channel),
+          systemPrompt: polishPrompt(channel, open),
           messages: [{ role: 'user', content: polishInput(messages, draft) }],
           maxTokens: 1024,
         }),
