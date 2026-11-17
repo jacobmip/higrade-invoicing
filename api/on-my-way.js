@@ -100,7 +100,7 @@ export default async function handler(req) {
   // Under the caller's JWT: RLS limits this to jobs they may see.
   const userHeaders = { apikey: ANON, Authorization: auth };
   const invRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}&select=id,client_name,job_address,billing_address,job_lat,job_lng,clients(name,phone,mobile)&limit=1`,
+    `${SUPABASE_URL}/rest/v1/invoices?id=eq.${encodeURIComponent(invoiceId)}&select=id,client_name,job_address,billing_address,job_lat,job_lng,clients(name,first_name,company_name,phone,mobile)&limit=1`,
     { headers: userHeaders });
   const inv = invRes.ok ? (await invRes.json())?.[0] : null;
   if (!inv) return out(404, { ok: false, error: 'Job not found' });
@@ -110,7 +110,15 @@ export default async function handler(req) {
 
   const profRes = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${user.id}&select=display_name&limit=1`, { headers: userHeaders });
   const techName = (profRes.ok && (await profRes.json())?.[0]?.display_name) || 'technician';
-  const firstName = String(inv.clients?.name || inv.client_name || '').trim().split(/\s+/)[0] || 'there';
+  // The client's own first name field first. The first word of the name sent
+  // "Aloha Gaeta" for Gaeta Construction, whose contact is Andreas (2026-11-17).
+  // A company name with no first name on file gets "there", never a word of it.
+  const c = inv.clients || {};
+  const fullName = String(c.name || inv.client_name || '').trim();
+  const isCompany = !!c.company_name && fullName.toLowerCase() === String(c.company_name).trim().toLowerCase();
+  const firstName = String(c.first_name || '').trim().split(/\s+/)[0]
+    || (isCompany || /\b(llc|inc|corp|construction|company|co\.|builders|contracting|properties|management)\b/i.test(fullName) ? '' : fullName.split(/\s+/)[0])
+    || 'there';
   // Use only the first name of the tech so the text reads "Jake is on the way"
   // not "Jacob Petersen is on the way".
   const techFirst = techName.split(/\s+/)[0] || techName;

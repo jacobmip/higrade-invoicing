@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.17 — 2026-11-17
+
+- On My Way text greets the client's `first_name` (migration 109). It used the first word of `name`, so Gaeta Construction got "Aloha Gaeta" instead of "Aloha Andreas". A company with no first name on file gets "Aloha there".
+
 ## v1.85.16 — 2026-11-17
 
 - Polish with AI gets the week laid out day by day in Hawaii time (Today, Tomorrow, then each date) and a rule that "tomorrow" is never named again as its own day. On Tuesday it polished Jake's draft to "tomorrow, Wednesday, or Thursday, Friday".
