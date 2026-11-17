@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.16 — 2026-11-17
+
+- Polish with AI gets the week laid out day by day in Hawaii time (Today, Tomorrow, then each date) and a rule that "tomorrow" is never named again as its own day. On Tuesday it polished Jake's draft to "tomorrow, Wednesday, or Thursday, Friday".
+- The message reply box grows as you type or polish, up to about a third of the screen, then scrolls. It was stuck at one line.
+
 ## v1.85.15 — 2026-11-17
 
 - Text Lisa: a booked customer asking to change their time no longer gets "You're set for 3 PM. If you need to change it, just let me know." When the reply-time check replaces her draft and the text asks for a change (`WANTS_CHANGE`), she says she is checking with the tech and Jake gets a Telegram. Alana asked three times for 4 PM, past the 3 PM start window, and got the canned line each time.
