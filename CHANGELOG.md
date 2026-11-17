@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.19 — 2026-11-17
+
+- The bottom nav hides as soon as a text field is focused on a touch screen, not only when the visual viewport shrinks. iOS sometimes does not resize it, and the nav sat over the Messages reply box with the keyboard up.
+- Polish writes tomorrow as "tomorrow (Wednesday)", so "tomorrow Wednesday, Thursday" no longer reads like two days.
+
 ## v1.85.18 — 2026-11-17
 
 - Polish with AI reads Jake's open start times for the next five weekdays (from tomorrow) from `/api/availability`, the same calendar check Lisa books against: weekdays 8 AM to 3 PM starts with 90 minutes free. It only offers those, drops any day the draft names that is full, and names two or three when the draft just asks what works. On a fully booked Tuesday it offered "Tuesday, Wednesday, Thursday, Friday or Saturday".
