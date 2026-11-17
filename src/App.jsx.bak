@@ -15015,7 +15015,7 @@ export default function App() {
           {indicatorRect && (
             <span aria-hidden="true" style={{
               position: "absolute", top: indicatorRect.top, left: indicatorRect.left,
-              transform: "translateX(-50%)", width: indicatorRect.size, height: indicatorRect.size, borderRadius: "50%",
+              transform: "translateX(-50%)", width: indicatorRect.size, height: indicatorRect.size, borderRadius: 16,
               background: "rgba(232,98,42,0.88)",
               boxShadow: "0 3px 10px rgba(232,98,42,0.5), inset 0 1px 1px rgba(255,255,255,0.3)",
               transition: "left .32s cubic-bezier(0.34, 1.56, 0.64, 1)",
