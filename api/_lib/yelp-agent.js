@@ -260,6 +260,11 @@ function parseJson(text) {
 // the draft must not be sent.
 // Topics Lisa never quotes sight unseen, and the ceiling on any auto quote.
 
+/** True when a reply tells the customer a visit is booked. */
+export function claimsBooking(text) {
+  return /\b(you['’]?re (all )?set|you['’]?re booked|is booked|(it['’]?s|you['’]?re) (locked|confirmed)|we['’]?ll see you)\b/i.test(String(text || ''));
+}
+
 export function polish(raw, { firstName, isFirstReply, prices, estimate = null }) {
   // The checks every channel shares (lisa-guards.js) run on the body; this
   // function adds only what is Yelp's: the Aloha opener and the sign-off.
@@ -615,9 +620,13 @@ export async function draftYelpReply(p) {
   // `appointment`, the calendar check found his own visit there and Lisa told
   // him the day was booked up. Same for a time that is one of this customer's
   // own visits. Reschedules go through action "reschedule", not this path.
+  // Only the customer's own visit is dropped. Dropping every time on a thread
+  // that had booked once (row.estimate_id) lost Alexander's second visit
+  // (2026-11-17): Lisa said "You're all set for 10 AM", nothing was booked,
+  // nobody was told, and Jake was late.
   const rawAppt = String(d.appointment || '').trim();
   const ownVisit = visits.some((v) => String(v.start || '').slice(0, 16) === rawAppt.slice(0, 16));
-  const appointment = row.estimate_id || ownVisit ? '' : rawAppt;
+  const appointment = ownVisit ? '' : rawAppt;
   let slotFree = false;
   // Real open alternatives on that day (or the next days) for a reply that
   // has to turn a time down.
@@ -637,6 +646,11 @@ export async function draftYelpReply(p) {
     const chk = await checkAppointment(appointment);
     if (chk.status === 'free') {
       slotFree = true;
+    } else if (chk.status === 'busy' && row.estimate_id) {
+      // A booked customer: the busy slot may be their own visit kept only on
+      // the calendar (Dan, 2026-11-09). Never call it taken; Jake sorts it.
+      text = "Let me double-check that time on the calendar and I'll confirm here shortly.";
+      out.unbooked = `wants ${speakVisit(appointment)}, the calendar shows that time busy (maybe their own visit)`;
     } else if (chk.status === 'busy') {
       // Offer from openSlots, not chk.next: chk.next ignores the 8 AM to 3 PM
       // start window and offered Dan 4 PM.
@@ -684,13 +698,26 @@ export async function draftYelpReply(p) {
   // The booking below needs a phone and an address. If either is missing, the
   // reply must ask for it, never say "you're booked" (Alexander, 2026-11-11).
   const estBooking = !!(d.estimate_id && ests.some((e) => e.id === String(d.estimate_id).trim().toUpperCase() && !e.gcal_date));
-  if (d.ready_to_book && slotFree && !row.estimate_id && !estBooking && !(row.phone && row.address)) {
+  if (d.ready_to_book && slotFree && !estBooking && !(row.phone && row.address)) {
     const need = [!row.phone && 'the best phone number to reach you', !row.address && 'the service address with unit'].filter(Boolean).join(' and ');
     text = `${speakVisit(appointment)} is open. Send ${need} and I'll lock it in.`;
   }
   // An address that did not check out is the question this turn. A move that
   // already happened keeps its confirmation, with the question after it.
   if (addressAsk) text = out.reschedule?.ok ? `${text} ${addressAsk}` : addressAsk;
+
+  // Never tell a customer they are booked unless this turn books or moves the
+  // visit, or it is a visit already on the books. Otherwise the reply says we
+  // are locking it in, and Jake gets an urgent alert (Alexander, 2026-11-17).
+  const willBook = !!(d.ready_to_book && slotFree && (estBooking || (!addressAsk && row.phone && row.address)));
+  const claimsBooked = claimsBooking(text);
+  const knownVisit = rawAppt ? ownVisit : visits.length > 0;
+  if (claimsBooked && !willBook && !out.reschedule?.ok && !knownVisit) {
+    out.unbooked = rawAppt ? `agreed ${speakVisit(rawAppt)} but it was not booked` : 'Lisa said they are booked but no time was booked';
+    text = rawAppt
+      ? `${speakVisit(rawAppt)} works on our end. Let me get it locked in on the calendar and I'll confirm here shortly.`
+      : "Let me get that locked in on the calendar and I'll confirm here shortly.";
+  }
 
   const polished = polish(text, {
     firstName: row.first_name, isFirstReply, prices, estimate: est,
@@ -703,14 +730,14 @@ export async function draftYelpReply(p) {
   const who = match.client?.name || row.first_name || 'A Yelp customer';
   const action = String(d.action || 'none').trim();
 
-  if (d.ready_to_book && slotFree && !row.estimate_id && estBooking) {
+  if (d.ready_to_book && slotFree && estBooking) {
     const b = await bookOnEstimate({ estimateId: d.estimate_id, ests, appointment });
     if (b.ok) { row.estimate_id = b.estimateId; out.booked = { estimate_id: b.estimateId, appointment, on_estimate: true }; }
     else {
       console.error('[yelp-agent] estimate booking failed:', b.why);
       await telegramNotify(`Yelp booking FAILED, Lisa told ${who} they are booked for ${speakVisit(appointment)} on ${d.estimate_id}. ${b.why}. Book it by hand.\nLead ${leadId}`);
     }
-  } else if (d.ready_to_book && slotFree && !row.estimate_id && !addressAsk) {
+  } else if (d.ready_to_book && slotFree && !addressAsk) {
     if (row.phone && row.address) {
       try {
         const id = await bookVisit({
@@ -725,6 +752,11 @@ export async function draftYelpReply(p) {
     } else {
       out.flags.push('ready_to_book without a phone and address, not booked');
     }
+  }
+
+  if (out.unbooked) {
+    out.action = out.action || 'unbooked';
+    await telegramNotify(`URGENT Yelp: ${who} is NOT on the calendar. ${out.unbooked}. Lisa told them she is locking it in. Book it and confirm on Yelp.\n${row.address || 'no address'} / ${row.phone || 'no phone'}\nThey wrote: "${message.slice(0, 200)}"\nLead ${leadId}`);
   }
 
   if (action === 'where_is_tech') {

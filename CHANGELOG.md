@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.12 — 2026-11-17
+
+- Yelp Lisa told Alexander "You're all set for Tuesday Nov 17 at 10 AM" for his expansion tank, and nothing was booked: a thread that had booked once (`row.estimate_id`) had every new time dropped, the guard from Dan's "that time is taken" (2026-11-09). Jake was late to the job. Now only a time matching the customer's own visit is dropped; a new time on a booked thread is checked and booked like any other. If that time is busy, Lisa says she is double-checking and Jake gets an alert, never "taken".
+- Guard: a Yelp reply that says the customer is booked (`claimsBooking()`), when this turn neither books nor moves a visit and it is not a visit already on the books, is rewritten to "let me get it locked in" and Jake gets an URGENT Telegram.
+- `tests/lisa/yelp-format.mjs` checks the booking-claim wording.
+
 ## v1.85.11 — 2026-11-16
 
 - Outbound Lisa is now the same Lisa. Her Vapi prompt is built from `lisa-soul.js` like inbound's (`buildPrompt({ outbound: true })`), not the old hand-written one, so she books for real instead of "penciling in", follows every customer rule, and has the same tools: reschedule, cancel and transfer were missing. Only the opening differs: why we called, someone else answering, voicemail, do-not-call. `vapi-sync.mjs` patches both assistants.
