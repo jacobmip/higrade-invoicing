@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.13 — 2026-11-17
+
+- `claimsBooking()` read "That day is booked up" as a booking claim (found scanning past threads: Dan's), which would have rewritten the reply and sent a false URGENT. Fixed and tested.
+
 ## v1.85.12 — 2026-11-17
 
 - Yelp Lisa told Alexander "You're all set for Tuesday Nov 17 at 10 AM" for his expansion tank, and nothing was booked: a thread that had booked once (`row.estimate_id`) had every new time dropped, the guard from Dan's "that time is taken" (2026-11-09). Jake was late to the job. Now only a time matching the customer's own visit is dropped; a new time on a booked thread is checked and booked like any other. If that time is busy, Lisa says she is double-checking and Jake gets an alert, never "taken".
