@@ -280,6 +280,9 @@ function parseJson(text) {
  * Exported so the preview path and the live path share one prompt.
  */
 // testRows: a made-up thread for dry runs (nothing is sent from draftReply).
+// A text asking to move a booked visit.
+export const WANTS_CHANGE = /\b(later|earlier|move|change|reschedul\w*|push (it )?back|instead|another (day|time)|different (day|time)|can'?t make|any ?way)\b|\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\bat \d{1,2}\b/i;
+
 export async function draftReply({ phone, clientName, clientId = null, hasOpenEstimate, openEstimateDate, openEstimateProblem, openEstimateUrgency, testRows = null, testHistory = null, testVisits = null }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
@@ -458,8 +461,17 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
     const said = (out.reply.match(/\b\d{1,2}(?::\d{2})?\s?(?:AM|PM)\b/gi) || []).map((x) => x.replace(/\s+/g, '').toLowerCase());
     if (said.some((x) => x !== bookedTime)) {
       console.log('[sms-agent] reply named a time other than the booked visit, replaced', said, booked);
-      out.reply = `You're set for ${booked}. If you need to change it, just let me know. Mahalo!`;
       out.appointment = '';
+      // A customer asking to change it must never get "let me know if you need
+      // to change it" back. Alana (2026-11-17) asked three times for 4 PM, past
+      // the 3 PM start window Lisa may book, and got that line every time.
+      if (WANTS_CHANGE.test(lastIn)) {
+        out.reply = `You're on the schedule for ${booked} right now. Let me check with the tech about changing that, and I'll get right back to you.`;
+        out.needs_human = true;
+        out.note = `Wants to change their ${booked} visit and Lisa could not move it herself. They wrote: "${lastIn.slice(0, 200)}"`;
+      } else {
+        out.reply = `You're set for ${booked}. If you need to change it, just let me know. Mahalo!`;
+      }
     }
   }
   return out;

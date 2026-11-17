@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.15 — 2026-11-17
+
+- Text Lisa: a booked customer asking to change their time no longer gets "You're set for 3 PM. If you need to change it, just let me know." When the reply-time check replaces her draft and the text asks for a change (`WANTS_CHANGE`), she says she is checking with the tech and Jake gets a Telegram. Alana asked three times for 4 PM, past the 3 PM start window, and got the canned line each time.
+- Website contact form (higrade-site, deployed the same day): the visitor's preferred time is no longer booked onto the calendar, since the date picker knows nothing about it (an SEO pitch was booked over Lynn at 8 AM). It goes in the lead notes as "Wants ... (not booked)". Sales pitches are emailed but never filed.
+
 ## v1.85.14 — 2026-11-17
 
 - A document finds its client by `client_id` first, the name only when there is no id (`clientOfDoc()` in App.jsx: the invoice form's save and address picker, the PDF preview, the chat email card). Lisa filed EST1207 as "Alexander" from Yelp; once the client was renamed Alexander Tacderan the name no longer matched, so the document showed no profile and no saved addresses, and Jake had to reassign it.

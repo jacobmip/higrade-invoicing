@@ -2,6 +2,7 @@
 // (Alexander's thread): "Mahalo, Lisa" at the end of every message is unrealistic.
 // No model call, no network: runs polish() on fixed drafts.
 import { polish, claimsBooking } from '../../api/_lib/yelp-agent.js';
+import { WANTS_CHANGE } from '../../api/_lib/sms-agent.js';
 
 const body = 'We can move you to Monday Nov 16 at 10 AM, and we will see you then.';
 const cases = [
@@ -19,6 +20,11 @@ const cases = [
   ['no claim: booked up', 'That day is booked up. What other day works for you?', (t) => !claimsBooking(t)],
   ['no claim: an offer', 'We have Tuesday at 10 AM or Wednesday at 9 AM open. Which works for you?', (t) => !claimsBooking(t)],
   ['no claim: locking it in', "Tuesday at 10 AM works on our end. Let me get it locked in on the calendar and I'll confirm here shortly.", (t) => !claimsBooking(t)],
+  // Alana, 2026-11-17: asked three times to move 3 PM later by text and got
+  // "If you need to change it, just let me know" each time.
+  ['text: asks to move later', 'Is there any way we can meet at 4 or a little later than 3 today?', (t) => WANTS_CHANGE.test(t)],
+  ['text: make it later', "I'd like to make it later", (t) => WANTS_CHANGE.test(t)],
+  ['text: thanks is not a change', 'Thank you so much!', (t) => !WANTS_CHANGE.test(t)],
 ];
 let failed = 0;
 for (const [name, text, ok] of cases) {
