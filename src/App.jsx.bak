@@ -14350,8 +14350,16 @@ export default function App() {
     const initialStatus = targetType === "invoice"
       ? (carriedPaid >= totals.total - 0.01 ? "paid" : carriedPaid > 0 ? "partial" : "outstanding")
       : "converted";
+    // A visit Lisa booked lives only in gcalDate (no visits[] entry). Treat it
+    // as one visit so it moves too; otherwise the estimate kept it and the
+    // calendar showed the job twice (EST1214 / INV1214, 2026-11-17).
+    const sourceVisits = Array.isArray(form.visits) && form.visits.length
+      ? form.visits
+      : (form.gcalDate
+          ? [{ id: "v_" + Math.random().toString(36).slice(2, 10), start: String(form.gcalDate).slice(0, 16), minutes: Number(form.gcalDurationMinutes) > 0 ? Number(form.gcalDurationMinutes) : 90, label: "", eventId: form.gcalEventId || null }]
+          : []);
     const movedVisits = targetType === "invoice"
-      ? (Array.isArray(form.visits) ? form.visits : []).map(v => ({ ...v, kind: "job" }))
+      ? sourceVisits.map(v => ({ ...v, kind: "job" }))
       : [];
     const copy = {
       ...form,
