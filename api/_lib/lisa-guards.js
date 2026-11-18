@@ -56,9 +56,11 @@ export function cleanStyle(raw) {
     // Many customers prefer to text: never "just call".
     .replace(/\b(give us a call|call us|give us a ring|ring us)(?!\s+or\s+text)(\s+(at|on))?\b/gi, (m, a, b, c) => `call or text us${c ? ' at' : ''}`)
     .replace(/\bcall (?:the office|our office|the front desk)\b/gi, 'call or text us');
-  // A question punctuated with a period.
+  // A question punctuated with a period. The verb must be followed by a
+  // subject ("Have you...", "Is the..."), or a well-wish becomes a question:
+  // "Have a great rest of your day?" went to Lynn, 2026-11-18.
   if (!t.includes('?')) {
-    t = t.replace(/((?:^|[.!]\s+)(?:Is|Are|Does|Do|Did|Was|Were|Can|Could|Would|Has|Have)\b[^.?!,\n]*)\.\s*$/, '$1?');
+    t = t.replace(/((?:^|[.!]\s+)(?:Is|Are|Does|Do|Did|Was|Were|Can|Could|Would|Has|Have)\s+(?:you|we|they|it|he|she|I|there|that|this|these|those|your|the|our|anyone|someone)\b[^.?!,\n]*)\.\s*$/, '$1?');
   }
   return { text: t, flags, hold: null };
 }

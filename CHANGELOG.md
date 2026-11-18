@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.86.1 — 2026-11-18
+
+- Text Lisa no longer answers tapback reactions ("Liked ...", "Reacted 👍 to ..."). She answered Lynn's thumbs-up with a send-off.
+- The question-mark fix in `cleanStyle()` (lisa-guards.js) now needs a subject after the opening verb ("Have you", "Is the"). "Have a great rest of your day." had become "Have a great rest of your day?".
+
 ## v1.86.0 — 2026-11-18
 
 - **New admin-only Location tab** (More sheet): every time a tech presses "On My Way," his GPS fix is logged with the time and which job, so Jake can see where he actually was at that moment. Not live tracking — a one-shot stamp per press. "View on Map" opens it as a pin in Google Maps; a Document chip jumps to the job.

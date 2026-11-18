@@ -46,6 +46,9 @@ const APP_URL = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
 // and the kind of thing that gets a campaign reviewed, so stop earlier.
 const OPT_OUT = /^\s*(stop|stopall|unsubscribe|cancel|end|quit|revoke|optout|opt-out)\b/i;
 const HELP = /^\s*help\b/i;
+// A tapback ("Liked ...", "Reacted 👍 to ...") is not a message. Lisa answered
+// Lynn's thumbs-up with a send-off, 2026-11-18.
+const TAPBACK = /^\s*(reacted\s+\S+\s+to|liked|loved|laughed at|emphasized|questioned|disliked|removed an? \S+ from)\s+[“"']/i;
 const HELP_REPLY =
   'HI Grade Plumbing LLC, Oahu. Call or text 808-444-5450 for plumbing service. ' +
   'Reply STOP to opt out.';
@@ -575,6 +578,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
     if (c && c.lisa_autoreply === false) return 'lisa autoreply disabled for this client';
   }
   if (OPT_OUT.test(body || '')) return 'opt-out, not replying';
+  if (TAPBACK.test(body || '')) return 'a tapback reaction, not replying';
   if (HELP.test(body || '')) {
     await sendTwilioSms({ to: phone, body: HELP_REPLY });
     await logOutbound({ secret, phone, body: HELP_REPLY });
