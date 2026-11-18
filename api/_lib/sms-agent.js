@@ -488,14 +488,18 @@ async function bookOnEstimate(phone, estimateId, appointment) {
     if (!/^EST\d+$/.test(estimateId)) return { ok: false, why: `not an estimate number: ${estimateId}` };
     const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
     const [est] = await select(`invoices?id=eq.${encodeURIComponent(estimateId)}&client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
-      + '&deleted_at=is.null&select=id,gcal_date,status');
+      + '&deleted_at=is.null&select=id,gcal_date,gcal_event_id,status');
     if (!est) return { ok: false, why: 'estimate not found for this phone' };
     if (isUpcoming(est.gcal_date)) return { ok: false, why: `already scheduled ${est.gcal_date}` };
     const key = supabaseKey();
     const r = await fetch(`${supabaseUrl()}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
       method: 'PATCH',
       headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      body: JSON.stringify({ gcal_date: appointment.slice(0, 16), updated_at: new Date().toISOString() }),
+      // A past visit's event stays on the calendar as history. Dropping the id
+      // lets push_invoice_to_calendar (which skips a doc that has one) create
+      // the new visit's event. Without it EST1211 got Friday in the database
+      // and nothing in Google (Mariane, 2026-11-17).
+      body: JSON.stringify({ gcal_date: appointment.slice(0, 16), ...(est.gcal_event_id ? { gcal_event_id: null } : {}), updated_at: new Date().toISOString() }),
     });
     if (!r.ok) return { ok: false, why: `save ${r.status}` };
     try { await rpc('push_invoice_to_calendar', { p_id: estimateId }); }
@@ -687,7 +691,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
       let alreadyFiled = false;
       if (clientId) {
         const recheck = await select(
-          `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id,gcal_date,visits&order=created_at.desc&limit=1`
+          `invoices?client_id=eq.${clientId}&deleted_at=is.null&status=eq.outstanding&select=id,gcal_date,gcal_event_id,visits&order=created_at.desc&limit=1`
         );
         if (Array.isArray(recheck) && recheck.length > 0) {
           const existing = recheck[0];
@@ -704,7 +708,12 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
             if (out.address) {
               patch.job_address = jobAddress(out);
             }
-            if (out.appointment) patch.gcal_date = out.appointment;
+            if (out.appointment) {
+              patch.gcal_date = out.appointment;
+              // Past visit's event stays as history; a fresh one gets pushed (see bookOnEstimate).
+              if (existing.gcal_event_id) patch.gcal_event_id = null;
+              patch.updated_at = new Date().toISOString();
+            }
             if (out.name) patch.client_name = out.name;
             if (Object.keys(patch).length) {
               const sbUrl = supabaseUrl();

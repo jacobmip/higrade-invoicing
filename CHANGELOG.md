@@ -1,5 +1,8 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.26 — 2026-11-17
+
+- Text Lisa can rebook an estimate whose last visit already happened. `push_invoice_to_calendar` skips any doc that already has a `gcal_event_id`, so when Mariane said yes to Friday 12 PM, EST1211 kept last week's event and nothing reached Google; Lisa still told her she was booked. Both booking paths (`bookOnEstimate` and the filing re-check) now drop the past visit's event id along with the new `gcal_date` (the old event stays on the calendar as history), so the push creates the new one, and bump `updated_at` so an open app form cannot silently save the old date back.
 ## v1.85.25 — 2026-11-17
 
 - The apprentice gets the job in his own Google Calendar. Assigning an apprentice now adds him to the job's Google events (Google emails him the invite) and un-assigning takes him off, same as the commission tech already did. `updateCalendarAttendee` covers every visit's event, not just the first.
