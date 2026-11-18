@@ -12748,6 +12748,14 @@ export default function App() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    // iOS does not always resize the visual viewport when the keyboard opens
+    // (Jake, 2026-11-17: the nav bar sat over the Messages reply box with the
+    // keyboard up). On a touch screen, focusing a text field means the keyboard
+    // is coming: hide the nav now; leaving it re-checks the viewport.
+    const touch = window.matchMedia?.('(pointer: coarse)').matches;
+    const isText = (el) => !!el && (el.tagName === 'TEXTAREA' || el.isContentEditable
+      || (el.tagName === 'INPUT' && !/^(button|checkbox|radio|range|submit|reset|file|color|date|time|datetime-local|month|week)$/i.test(el.type || '')));
+    const focusedText = () => !!touch && isText(document.activeElement);
     const onResize = () => {
       // Keyboard height is purely innerHeight - vv.height. Do NOT include
       // vv.offsetTop: when iOS pans the layout up to surface a focused
@@ -12755,17 +12763,23 @@ export default function App() {
       // offsetTop grows and would make the formula think the keyboard is
       // closing — which used to flip keyboardOpen mid-edit and kick a
       // scroll-to-top, yanking the field out from under Jake.
-      const open = window.innerHeight - vv.height > 100;
+      const open = window.innerHeight - vv.height > 100 || focusedText();
       clearTimeout(kbTimer.current);
       kbTimer.current = setTimeout(() => setKeyboardOpen(open), 120);
     };
+    const onFocusIn = (e) => { if (touch && isText(e.target)) { clearTimeout(kbTimer.current); setKeyboardOpen(true); } };
+    const onFocusOut = () => { if (touch) { clearTimeout(kbTimer.current); kbTimer.current = setTimeout(() => setKeyboardOpen(focusedText() || window.innerHeight - vv.height > 100), 250); } };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
     onResize();
     return () => {
       clearTimeout(kbTimer.current);
       vv.removeEventListener('resize', onResize);
       vv.removeEventListener('scroll', onResize);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
     };
   }, []);
   // The header only mounts after the splash/login/loading screens return
