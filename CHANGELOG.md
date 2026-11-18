@@ -1,5 +1,8 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.22 — 2026-11-17
+
+- Text Lisa no longer treats a visit date that has already passed as a booking. EST1211 still held last Friday's estimate visit (11/13 at 4:30 PM), so when Mariane asked for this Friday after 12, Lisa told her "You're set for Friday at 4:30 PM" and then could not move it. A past `gcal_date` or visit now counts as nothing booked, so Lisa can book the next visit on the same estimate (`api/_lib/sms-agent.js`).
 ## v1.85.21 — 2026-11-17
 
 - Every customer-facing phone number is now 808-444-5450 (Lisa's line), not Jake's cell 808-393-0015: invoice, receipt, estimate and change order emails, the signed-estimate email, the printable PDF, the public invoice page, the PayPal error message and the welcome and sign-in pages. `settings.notify_to` (where Jake's alerts go) is unchanged.

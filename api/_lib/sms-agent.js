@@ -93,6 +93,11 @@ function hawaiiNow() {
   };
 }
 
+// A visit date that has passed is history, not a booking. EST1211 kept its
+// 11/13 estimate visit in gcal_date, so "Friday at 4:30" read as THIS Friday
+// and Lisa would not book the install (Mariane, 2026-11-17).
+const isUpcoming = (d) => !!d && String(d).slice(0, 10) >= hawaiiNow().iso;
+
 function firstNameOf(name) {
   if (!name) return name;
   if (/\b(LLC|Inc|Corp|Construction|Contracting|Services|Co\.|Company)\b/i.test(name)) return name;
@@ -224,7 +229,7 @@ async function sentEstimatesBlock(phone) {
       const its = (Array.isArray(items) ? items : []).filter((i) => i.invoice_id === e.id)
         .map((i) => `${Number(i.qty) > 1 ? `${i.qty} x ` : ''}${i.name}${i.description ? ` (${String(i.description).replace(/\s*\n\s*/g, '; ').slice(0, 220)})` : ''}`);
       const signed = e.status === 'approved';
-      return `- ${e.id}, sent ${e.date}, ${signed ? 'APPROVED' : 'not approved yet'}${e.gcal_date ? `, scheduled ${String(e.gcal_date).slice(0, 16).replace('T', ' at ')}` : ', not scheduled'}: ${its.join('; ') || 'no line items'}${e.notes ? `. Notes on it: ${String(e.notes).slice(0, 200)}` : ''}`;
+      return `- ${e.id}, sent ${e.date}, ${signed ? 'APPROVED' : 'not approved yet'}${!e.gcal_date ? ', not scheduled' : isUpcoming(e.gcal_date) ? `, scheduled ${String(e.gcal_date).slice(0, 16).replace('T', ' at ')}` : `, last visit ${String(e.gcal_date).slice(0, 16).replace('T', ' at ')} (already happened, nothing booked now)`}: ${its.join('; ') || 'no line items'}${e.notes ? `. Notes on it: ${String(e.notes).slice(0, 200)}` : ''}`;
     });
     return `ESTIMATES ALREADY SENT TO THIS CUSTOMER (the link to each is in the thread):
 ${lines.join('\n')}
@@ -485,7 +490,7 @@ async function bookOnEstimate(phone, estimateId, appointment) {
     const [est] = await select(`invoices?id=eq.${encodeURIComponent(estimateId)}&client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
       + '&deleted_at=is.null&select=id,gcal_date,status');
     if (!est) return { ok: false, why: 'estimate not found for this phone' };
-    if (est.gcal_date) return { ok: false, why: `already scheduled ${est.gcal_date}` };
+    if (isUpcoming(est.gcal_date)) return { ok: false, why: `already scheduled ${est.gcal_date}` };
     const key = supabaseKey();
     const r = await fetch(`${supabaseUrl()}/rest/v1/invoices?id=eq.${encodeURIComponent(estimateId)}`, {
       method: 'PATCH',
@@ -508,7 +513,7 @@ async function ownVisits(phone) {
   if (last10.length !== 10) return [];
   try {
     const rows = await select(`invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}`
-      + '&deleted_at=is.null&status=in.(outstanding,sent,pending,approved)&gcal_date=not.is.null&select=gcal_date&limit=10');
+      + `&deleted_at=is.null&status=in.(outstanding,sent,pending,approved)&gcal_date=gte.${hawaiiNow().iso}&select=gcal_date&limit=10`);
     return (Array.isArray(rows) ? rows : []).map((r) => String(r.gcal_date).slice(0, 16));
   } catch { return []; }
 }
@@ -573,11 +578,9 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
     if (Array.isArray(open) && open.length > 0) {
       hasOpenEstimate = true;
       openEstimateId = open[0].id;
-      const hasVisit = open[0].gcal_date ||
-        (Array.isArray(open[0].visits) && open[0].visits.length > 0);
-      openEstimateScheduled = !!hasVisit;
-      openEstimateDate = open[0].gcal_date ||
-        (Array.isArray(open[0].visits) && open[0].visits[0]?.start) || null;
+      const nextVisit = (Array.isArray(open[0].visits) ? open[0].visits : []).map((v) => v?.start).find(isUpcoming);
+      openEstimateDate = isUpcoming(open[0].gcal_date) ? open[0].gcal_date : nextVisit || null;
+      openEstimateScheduled = !!openEstimateDate;
       // Pull problem/urgency from the estimate so the SMS agent knows what
       // was collected on the phone call and doesn't re-ask.
       openEstimateProblem = String(open[0].internal_notes || '').trim() || null;
@@ -592,7 +595,7 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
     const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
     const byPhone = last10.length === 10 ? await select(
       `invoices?client_info->>phone=ilike.${encodeURIComponent(fuzzyPhone(last10))}&deleted_at=is.null&status=in.(outstanding,sent,pending,approved)`
-      + '&gcal_date=not.is.null&select=id,gcal_date&order=created_at.desc&limit=1').catch(() => []) : [];
+      + `&gcal_date=gte.${hawaiiNow().iso}&select=id,gcal_date&order=created_at.desc&limit=1`).catch(() => []) : [];
     if (Array.isArray(byPhone) && byPhone[0]) {
       hasOpenEstimate = true;
       openEstimateScheduled = true;
@@ -688,8 +691,8 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
         );
         if (Array.isArray(recheck) && recheck.length > 0) {
           const existing = recheck[0];
-          const hasVisit = existing.gcal_date ||
-            (Array.isArray(existing.visits) && existing.visits.length > 0);
+          const hasVisit = isUpcoming(existing.gcal_date) ||
+            (Array.isArray(existing.visits) && existing.visits.some((v) => isUpcoming(v?.start)));
           if (hasVisit) {
             // Already scheduled — don't create or update anything.
             alreadyFiled = true;
