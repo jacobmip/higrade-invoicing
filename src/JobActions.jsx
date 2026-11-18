@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { linesOf } from "./billTo.js";
 import * as TC from "./timeclock";
 import { mapsUrl } from "./navApp.js";
+import { logOnMyWayPing } from "./db.js";
 
 const NAVY = "#0a1628";
 const ORANGE = "#E8622A";
@@ -14,7 +15,7 @@ const GREEN = "#16a085";
 const HEAD = "'Barlow Condensed', sans-serif";
 
 
-export function JobContactActions({ name, phone, jobAddress, fallbackAddress, techName }) {
+export function JobContactActions({ name, phone, jobAddress, fallbackAddress, techName, invoiceId }) {
   const digits = (phone || "").replace(/[^\d+]/g, "");
   const address = (linesOf(jobAddress).length ? linesOf(jobAddress) : linesOf(fallbackAddress)).join(", ");
 
@@ -23,6 +24,15 @@ export function JobContactActions({ name, phone, jobAddress, fallbackAddress, te
     const body = `Aloha ${first}, this is ${techName || "your technician"} from HI Grade Plumbing. I am on my way and will arrive shortly. Mahalo!`;
     const sep = /iPad|iPhone|iPod/.test(navigator.userAgent) ? "&" : "?";
     window.location.href = `sms:${digits}${sep}body=${encodeURIComponent(body)}`;
+    // Admin GPS log (migration 131) — best effort, fires after the composer
+    // opens so a slow or denied GPS fix never delays the text.
+    if (invoiceId && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { logOnMyWayPing({ invoiceId, lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(() => {}); },
+        () => {},
+        { timeout: 8000, maximumAge: 60000 }
+      );
+    }
   }
 
   const pill = (enabled) => ({

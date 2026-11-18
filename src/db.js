@@ -1907,3 +1907,30 @@ export async function loadTeamPositions() {
 export async function recordDocEvent(invoiceId, kind, meta) {
   try { await recordInvoiceEvent(invoiceId, kind, null, meta || null) } catch (e) { console.warn(kind + ' event failed:', e) }
 }
+
+// ─── On My Way GPS pings (migration 131) ─────────────────────────────────────
+// A one-shot stamp of where a tech was the moment he pressed "On My Way" —
+// not continuous tracking (that's time_activity above). Written under the
+// tech's own session, same pattern as recordActivity. RLS: a tech sees only
+// his own rows, admin sees everyone's. Best-effort; a tech with GPS denied
+// or offline just has no row for that press.
+export async function logOnMyWayPing({ invoiceId, lat, lng }) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+  const { data: u } = await supabase.auth.getSession()
+  const uid = u?.session?.user?.id
+  if (!uid) return
+  const { error } = await supabase.from('on_my_way_pings')
+    .insert({ tech_id: uid, invoice_id: invoiceId || null, lat, lng })
+  if (error) console.warn('logOnMyWayPing failed:', error.message)
+}
+
+// Admin: every ping, newest first.
+export async function loadOnMyWayPings(limit = 300) {
+  const { data, error } = await supabase
+    .from('on_my_way_pings')
+    .select('id, tech_id, invoice_id, lat, lng, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) { console.warn('loadOnMyWayPings failed:', error.message); return [] }
+  return data || []
+}

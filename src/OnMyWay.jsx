@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { supabase } from "./supabase.js";
 import { api } from "./apiBase.js";
 import { mapsUrl } from "./navApp.js";
+import { logOnMyWayPing } from "./db.js";
 
 const ORANGE = "#E8622A";
 
@@ -52,7 +53,9 @@ export default function OnMyWay({ invoiceId, clientPhone, clientName, techName, 
           navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000, maximumAge: 60000 });
         });
         coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      } catch { /* no GPS: send without an ETA */ }
+        // Admin GPS log (migration 131) — fire-and-forget, never blocks the send.
+        logOnMyWayPing({ invoiceId, lat: coords.lat, lng: coords.lng }).catch(() => {});
+      } catch { /* no GPS: send without an ETA, and nothing to log */ }
 
       const { data } = await supabase.auth.getSession();
       const token = data?.session?.access_token;

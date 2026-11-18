@@ -22,6 +22,7 @@ import OnMyWay from './OnMyWay.jsx';
 import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
 import CallsTab from './CallsTab.jsx';
+import LocationLog from './LocationLog.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
@@ -799,6 +800,7 @@ const Icon = ({ name, size = 20, color = "currentColor", style }) => {
     chart:     <svg {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
     pen:       <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
     receipt:   <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
+    pin:       <svg {...p}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
     camera:    <svg {...p}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
     person:    <svg {...p}><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>,
     speaker:   <svg {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>,
@@ -6525,6 +6527,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             jobAddress={form.jobAddress || null}
             fallbackAddress={effectiveClientInfo?.address1 ? { line1: effectiveClientInfo.address1, line2: effectiveClientInfo.address2 || "", line3: effectiveClientInfo.address3 || "" } : null}
             techName={viewerName}
+            invoiceId={form.id || autoSavedId}
           />
         )}
         <PDFPreview form={isEstimate ? { ...form, sentAt: estSentAt } : form} clients={clients} photos={invoicePhotos} changeOrders={isEstimate ? jobCoList : null} coJobId={coInvoiceId} showPendingCo />
@@ -14762,6 +14765,7 @@ export default function App() {
   ];
   const moreNavItems = [
     ...(isAdmin ? [{ id: "calls", label: "Calls", icon: "phone" }] : []),
+    ...(isAdmin ? [{ id: "location", label: "Location", icon: "pin" }] : []),
     { id: "timeclock", label: "Time Clock", icon: "clock"    },
     { id: "payments",  label: "Payments",   icon: "dollar"   },
     { id: "pricebook", label: "Price Book", icon: "items"    },
@@ -15013,6 +15017,7 @@ export default function App() {
         {tab === "reports"   && <ReportsTab invoices={filteredData.invoices} expenses={filteredData.expenses || []} allInvoices={data.invoices} users={allUsers} isAdmin={isAdmin} myId={session?.user?.id} myName={profile?.display_name || profile?.displayName} competencies={competencies} selfLevels={selfLevels} onSetCompetency={handleSetCompetency} onSetSelfLevel={handleSetSelfLevel} />}
         {tab === "calendar"  && <CalendarTab isAdmin={isAdmin && !effectiveOwnerId} invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
         {tab === "calls" && isAdmin && <CallsTab isAdmin={isAdmin} setSubHeader={setSubHeader} onOpenInvoice={openInvoiceById} onOpenClient={(clientId) => { setView("list"); setTab("clients"); setOpenClientId(clientId); }} />}
+        {tab === "location" && isAdmin && <LocationLog isAdmin={isAdmin} users={allUsers} onOpenInvoice={openInvoiceById} />}
         {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} activitySeg={activitySeg} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (

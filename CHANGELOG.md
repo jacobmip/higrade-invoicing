@@ -1,5 +1,11 @@
 # HI Grade Invoicing — Changelog
 
+## v1.86.0 — 2026-11-18
+
+- **New admin-only Location tab** (More sheet): every time a tech presses "On My Way," his GPS fix is logged with the time and which job, so Jake can see where he actually was at that moment. Not live tracking — a one-shot stamp per press. "View on Map" opens it as a pin in Google Maps; a Document chip jumps to the job.
+- Covers both "On My Way" buttons: the Twilio one (`OnMyWay.jsx`, Edit tab) and the plain-text one techs actually use day to day (`JobActions.jsx`, Preview tab) — the second never had GPS at all before this.
+- New table `on_my_way_pings` (migration 131). Written straight from the browser under the tech's own login, no new API route. RLS: a tech can only ever see his own pings; only Jake sees everyone's.
+
 ## v1.85.27 — 2026-11-17
 
 - Text Lisa no longer drops a new time from a customer who already has a visit booked. Only their own visit's time is dropped; any other agreed time goes to Jake ("second visit or a move?") and the customer hears "works on our end, let me confirm with the team". Yelp had the same fix in v1.85.12.
