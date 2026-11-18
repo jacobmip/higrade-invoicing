@@ -107,7 +107,15 @@ export async function convertEstimateToInvoice(estimateId, via = 'customer_signe
     if (pairedId) console.warn(`[convert-estimate] ${pairedId} taken; minted ${newId} for ${estimateId}`);
   }
   const viewToken = generateViewToken();
-  const movedVisits = (Array.isArray(est.visits) ? est.visits : []).map(v => ({ ...v, kind: 'job' }));
+  // A visit Lisa booked lives only in gcal_date (no visits[] entry). Move it
+  // as one visit, or the estimate keeps it and the calendar shows the job
+  // twice (EST1214 / INV1214, 2026-11-17). Same rule as convertInvoice in App.jsx.
+  const sourceVisits = Array.isArray(est.visits) && est.visits.length
+    ? est.visits
+    : (est.gcal_date
+        ? [{ id: 'v_' + Math.random().toString(36).slice(2, 10), start: String(est.gcal_date).slice(0, 16), minutes: Number(est.gcal_duration_minutes) > 0 ? Number(est.gcal_duration_minutes) : 90, label: '', eventId: est.gcal_event_id || null }]
+        : []);
+  const movedVisits = sourceVisits.map(v => ({ ...v, kind: 'job' }));
   const today = new Date().toISOString().slice(0, 10);
 
   // Insert the new invoice row. Items are copied at full price.

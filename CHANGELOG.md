@@ -1,5 +1,8 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.23 — 2026-11-17
+
+- Converting an estimate to an invoice now moves a visit Lisa booked. Lisa stores her bookings only in `gcal_date` (no `visits[]` entry), and the convert moved `visits[]` only, so the estimate kept its date and the calendar showed the job twice: once as the estimate, once as the invoice (EST1214 / INV1214, Alana). Fixed in the app (`convertInvoice`) and on the server (`api/_lib/convert-estimate.js`, Approve & Sign and PayPal deposit). The seven converted estimates already doubled (EST1056, 1057, 1175, 1187, 1210, 1214, 1215) had their schedule cleared; their invoices keep it.
 ## v1.85.22 — 2026-11-17
 
 - Text Lisa no longer treats a visit date that has already passed as a booking. EST1211 still held last Friday's estimate visit (11/13 at 4:30 PM), so when Mariane asked for this Friday after 12, Lisa told her "You're set for Friday at 4:30 PM" and then could not move it. A past `gcal_date` or visit now counts as nothing booked, so Lisa can book the next visit on the same estimate (`api/_lib/sms-agent.js`).
