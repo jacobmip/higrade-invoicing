@@ -1,5 +1,8 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.24 — 2026-11-17
+
+- The calendar matches a visit to its Google event even when the saved id ends in `@google.com`. Lisa's bookings store the event's iCalUID, Google lists the bare id, so a converted job (INV1214, Alana) drew twice: once as the job and once as a grey "Other" copy of the same event. `GCal.eventKey()` strips the suffix for the calendar merge, the visit reconcile, and update/delete/attendee calls. 13 documents carry such ids.
 ## v1.85.23 — 2026-11-17
 
 - Converting an estimate to an invoice now moves a visit Lisa booked. Lisa stores her bookings only in `gcal_date` (no `visits[]` entry), and the convert moved `visits[]` only, so the estimate kept its date and the calendar showed the job twice: once as the estimate, once as the invoice (EST1214 / INV1214, Alana). Fixed in the app (`convertInvoice`) and on the server (`api/_lib/convert-estimate.js`, Approve & Sign and PayPal deposit). The seven converted estimates already doubled (EST1056, 1057, 1175, 1187, 1210, 1214, 1215) had their schedule cleared; their invoices keep it.

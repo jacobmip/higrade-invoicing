@@ -2290,7 +2290,7 @@ function findUnlinkedEventForVisit(inv, visit, events, claimed) {
 function calClaimedEventIds(invoices) {
   const claimed = new Set();
   (invoices || []).forEach(inv => (Array.isArray(inv.visits) ? inv.visits : [])
-    .forEach(v => { if (v?.eventId) claimed.add(v.eventId); }));
+    .forEach(v => { if (v?.eventId) claimed.add(GCal.eventKey(v.eventId)); }));
   return claimed;
 }
 
@@ -2354,7 +2354,7 @@ async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackM
         continue;
       }
 
-      const ev = nv.eventId ? byId.get(nv.eventId) : null;
+      const ev = nv.eventId ? byId.get(GCal.eventKey(nv.eventId)) : null;
 
       // Colour a booking this app did not create.
       //
@@ -8974,7 +8974,7 @@ function CalendarTab({ isAdmin, invoices, gcalAuthed, gcalMissing, onAuthChange,
         // A visit with no eventId may still have an event in Google, booked by
         // whoever wrote the visit. Fold it in here so it does not also draw as
         // a grey "Other" block; the sync stores the link on its next pass.
-        let linked = visit.eventId ? gcalById.get(visit.eventId) : null;
+        let linked = visit.eventId ? gcalById.get(GCal.eventKey(visit.eventId)) : null;
         if (!visit.eventId) {
           linked = findUnlinkedEventForVisit(inv, visit, gcalEvents, claimed);
           if (linked) claimed.add(linked.id);

@@ -147,6 +147,11 @@ export async function disconnect() {
 
 // ─── Events ────────────────────────────────────────────────────────────────
 
+// Lisa's bookings store the event's iCalUID ("abc@google.com"); the API and
+// listEvents use the bare id ("abc"). Compare and call with the bare one, or
+// the calendar draws the job twice (INV1214, 2026-11-17).
+export const eventKey = (id) => String(id || '').replace(/@google\.com$/, '');
+
 export async function listEvents(timeMin, timeMax) {
   const d = await call({ op: 'list', timeMin: timeMin.toISOString(), timeMax: timeMax.toISOString() });
   return d?.items || [];
@@ -161,18 +166,18 @@ export async function createEvent(event) {
 // Script carries a title, the lead notes and the job address, and moving its
 // date must not take those with it.
 export async function updateEvent(id, patch) {
-  return call({ op: 'update', id, patch });
+  return call({ op: 'update', id: eventKey(id), patch });
 }
 
 export async function deleteEvent(id) {
-  await call({ op: 'delete', id });
+  await call({ op: 'delete', id: eventKey(id) });
 }
 
 // Attendee changes on an existing event. The server reads the current attendee
 // list first (PATCH replaces it) and has Google email the invite or the
 // cancellation. Either side may be empty.
 export async function setEventAttendee(id, { add, remove } = {}) {
-  return call({ op: 'attendee', id, add: add || null, remove: remove || null });
+  return call({ op: 'attendee', id: eventKey(id), add: add || null, remove: remove || null });
 }
 
 // Email is not on profiles, so the server looks it up (admin only).
