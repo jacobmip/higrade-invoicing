@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.86.2 — 2026-11-18
+
+- Lisa (all channels, via lisa-soul.js) says back a deadline, address or date the customer already gave ("we have your Nov 19 deadline") instead of asking for it again. Phone Lisa kept asking Valente for a bid deadline he had put in his Yelp message.
+- Phone test "outbound: contractor asks where to email drawings" now fails on any deadline re-ask, so the miss can no longer pass on a lenient grade.
+
 ## v1.86.1 — 2026-11-18
 
 - Text Lisa no longer answers tapback reactions ("Liked ...", "Reacted 👍 to ..."). She answered Lynn's thumbs-up with a send-off.

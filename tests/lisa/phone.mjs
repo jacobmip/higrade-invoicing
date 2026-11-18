@@ -180,8 +180,8 @@ const CASES = [
     tools: { lookupClient: { found: false, appointments: [], recent_contact: [{ when: 'today', channel: 'yelp', from: 'customer', said: 'Need a plumbing bid for a build-out at 275 Beach Walk, Alphabet Construction. Bids due Nov 19.' }] } },
     turns: ['This is Valente.', ['assistant', 'Hi Valente! I\'m following up on your Yelp message about the bid for 275 Beach Walk. Is now an okay time?'], 'Yeah. Where can I send you the drawings?'],
     must: [[/H,? ?I,? grade plumbing|higradeplumbing/i, 'did not give the email'], [/gmail/i, 'did not say gmail']],
-    mustNot: [[/team will (email|send)|send (you )?(the|our) (email|address)/i, 'promised to send the address later']],
-    expect: 'Gives the email, H I grade plumbing at gmail dot com, asks for the drawings and the deadline, and does not push a site visit first.',
+    mustNot: [[/team will (email|send)|send (you )?(the|our) (email|address)/i, 'promised to send the address later'], [/(include|send|share|let us know|what'?s|when'?s|what is|when is)[^.?!]{0,20}(your |the )?(deadline|due date|bid date)|when (are|is) (the )?bids? due/i, 'asked for the deadline he already gave (Nov 19)']],
+    expect: 'Gives the email, H I grade plumbing at gmail dot com, asks for the drawings, says back the Nov 19 deadline instead of asking for it, and does not push a site visit first.',
   },
   {
     name: 'outbound: asked not to call again',
