@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.27 — 2026-11-17
+
+- Text Lisa no longer drops a new time from a customer who already has a visit booked. Only their own visit's time is dropped; any other agreed time goes to Jake ("second visit or a move?") and the customer hears "works on our end, let me confirm with the team". Yelp had the same fix in v1.85.12.
+- Text Lisa never tells a customer they are booked unless this turn books or moves something, or they already have a visit. Otherwise the reply becomes "let me get it locked in" and Jake gets an URGENT Telegram. `claimsBooking()` moved to `lisa-guards.js`, shared by text and Yelp.
+- Text Lisa's `max_tokens` 1200 -> 4000. Thinking counts against it, and on a harder turn it used 1031 tokens thinking and cut the reply off, so the customer got nothing. An unreadable draft now Telegrams Jake.
+- Lisa tests: the graders get today's date (correct "tomorrow" replies were failing), a new case for a booked customer agreeing a second time, and two cases with a too-strict check or missing grader context fixed.
+- Migration 129 (price book hours and materials) committed; it was applied 2026-11-16.
 ## v1.85.26 — 2026-11-17
 
 - Text Lisa can rebook an estimate whose last visit already happened. `push_invoice_to_calendar` skips any doc that already has a `gcal_event_id`, so when Mariane said yes to Friday 12 PM, EST1211 kept last week's event and nothing reached Google; Lisa still told her she was booked. Both booking paths (`bookOnEstimate` and the filing re-check) now drop the past visit's event id along with the new `gcal_date` (the old event stays on the calendar as history), so the push creates the new one, and bump `updated_at` so an open app form cannot silently save the old date back.

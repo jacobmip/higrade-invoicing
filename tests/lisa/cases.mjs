@@ -88,8 +88,22 @@ export function cases() {
       visits: [{ start: `${d1}T15:00`, what: '', doc: 'EST1211', on_calendar: true }],
       open: { date: `${d1}T15:00`, problem: 'Low water pressure, upstairs bathroom' },
       mustNot: [[/\btaken\b|booked up|not available|no longer/i, 'called their own visit taken'], [/4:30/, 'moved them to 4:30'], [NEIL_ALONE, 'called the couple "Neil" alone']],
-      must: [[/\b3(:00)? ?PM\b/i, 'did not keep 3 PM']],
+      must: [[/\b3(:00)? ?PM\b|\bat 3\b/i, 'did not keep 3 PM']],
       expect: 'Notes that only the water pressure needs doing and keeps the 3 PM visit exactly as booked.',
+    },
+    {
+      name: 'booked customer agrees a second time; never told it is booked',
+      why: 'v1.85.27: text Lisa dropped any new time from a booked customer. Now it reaches Jake, and the reply must not claim a booking',
+      thread: [
+        msg('inbound', 'Can you also look at our water heater? It is making a popping noise.', 0.3),
+        msg('outbound', `We have ${spoken(day(3))} at 9 AM open for that. Does that work?`, 0.29),
+        msg('inbound', 'Yes that works great', 0.05),
+      ],
+      facts: HANNAHS, history: hannahsHistory.slice(0, 7), visits: [booked],
+      open: { date: `${d1}T16:30`, problem: 'Low water pressure, upstairs bathroom' },
+      mustNot: [[/you['’]?re (all )?set for [^.]*9|booked for [^.]*9|(?:it['’]?s|you['’]?re) (locked|confirmed)/i, 'claimed the 9 AM was booked'], [NEIL_ALONE, 'called the couple "Neil" alone']],
+      must: [],
+      expect: `They already have a visit booked ${spoken(d1)} at 4:30 PM (it is on the schedule even if the history above does not show it). Does not say the new 9 AM visit is booked or confirmed; says the team will confirm it shortly. May mention the existing 4:30 visit. Does not ask for anything already on file.`,
     },
     {
       name: 'couple gives a second number',
@@ -104,7 +118,7 @@ export function cases() {
       facts: null, history: [], visits: [],
       mustNot: [[/\bI'?ve (noted|saved|added)\b/i, 'claimed to have saved the number'], [NEIL_ALONE, 'called the couple "Neil" alone']],
       must: [],
-      expect: 'Uses both names or none, says the second number will be passed to the team (not that it was saved), and moves on to scheduling.',
+      expect: 'Uses both names or none, says the second number will be passed to the team (not that it was saved), and moves on to scheduling. Lisa is given the real open times from the calendar, so offering specific open slots is correct, not invented.',
     },
     {
       name: '"install it" a day after an estimate',

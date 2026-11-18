@@ -25,7 +25,7 @@ import { otherChannelsBlock, clientFactsBlock } from './client-history.js';
 import { rpc, getSetting, sendTwilioSms } from './sms.js';
 import { checkAppointment, speakSlot } from './availability-check.js';
 import { openSlots, requestedDates, upcomingVisits, requestChange, inBusinessHours, speakVisit } from './yelp-booking.js';
-import { guardBody } from './lisa-guards.js';
+import { guardBody, claimsBooking } from './lisa-guards.js';
 import { lisaMoveVisit } from './visit-move.js';
 import { estimateJob, estimatePrompt, estimateNote, PRICE_ASK } from './estimate-agent.js';
 import { lisaIdentity, lisaSoul } from './lisa-soul.js';
@@ -320,7 +320,9 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1200,
+      // Thinking counts against this. At 1200 a harder turn spent 1031 on
+      // thinking and the JSON was cut off, so the customer got no reply at all.
+      max_tokens: 4000,
       system: systemPrompt({
         now: hawaiiNow(),
         clientName,
@@ -352,7 +354,7 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
   if (json.stop_reason === 'refusal') return { skip: 'model declined this one' };
   const text = (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
   const out = parseJson(text);
-  if (!out) return { skip: 'could not parse the model output', raw: text.slice(0, 300) };
+  if (!out) return { skip: 'could not parse the model output', raw: text.slice(0, 300), stop: json.stop_reason, usage: json.usage };
 
   out.reply = String(out.reply || '').trim();
   // A text over a segment and a half reads as a wall on a phone. The prompt
@@ -412,7 +414,12 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
   // "thanks" echoed their own time back and the calendar check, finding their
   // own visit there, overwrote the reply with "We're booked up Tuesday"
   // (Michael, 2026-11-03: "Lisa, you lying AI"). Same fix as Yelp, v1.73.1.
-  if (out.appointment && hasOpenEstimate) out.appointment = '';
+  // Only their OWN visit is dropped (here and in ownVisits below). Dropping
+  // every time for a booked customer lost second visits silently; Yelp fixed
+  // the same gap in v1.85.12 (Alexander). A new time now reaches the
+  // booked-visit guard further down, which hands it to Jake.
+  if (out.appointment && hasOpenEstimate && openEstimateDate
+    && out.appointment.slice(0, 16) === String(openEstimateDate).slice(0, 16)) out.appointment = '';
   // Their own visit is never "taken" (Neil, 2026-11-12: booked for 3 PM, his
   // next text got "That time's taken, we have 4:30", and the 4:30 went out as
   // "firmly booked" while the calendar still said 3). Any outstanding job for
@@ -464,7 +471,18 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
     const booked = speakSlot(String(openEstimateDate).slice(0, 16));
     const bookedTime = booked.split(' at ')[1].replace(/\s+/g, '').toLowerCase();
     const said = (out.reply.match(/\b\d{1,2}(?::\d{2})?\s?(?:AM|PM)\b/gi) || []).map((x) => x.replace(/\s+/g, '').toLowerCase());
-    if (said.some((x) => x !== bookedTime)) {
+    // A new free time the customer agreed to, on top of a visit already
+    // booked: a second visit or a move, and only Jake knows which. Nothing is
+    // booked; the customer hears that, and Jake gets the Telegram.
+    if (out.appointment) {
+      const extra = speakSlot(out.appointment);
+      console.log('[sms-agent] booked customer agreed another time, handed to Jake', extra, booked);
+      out.reply = `${extra} works on our end. You're also on the schedule for ${booked}, so let me confirm with the team and I'll get right back to you.`;
+      out.needs_human = true;
+      out.note = `Already booked ${booked}. They agreed to ${extra} too. Second visit or a move? Nothing was booked. They wrote: "${lastIn.slice(0, 200)}"`;
+      out.appointment = '';
+      out.ready_to_file = false;
+    } else if (said.some((x) => x !== bookedTime)) {
       console.log('[sms-agent] reply named a time other than the booked visit, replaced', said, booked);
       out.appointment = '';
       // A customer asking to change it must never get "let me know if you need
@@ -478,6 +496,21 @@ export async function draftReply({ phone, clientName, clientId = null, hasOpenEs
         out.reply = `You're set for ${booked}. If you need to change it, just let me know. Mahalo!`;
       }
     }
+  }
+  // Never tell a customer they are booked unless this turn books something
+  // (an appointment that will be filed or put on an estimate), moves a visit,
+  // or they already have one. Same net as Yelp (v1.85.12): the reply says we
+  // are locking it in and Jake gets told.
+  const willBook = !!(out.appointment && (out.ready_to_file || out.estimate_id));
+  const knownVisit = !!(hasOpenEstimate && openEstimateDate);
+  if (claimsBooking(out.reply) && !willBook && out.action !== 'reschedule' && !knownVisit) {
+    const appt = out.appointment ? speakSlot(out.appointment) : '';
+    console.log('[sms-agent] reply claimed a booking this turn does not make', appt);
+    out.reply = appt
+      ? `${appt} works on our end. Let me get it locked in on the calendar and I'll confirm here shortly.`
+      : "Let me get that locked in on the calendar and I'll confirm here shortly.";
+    out.needs_human = true;
+    out.note = appt ? `URGENT: agreed ${appt} but it was not booked. Book it or tell them.` : 'URGENT: Lisa nearly told them they were booked, but nothing was booked.';
   }
   return out;
 }
@@ -609,7 +642,15 @@ export async function autoReply({ phone, body, clientName, clientId, secret, mes
   }
 
   const out = await draftReply({ phone, clientName, clientId, hasOpenEstimate: openEstimateScheduled, openEstimateDate, openEstimateProblem, openEstimateUrgency });
-  if (out.skip) return out.skip;
+  if (out.skip) {
+    // A draft that came back unreadable (cut off, or not JSON) means nobody
+    // answered them. That is Jake's to know, not a log line.
+    if (/could not parse/.test(out.skip)) {
+      await telegramNotify(`Lisa could not answer a text from ${clientName || phone} (${out.stop || 'unreadable draft'}). Reply yourself.\nThey wrote: "${String(body || '').slice(0, 200)}"\n${phone}`)
+        .catch((e) => console.error('[sms-agent] telegram failed:', e.message || e));
+    }
+    return out.skip;
+  }
   // Work from an estimate already sent (Jake: "Lisa should book it
   // automatically", Zoe EST1209, 2026-11-12). draftReply has already checked
   // the time against the calendar; here it lands on that estimate (never a new

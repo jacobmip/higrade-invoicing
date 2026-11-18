@@ -26,7 +26,7 @@ import { telegramNotify } from './convert-estimate.js';
 import { promisedFollowUp } from './promises.js';
 import { notifyAll } from './notify.js';
 import { sentEstimates, sentEstimatesPrompt, bookOnEstimate } from './estimate-booking.js';
-import { cleanStyle, checkPrices, scrubOwner, styleFlags } from './lisa-guards.js';
+import { cleanStyle, checkPrices, scrubOwner, styleFlags, claimsBooking } from './lisa-guards.js';
 import { estimateJob, estimatePrompt, estimateNote, PRICE_ASK } from './estimate-agent.js';
 import { lisaIdentity, lisaSoul } from './lisa-soul.js';
 import { serviceFees, serviceFeeRule } from './service-fees.js';
@@ -260,10 +260,8 @@ function parseJson(text) {
 // the draft must not be sent.
 // Topics Lisa never quotes sight unseen, and the ceiling on any auto quote.
 
-/** True when a reply tells the customer a visit is booked. */
-export function claimsBooking(text) {
-  return /\b(you['’]?re (all )?set|you['’]?re booked|is booked(?! up)|(it['’]?s|you['’]?re) (locked|confirmed)|we['’]?ll see you)\b/i.test(String(text || ''));
-}
+// claimsBooking lives in lisa-guards.js now (text uses it too); re-exported for tests.
+export { claimsBooking };
 
 export function polish(raw, { firstName, isFirstReply, prices, estimate = null }) {
   // The checks every channel shares (lisa-guards.js) run on the body; this

@@ -147,3 +147,8 @@ export function guardBody(body, { prices, estimate = null }) {
     quoted: b.quoted || null,
   };
 }
+
+/** True when a reply tells the customer a visit is booked. Shared by Yelp and text. */
+export function claimsBooking(text) {
+  return /\b(you['’]?re (all )?set|you['’]?re booked|is booked(?! up)|(it['’]?s|you['’]?re) (locked|confirmed)|we['’]?ll see you)\b/i.test(String(text || ''));
+}

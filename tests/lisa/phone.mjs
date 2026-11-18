@@ -15,6 +15,10 @@ import { join } from 'node:path';
 import { buildPrompt, sb } from '../../scripts/phone-prompt.mjs';
 import { day } from './cases.mjs';
 
+// The grader cannot see the clock, so a correct "tomorrow" read as a guess.
+// Lisa's prompt carries today's date; the grader gets the same.
+const TODAY = (() => { const d = new Date(Date.now() - 10 * 3600e3); return `${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getUTCDay()]} ${d.toISOString().slice(0, 10)}`; })();
+
 const ASSISTANT = 'a8879563-6da0-44cb-94bb-41cb37c78005';
 const OUTBOUND = 'ebd3867d-6226-403d-8a0b-60ba41357159';
 const CALLER = '+18085550147';
@@ -198,7 +202,7 @@ async function grade(c, reply) {
     body: JSON.stringify({
       model: 'claude-opus-5-5', max_tokens: 2000, output_config: { effort: 'low' },
       system: 'You grade one spoken reply a plumbing company phone receptionist (Lisa) gave a caller. Be strict about facts: any contradiction of the tool results, any question about something already known, any invented promise is a FAIL. Tone nitpicks are not failures. Answer with JSON only: {"pass": true|false, "reason": "one sentence"}',
-      messages: [{ role: 'user', content: `${c.call ? `LISA PLACED THIS CALL. Why: ${c.call.purpose}\n\n` : ''}TOOL RESULTS SHE HAD\n${JSON.stringify(c.tools)}\n\nTHE CALL\n${c.turns.map((t) => (Array.isArray(t) ? `Lisa: ${t[1]}` : `Caller: ${t}`)).join('\n')}\n\nHER REPLY\n${reply}\n\nA GOOD REPLY\n${c.expect}` }],
+      messages: [{ role: 'user', content: `TODAY IN HAWAII: ${TODAY}\n\n${c.call ? `LISA PLACED THIS CALL. Why: ${c.call.purpose}\n\n` : ''}TOOL RESULTS SHE HAD\n${JSON.stringify(c.tools)}\n\nTHE CALL\n${c.turns.map((t) => (Array.isArray(t) ? `Lisa: ${t[1]}` : `Caller: ${t}`)).join('\n')}\n\nHER REPLY\n${reply}\n\nA GOOD REPLY\n${c.expect}` }],
     }),
   });
   const j = await res.json().catch(() => ({}));
