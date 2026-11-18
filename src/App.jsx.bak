@@ -2294,6 +2294,42 @@ function calClaimedEventIds(invoices) {
   return claimed;
 }
 
+// Puts the apprentice and commission tech on every upcoming visit's Google
+// event, so the job shows in their own Google Calendar app (Jake, 2026-11-17:
+// "much faster than the invoice app"). Covers what assigning in the app cannot:
+// jobs Lisa books, visits added or rebooked later, and jobs assigned before
+// this existed. Uses the events the reconcile already fetched; one attendee
+// PATCH per missing invite, and Google emails the invite. Admin only.
+const crewEmailCache = new Map();
+function crewEmail(id) {
+  if (!crewEmailCache.has(id)) crewEmailCache.set(id, GCal.techEmail(id).catch(() => null));
+  return crewEmailCache.get(id);
+}
+async function syncCrewInvites(invoices, events, skipIds) {
+  const byId = new Map((events || []).filter(e => e?.id).map(e => [e.id, e]));
+  const today = new Date(Date.now() - 10 * 3600e3).toISOString().slice(0, 10);
+  for (const inv of (invoices || [])) {
+    if (inv.deletedAt || inv.status === "converted") continue;
+    const crew = [inv.apprenticeId, inv.commissionTechId].filter(id => id && !skipIds.has(id));
+    if (!crew.length) continue;
+    const visits = Array.isArray(inv.visits) && inv.visits.length
+      ? inv.visits
+      : (inv.gcalDate ? [{ start: inv.gcalDate, eventId: inv.gcalEventId }] : []);
+    for (const v of visits) {
+      if (!v?.eventId || String(v.start || "").slice(0, 10) < today) continue;
+      const ev = byId.get(GCal.eventKey(v.eventId));
+      if (!ev) continue;
+      const have = new Set((ev.attendees || []).map(a => String(a.email || "").toLowerCase()));
+      for (const id of crew) {
+        const email = String((await crewEmail(id)) || "").toLowerCase();
+        if (!email || have.has(email)) continue;
+        try { await GCal.setEventAttendee(ev.id, { add: email }); have.add(email); ev.attendees = [...(ev.attendees || []), { email }]; }
+        catch (e) { console.warn("[crew invite] failed", inv.id, e?.message || e); }
+      }
+    }
+  }
+}
+
 // Returns [{ id, visits }] for the invoices that actually changed.
 async function reconcileVisitsWithGoogle({ invoices, events, canWrite, fallbackMinutes, pushed }) {
   const byId = new Map((events || []).filter(e => e?.id).map(e => [e.id, e]));
@@ -14091,6 +14127,12 @@ export default function App() {
         pushed: pushedVisitsRef.current,
       });
       await applyVisitUpdates(updates);
+      if (isAdmin) {
+        // Admins (Jake) are never invited to their own calendar.
+        const skip = new Set((allUsers || []).filter(u => u.role === "admin").map(u => u.id));
+        if (profile?.id) skip.add(profile.id);
+        await syncCrewInvites(dataRef.current.invoices, events, skip);
+      }
     } catch (e) {
       console.warn('[sync] reconcile failed:', e?.message || e);
     } finally {
