@@ -107,6 +107,28 @@ async function chargeType(intent) {
   }
 }
 
+// Paid-in-full receipt. This route is edge and receipt.js needs node, so it
+// goes through sms-inbound's send_receipt op with the webhook secret. Never
+// throws: a missed receipt must not fail the webhook and make Stripe retry.
+async function requestReceipt(invoiceId) {
+  try {
+    const { url, headers } = supabaseCfg();
+    let secret = process.env.SMS_WEBHOOK_SECRET;
+    if (!secret) {
+      const rows = await fetch(`${url}/rest/v1/settings?key=eq.sms_webhook_secret&select=value&limit=1`, { headers }).then(r => r.json());
+      secret = rows?.[0]?.value;
+    }
+    if (!secret) throw new Error('no webhook secret');
+    const app = process.env.APP_URL || 'https://higrade-invoicing.vercel.app';
+    const r = await fetch(`${app}/api/sms-inbound`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ op: 'send_receipt', invoice_id: invoiceId, source: 'stripe' }),
+    });
+    if (!r.ok) throw new Error(`send_receipt ${r.status}`);
+  } catch (e) { console.error('[stripe] receipt failed', e); }
+}
+
 async function notify({ type, title, body, invoiceId, data }) {
   const { url, headers } = supabaseCfg();
   // In-app bell. Best effort: a notification must never fail the webhook,
@@ -198,6 +220,7 @@ export default async function handler(req) {
         });
         if (!r.deduped) {
           await reconcileInvoiceStatus(invoiceId);
+          await requestReceipt(invoiceId);
           await notify({
             type: 'payment',
             title: `Payment received: $${amount.toFixed(2)}`,

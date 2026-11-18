@@ -1,6 +1,7 @@
 import { supabase } from './supabase.js'
 import { canonicalMethod } from './paymentMethods.js'
 import * as GCal from './googleCalendar.js'
+import { api } from './apiBase.js'
 
 // ─── Shape helpers ────────────────────────────────────────────────────────────
 
@@ -678,6 +679,39 @@ function diffItems(before, after) {
 // 'CONCURRENT_EDIT' and we surface that as a tagged error.
 //
 // Returns the new updated_at so the caller can store it on the local copy.
+const honoluluDay = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Pacific/Honolulu' })
+
+function hasFreshPayment(payments) {
+  if (!Array.isArray(payments) || payments.length === 0) return false
+  const yesterday = honoluluDay(new Date(Date.now() - 864e5))
+  return payments.some(p => String(p?.date || '') >= yesterday)
+}
+
+// Fire-and-forget. A failed request only means no automatic receipt; the
+// manual Send buttons still work.
+// Autosave can save a paid invoice many times a minute, so ask at most every
+// 20 seconds per invoice, and never again once the server says it is done.
+const receiptDone = new Set()
+const receiptAsked = new Map()
+async function requestReceipt(invoiceId) {
+  if (receiptDone.has(invoiceId)) return
+  const last = receiptAsked.get(invoiceId) || 0
+  if (Date.now() - last < 20000) return
+  receiptAsked.set(invoiceId, Date.now())
+  try {
+    const { data } = await supabase.auth.getSession()
+    const token = data?.session?.access_token
+    if (!token) return
+    const r = await fetch(api('/api/sms-inbound'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ op: 'send_receipt', invoice_id: invoiceId, source: 'app' }),
+    })
+    const out = await r.json().catch(() => ({}))
+    if (out?.sent?.email || out?.sent?.text || out?.skipped === 'already sent') receiptDone.add(invoiceId)
+  } catch (e) { console.warn('receipt request failed:', e) }
+}
+
 export async function upsertInvoice(inv, isNew) {
   const payload = {
     inv: {
@@ -827,6 +861,13 @@ export async function upsertInvoice(inv, isNew) {
     supabase.from('invoices').update({ created_via: inv.createdVia || 'app_manual', created_from: inv.createdFrom || null })
       .eq('id', savedId)
       .then(({ error: viaErr }) => { if (viaErr) console.warn('created_via not saved:', viaErr.message) })
+  }
+  // Paid in full by this save? The server emails and texts the receipt once
+  // (api/_lib/receipt.js). Only asked when a payment is dated today or
+  // yesterday in Honolulu; the server re-checks that, the balance, and its
+  // one-time stamp, so an edit to an old paid job never sends one.
+  if (savedId && (inv.type || 'invoice') !== 'estimate' && hasFreshPayment(inv.payments)) {
+    requestReceipt(savedId)
   }
   if (isNew) {
     const m = /^(?:EST|INV)(\d+)$/.exec(savedId || '')

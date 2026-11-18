@@ -15,6 +15,7 @@
 // signature (without verification, anyone could POST a fake event).
 
 import { notifyAll } from './_lib/notify.js';
+import { sendPaidReceipt } from './_lib/receipt.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -173,6 +174,8 @@ export default async function handler(req, res) {
     // Notify only if the inline capture handler didn't already record this
     // payment. The deduped flag guarantees a single notification per capture.
     if (result?.ok && !result.deduped) {
+      try { await sendPaidReceipt(invoiceId, { source: 'paypal-webhook' }); }
+      catch (e) { console.error('[paypal-webhook] receipt failed:', e); }
       await notifyAll({
         type: 'payment',
         title: 'PayPal payment received',

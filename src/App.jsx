@@ -1591,6 +1591,18 @@ Here is your invoice {id} from HI Grade Plumbing for {total}. Tap the link to vi
 Mahalo,
 HI Grade Plumbing`;
 
+// Text when the invoice is already paid in full: a receipt, never "view and
+// pay". The email already switched (DEFAULT_INVOICE_PAID_MESSAGE); the text
+// did not until v1.85.20. Same wording as the automatic receipt in
+// api/_lib/receipt.js.
+const DEFAULT_INVOICE_PAID_TEXT = `Aloha {name},
+
+Mahalo for your payment! Your invoice {id} for {total} is paid in full. Here is your receipt:
+{link}
+
+Mahalo,
+HI Grade Plumbing`;
+
 const DEFAULT_ESTIMATE_TEXT = `Aloha {name},
 
 Here is your estimate {id} from HI Grade Plumbing for {total}. Tap the link to review and sign:
@@ -4932,11 +4944,16 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
       const name = client?.name || form.client || "";
       // Honor any custom text template the user saved in Settings, otherwise
       // fall back to the built-in default. All {variables} get filled in.
+      // Paid in full: a receipt, not a payment request. The saved custom
+      // template is a "view and pay" message, so it is skipped here.
+      const paidInFull = !isEst && t.paid > 0 && t.balance <= 0.01;
       const tpl = isEst
         ? (messageTemplates.text_estimate || DEFAULT_ESTIMATE_TEXT)
-        : (messageTemplates.text_invoice  || DEFAULT_INVOICE_TEXT);
+        : paidInFull
+          ? DEFAULT_INVOICE_PAID_TEXT
+          : (messageTemplates.text_invoice  || DEFAULT_INVOICE_TEXT);
       const body = renderTemplate(tpl, {
-        name,
+        name: (paidInFull && client?.first_name) || name,
         id: docNum,
         total: fmt(t.total),
         link: viewLink,

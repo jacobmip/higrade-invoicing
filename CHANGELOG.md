@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.20 — 2026-11-17
+
+- Send by text on a paid-in-full invoice now sends a receipt ("Mahalo for your payment! Your invoice INV1172 for $575.92 is paid in full. Here is your receipt:"), matching the email. It used to send "Tap the link to view and pay" no matter what (Jennifer Doan, INV1172).
+- Automatic receipt: when an invoice reaches a zero balance, the customer gets the receipt by email and by text, once (`api/_lib/receipt.js`, migration 130). Fires for PayPal, Stripe, and payments recorded in the app. Only for a payment dated today or yesterday, so editing an old paid job never sends one. Off switch: `settings.auto_receipt_enabled = 'false'`. Shows in History as a send.
 ## v1.85.19 — 2026-11-17
 
 - The bottom nav hides as soon as a text field is focused on a touch screen, not only when the visual viewport shrinks. iOS sometimes does not resize it, and the nav sat over the Messages reply box with the keyboard up.

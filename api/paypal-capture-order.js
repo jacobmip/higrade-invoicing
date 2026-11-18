@@ -14,6 +14,7 @@
 // converted_to_id so the in-app history view can show both.
 
 import { notifyAll } from './_lib/notify.js';
+import { sendPaidReceipt } from './_lib/receipt.js';
 import { supabaseCfg, convertEstimateToInvoice, reconcileInvoiceStatus, telegramNotify } from './_lib/convert-estimate.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -198,6 +199,9 @@ export default async function handler(req, res) {
     if (recordResult?.ok && !recordResult.deduped) {
       try { await reconcileInvoiceStatus(targetInvoiceId); }
       catch (e) { console.error('[paypal-capture] status reconcile failed:', e); }
+      // Paid in full now? Email and text the receipt (skips itself otherwise).
+      try { await sendPaidReceipt(targetInvoiceId, { source: 'paypal' }); }
+      catch (e) { console.error('[paypal-capture] receipt failed:', e); }
     }
 
     // Fire an in-app notification + APNs push, but only on the first time

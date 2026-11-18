@@ -48,6 +48,7 @@ import { handleChangeOrderReply, sendChangeOrder, previewChangeOrder } from './_
 import { proposeInBackground } from './_lib/lead-estimate.js';
 import { draftYelpReply, logYelpBusinessMessage, setYelpPhone, generateYelpBump, sendYelpMessage } from './_lib/yelp-agent.js';
 import { placeCheckinCall } from './_lib/ivr-checkin.js';
+import { sendPaidReceipt } from './_lib/receipt.js';
 import { lisaMoveVisit } from './_lib/visit-move.js';
 import { matchClient, upcomingVisits, speakVisit } from './_lib/yelp-booking.js';
 
@@ -231,6 +232,15 @@ async function appSend(req, res) {
     if (params.op === 'phone_move_visit') {
       if (!viaSecret) return jsonOut(res, 403, { error: 'secret required' });
       return jsonOut(res, 200, await phoneMoveVisit(params));
+    }
+    // Paid-in-full receipt by email and text, once (./_lib/receipt.js). The app
+    // calls it after a save with a payment; stripe-webhook.js (edge) calls it
+    // with the secret. It decides for itself whether anything is due.
+    if (params.op === 'send_receipt') {
+      const invoiceId = String(params.invoice_id || '').trim();
+      if (!invoiceId) return jsonOut(res, 400, { error: 'invoice_id is required' });
+      const r = await sendPaidReceipt(invoiceId, { source: String(params.source || (viaSecret ? 'secret' : 'app')) });
+      return jsonOut(res, 200, { ok: true, ...r });
     }
     if (params.op === 'place_call') {
       if (!user) return jsonOut(res, 403, { error: 'admin only' });
