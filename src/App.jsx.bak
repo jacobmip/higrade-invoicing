@@ -3516,7 +3516,7 @@ function PDFPreview({ form, clients, photos = [], changeOrders = null, coJobId =
         )}
         <div style={{ background: NAVY, padding: "13px 24px", textAlign: "center" }}>
           <div style={{ color: "#8899bb", fontSize: 11 }}>Thank you for your business!</div>
-          <div style={{ color: "#6677aa", fontSize: 10, marginTop: 3 }}>higradeplumbing.com · (808) 393-0015</div>
+          <div style={{ color: "#6677aa", fontSize: 10, marginTop: 3 }}>higradeplumbing.com · (808) 444-5450</div>
           <div style={{ color: "#6677aa", fontSize: 10, marginTop: 2 }}>Pay via Venmo: @HIGP808 · PayPal · Cash · Check</div>
         </div>
       </div>
@@ -9429,7 +9429,7 @@ function PayPalCheckout({ token, invoiceId, balance, onPaid, clientId }) {
               if (onPaid) onPaid(out);
             } catch (e) {
               setStatus('error');
-              setErrorMsg('Payment captured but the receipt could not be saved. Please contact us at 808-393-0015 with your PayPal receipt.');
+              setErrorMsg('Payment captured but the receipt could not be saved. Please contact us at 808-444-5450 with your PayPal receipt.');
             }
           },
 
@@ -9558,7 +9558,7 @@ function PublicViewerPage({ token }) {
       </div>
       <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: 22, color: NAVY, marginBottom: 6 }}>Link not available</div>
       <div style={{ color: '#888', fontSize: 14, maxWidth: 320 }}>This invoice link is no longer valid. Please contact HI Grade Plumbing for a fresh copy.</div>
-      <div style={{ color: '#aaa', fontSize: 12, marginTop: 16 }}>808-393-0015 · higradeplumbing@gmail.com</div>
+      <div style={{ color: '#aaa', fontSize: 12, marginTop: 16 }}>808-444-5450 · higradeplumbing@gmail.com</div>
     </div>
   );
 
@@ -9994,7 +9994,7 @@ function PublicViewerPage({ token }) {
                 ? 'Click Review & Sign above to approve this estimate.'
                 : (balance > 0 ? 'Pay online with the button above, or by check, Venmo, or Zelle.' : 'This invoice has been paid in full. Mahalo!')}
             </div>
-            <div style={{ color: '#fff', fontSize: 13, marginTop: 12 }}>808-393-0015 · higradeplumbing@gmail.com</div>
+            <div style={{ color: '#fff', fontSize: 13, marginTop: 12 }}>808-444-5450 · higradeplumbing@gmail.com</div>
           </div>
         </div>
       </div>
@@ -10103,7 +10103,7 @@ function PublicViewerPage({ token }) {
         <PDFPreview form={invForm} clients={[]} photos={state.photos || []} changeOrders={state.changeOrders || null} coJobId={state.coJobId || null} />
         {/* Footer */}
         <div style={{ textAlign: 'center', color: '#aaa', fontSize: 12, padding: '20px 16px 0' }}>
-          Questions? Call or text 808-393-0015<br />higradeplumbing@gmail.com
+          Questions? Call or text 808-444-5450<br />higradeplumbing@gmail.com
         </div>
       </div>
     </div>
@@ -12401,7 +12401,7 @@ function LoginScreen({ onSuccess }) {
           </button>
         </form>
         <div style={{ textAlign: "center", color: "#888", fontSize: 11, marginTop: 18 }}>
-          Trouble signing in? Reset your password from the Supabase dashboard or call (808) 393-0015.
+          Trouble signing in? Reset your password from the Supabase dashboard or call (808) 444-5450.
         </div>
       </div>
     </div>
