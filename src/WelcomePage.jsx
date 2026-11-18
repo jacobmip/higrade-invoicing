@@ -205,7 +205,7 @@ export function PendingSetupScreen({ name, onRecheck, onSignOut }) {
           style={{ width: "100%", padding: "10px 16px", background: "#fff", color: "#778", border: "1px solid #d8dbe2", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
           Sign out
         </button>
-        <div style={{ textAlign: "center", color: "#888", fontSize: 11, marginTop: 16 }}>Questions? Call (808) 393-0015.</div>
+        <div style={{ textAlign: "center", color: "#888", fontSize: 11, marginTop: 16 }}>Questions? Call (808) 444-5450.</div>
       </div>
     </div>
   );

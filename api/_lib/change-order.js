@@ -223,7 +223,7 @@ export function changeOrderEmail(co, inv) {
             <p style="color:#999;font-size:12px;margin:10px 0 0;">Nothing is due now. Approving adds this work to your invoice.</p>
           </div>
         </div>
-        <p style="color:#666;margin-top:20px;font-size:13px;">Questions? Call or text us at <strong>808-393-0015</strong><br>Email: higradeplumbing@gmail.com</p>
+        <p style="color:#666;margin-top:20px;font-size:13px;">Questions? Call or text us at <strong>808-444-5450</strong><br>Email: higradeplumbing@gmail.com</p>
         <p style="color:#888;font-size:12px;margin:14px 0 0;text-align:center;">Trouble with the button? Copy/paste this URL:<br><span style="color:#3070b8;word-break:break-all;">${esc(link)}</span></p>
       </div>
       <div style="background: #0a1628; padding: 16px; text-align: center;">

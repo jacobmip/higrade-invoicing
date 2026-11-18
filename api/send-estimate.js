@@ -51,7 +51,7 @@ export default async function handler(req) {
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: #0a1628; padding: 24px; text-align: center;">
           <h1 style="color: #E8622A; margin: 0; font-size: 24px; letter-spacing: 2px;">HI GRADE PLUMBING LLC</h1>
-          <p style="color: #8899bb; margin: 4px 0 0; font-size: 12px; letter-spacing: 1px;">HONOLULU, HAWAII · (808) 393-0015</p>
+          <p style="color: #8899bb; margin: 4px 0 0; font-size: 12px; letter-spacing: 1px;">HONOLULU, HAWAII · (808) 444-5450</p>
         </div>
         <div style="padding: 32px 24px; background: #f4f6fa;">
           <div style="background:#fff;border-radius:10px;padding:22px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,0.06);margin-bottom:20px;">
@@ -61,7 +61,7 @@ export default async function handler(req) {
           </div>
           <div style="color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 16px;">${messageHtml}</div>
           <p style="color: #666; margin-top: 24px; font-size: 13px; line-height: 1.6;">
-            Questions? Call or text us at <strong>808-393-0015</strong><br>
+            Questions? Call or text us at <strong>808-444-5450</strong><br>
             Email: higradeplumbing@gmail.com
           </p>
           ${fallbackUrl}

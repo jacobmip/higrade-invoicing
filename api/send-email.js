@@ -126,7 +126,7 @@ export default async function handler(req) {
             </p>
           </div>`}
           <p style="color: #666; margin-top: 20px; font-size: 13px;">
-            Questions? Call or text us at <strong>808-393-0015</strong><br>
+            Questions? Call or text us at <strong>808-444-5450</strong><br>
             Email: higradeplumbing@gmail.com
           </p>
           ${reviewBlock}

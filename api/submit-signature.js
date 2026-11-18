@@ -184,7 +184,7 @@ export default async function handler(req, res) {
             <div style="margin-top: 16px; background: #fff; padding: 16px; border-radius: 8px; border: 1px solid #eee;"><p style="color: #666; font-size: 13px; margin: 0 0 10px; font-weight: bold;">Client Signature:</p><img src="${signatureData}" style="max-width: 280px; border: 1px solid #dde; border-radius: 4px; background: #fff; padding: 8px; display: block;" /></div>
           </div>
           <div style="background: #0a1628; padding: 16px; text-align: center;">
-            <p style="color: #8899bb; font-size: 11px; margin: 0;">HI Grade Plumbing LLC · Honolulu, HI · (808) 393-0015</p>
+            <p style="color: #8899bb; font-size: 11px; margin: 0;">HI Grade Plumbing LLC · Honolulu, HI · (808) 444-5450</p>
           </div>
         </div>
       `;

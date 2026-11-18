@@ -1,5 +1,8 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.21 — 2026-11-17
+
+- Every customer-facing phone number is now 808-444-5450 (Lisa's line), not Jake's cell 808-393-0015: invoice, receipt, estimate and change order emails, the signed-estimate email, the printable PDF, the public invoice page, the PayPal error message and the welcome and sign-in pages. `settings.notify_to` (where Jake's alerts go) is unchanged.
 ## v1.85.20 — 2026-11-17
 
 - Send by text on a paid-in-full invoice now sends a receipt ("Mahalo for your payment! Your invoice INV1172 for $575.92 is paid in full. Here is your receipt:"), matching the email. It used to send "Tap the link to view and pay" no matter what (Jennifer Doan, INV1172).
