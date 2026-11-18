@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.85.25 — 2026-11-17
+
+- The apprentice gets the job in his own Google Calendar. Assigning an apprentice now adds him to the job's Google events (Google emails him the invite) and un-assigning takes him off, same as the commission tech already did. `updateCalendarAttendee` covers every visit's event, not just the first.
+- `syncCrewInvites()` runs with each calendar reconcile (admin only): any upcoming visit whose apprentice or commission tech is not on its Google event gets added. Catches jobs Lisa books, visits added later, and jobs assigned before this release. Admins are never invited.
 ## v1.85.24 — 2026-11-17
 
 - The calendar matches a visit to its Google event even when the saved id ends in `@google.com`. Lisa's bookings store the event's iCalUID, Google lists the bare id, so a converted job (INV1214, Alana) drew twice: once as the job and once as a grey "Other" copy of the same event. `GCal.eventKey()` strips the suffix for the calendar merge, the visit reconcile, and update/delete/attendee calls. 13 documents carry such ids.

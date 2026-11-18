@@ -1679,9 +1679,23 @@ export async function setClientLisaAutoreply(clientId, enabled) {
 }
 
 export async function setInvoiceApprentice(invoiceId, apprenticeId) {
+  const { data: before } = await supabase.from('invoices')
+    .select('apprentice_id').eq('id', invoiceId).maybeSingle()
+  const prevId = before?.apprentice_id || null
   const { error } = await supabase.from('invoices')
     .update({ apprentice_id: apprenticeId || null }).eq('id', invoiceId)
   if (error) throw error
+  // Same as the commission tech: put him on the job's Google events so it is
+  // in his own calendar app. Best effort, never fails the save.
+  if ((apprenticeId || null) !== prevId) {
+    try {
+      const [next, prev] = await Promise.all([
+        apprenticeId ? GCal.techEmail(apprenticeId) : null,
+        prevId ? GCal.techEmail(prevId) : null,
+      ])
+      await updateCalendarAttendee(invoiceId, next, prev)
+    } catch (e) { console.warn('apprentice calendar invite failed:', e) }
+  }
 }
 
 export async function setInvoiceCommissionTech(invoiceId, techId) {
@@ -1711,10 +1725,13 @@ export async function updateCalendarAttendee(invoiceId, techEmail, prevEmail = n
   if (!techEmail && !prevEmail) return false
   if (techEmail && techEmail === prevEmail) return false
   const { data, error } = await supabase.from('invoices')
-    .select('gcal_event_id').eq('id', invoiceId).maybeSingle()
+    .select('gcal_event_id, visits').eq('id', invoiceId).maybeSingle()
   if (error) throw error
-  if (!data?.gcal_event_id) return false
-  await GCal.setEventAttendee(data.gcal_event_id, { add: techEmail, remove: prevEmail })
+  // Every visit's event, not just the first: a two-day job is two events.
+  const ids = [...new Set([data?.gcal_event_id, ...(Array.isArray(data?.visits) ? data.visits.map(v => v?.eventId) : [])]
+    .filter(Boolean).map(GCal.eventKey))]
+  if (!ids.length) return false
+  for (const id of ids) await GCal.setEventAttendee(id, { add: techEmail, remove: prevEmail })
   return true
 }
 
