@@ -23,6 +23,7 @@ import { NAV_APPS, getNavApp, setNavApp } from './navApp.js';
 import { JobContactActions, JobClockButton } from './JobActions.jsx';
 import CallsTab from './CallsTab.jsx';
 import LocationLog from './LocationLog.jsx';
+import AIChatLog from './AIChatLog.jsx';
 import CallRecordings, { CallRecordingModal } from './CallRecordings.jsx';
 import PriceBook from './PriceBook.jsx';
 import { resolveBillTo, isJobSiteEcho } from './billTo.js';
@@ -37,6 +38,7 @@ import MessagesTab, { ClientThread, useUnreadMessages } from './Messages.jsx';
 import ClientCommunications from './Communications.jsx';
 import AddressAutocomplete from './AddressAutocomplete.jsx';
 import changelogRaw from '../CHANGELOG.md?raw';
+import { PRICING_BRAIN, priceBookLine, pastJobLines } from '../api/_lib/pricing-brain.js';
 // Note: ./printablePdf.js is dynamically imported only when the customer
 // taps "Print / Save PDF" on the public viewer page, so the heavy jsPDF
 // dependency stays out of the initial bundle.
@@ -519,7 +521,7 @@ function buildGlobalSystemPrompt(data) {
     }
     return line;
   }).join("\n");
-  const savedItemLines = (data.savedItems || []).map(i => `  ${i.name}: $${i.price}`).join("\n");
+  const savedItemLines = (data.savedItems || []).map(priceBookLine).join("\n");
 
   return `You are Jake's AI assistant for HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You have full control over the app.
 
@@ -536,14 +538,10 @@ ${estimateLines || "  (none)"}
 CLIENTS (Name | Email | Phone, with their saved billing address and job-site addresses indented below each):
 ${clientLines || "  (none)"}
 
-JAKE'S SAVED PRICES — always use these exact prices when generating estimates or invoices for matching jobs:
+PRICE BOOK (starting points with the labor hours and parts behind each price; rebuild them per the PRICING rules below, never copy one blindly):
 ${savedItemLines || "  (none saved yet)"}
 
-FALLBACK HONOLULU PRICING (only use if no saved price matches):
-Drain snake $300–$450 | Hydro-jet $550–$950 | Toilet repair $220–$380 | Toilet replace $550–$950
-Faucet repair $195–$350 | Faucet replace $450–$750 | Water heater elec 40gal $1,400–$2,200
-Water heater gas 40gal $1,800–$2,800 | Tankless $3,200–$5,500 | Sewer camera $350–$550
-Sewer spot repair $1,800–$4,500 | Gas line repair $800–$2,500 | Bathroom remodel $4,500–$12,000
+${PRICING_BRAIN}
 
 ACTIONS — respond with ONLY JSON, no markdown fences, no extra text.
 For a SINGLE action use a JSON object. For MULTIPLE actions use a JSON array:
@@ -616,8 +614,8 @@ Example — Jake says "Book Michael for the rough-in at 742 Kapahulu Ave next Mo
 RULES:
 - Match client names exactly as they appear in CLIENTS above. Always include the client field.
 - Never set date or dueDate on create_invoice — they are always set to today automatically. Do not include them in the JSON.
-- When generating an estimate or invoice, check JAKE'S SAVED PRICES first — if a match exists, use that exact price.
-- One flat-rate line item per job. Never add a separate service call.
+- Price every line by the PRICING rules above: Jake's past jobs and benchmarks first, the price book rebuilt to fit, add-on labor only for work on the same visit. Put the internal pricing note in your plain-text reply to Jake, never in a line item.
+- Separate line items for different fixtures or distinct work; closely related steps stay on one line. Never add a separate service call.
 - Item name: short title, 6 words max. Item desc: newline-separated work steps, no bullets or dashes, minimum 6 steps.
 - Category for save_item must be one of: Drain, Toilet, Faucet, Water Heater, Sewer, Gas, Service, Custom.
 - For plain questions or conversation, reply in plain text without JSON.
@@ -662,11 +660,15 @@ async function callAI(messages, systemPrompt = null, opts = {}) {
       messages,
       ...(systemPrompt ? { systemPrompt } : {}),
       ...(maxTokens ? { maxTokens } : {}),
+      // Pricing chats run on Opus with thinking (api/ai.js); one-line
+      // rewrites stay on the fast small model.
+      ...(opts.smart ? { quality: "pricing" } : {}),
     }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || data.error);
-  return data.content?.[0]?.text || "";
+  // With thinking on, the first block is the thinking, not the answer.
+  return (data.content || []).filter(b => b?.type === "text").map(b => b.text).join("\n") || "";
 }
 
 function extractActionsJSON(text) {
@@ -1142,6 +1144,11 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         invoiceContext += `\n\nCHANGE ORDER MODE IS ON: Jake is building change order ${currentInvoice.coModeSeq} on this invoice. The "Line items" listed above are THAT CHANGE ORDER's lines, not the invoice's. Use add_items / update_item / remove_item to build it (they change the change order, never the invoice). Do NOT use create_change_order now. When Jake says to send it, use send_change_order with seq ${currentInvoice.coModeSeq}.`;
       }
       if (readOnly) invoiceContext += "\n\nREAD-ONLY MODE: the person asking is an apprentice who cannot change anything. Answer questions about this job and how to do the work. Do NOT emit action JSON and do not offer to edit, create or schedule anything.";
+      // Jake's real billed prices for work like this, so the model anchors on
+      // his history instead of a list price (pricing-brain.js).
+      const pastQuery = [text, ...(currentInvoice?.items || []).map(it => it.name || "")].join(" ");
+      const pastLines = data ? pastJobLines(data.invoices || [], pastQuery, 30) : "";
+      if (pastLines) invoiceContext += `\n\nPAST JOBS LIKE THIS (date | doc | client | line | price; paid invoices are the strongest evidence):\n${pastLines}`;
       const systemPrompt = systemBase ? systemBase + invoiceContext : null;
       // Build history. Past user messages with photos get converted to
       // text-only references ("[photo from earlier]") so we don't blow
@@ -1167,8 +1174,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
           return { role: m.role === "user" ? "user" : "assistant", content: m.text || "" };
         });
       const first = history.findIndex(m => m.role === "user");
-      const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt);
+      const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt, { smart: true });
       const actions = readOnly ? [] : extractActionsJSON(reply);
+      db.logAiChat({ surface: "line_items", invoiceId: currentInvoice?.id || null, prompt: userMsg.text, reply, actions, photos: photosForSend.length, model: "claude-opus-5-5" });
       const cleanText = stripActionBlocks(reply);
 
       // Ghost-action guard: the model sometimes says it did something ("Done!
@@ -1184,7 +1192,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         const retryReply = await callAI(
           [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: retryPrompt }],
           systemPrompt,
-          { maxTokens: 8192 }
+          { maxTokens: 8192, smart: true }
         );
         const retryActions = extractActionsJSON(retryReply);
         if (retryActions.length) {
@@ -14766,6 +14774,7 @@ export default function App() {
   const moreNavItems = [
     ...(isAdmin ? [{ id: "calls", label: "Calls", icon: "phone" }] : []),
     ...(isAdmin ? [{ id: "location", label: "Location", icon: "pin" }] : []),
+    ...(isAdmin ? [{ id: "aichats", label: "AI Chats", icon: "ai" }] : []),
     { id: "timeclock", label: "Time Clock", icon: "clock"    },
     { id: "payments",  label: "Payments",   icon: "dollar"   },
     { id: "pricebook", label: "Price Book", icon: "items"    },
@@ -15018,6 +15027,7 @@ export default function App() {
         {tab === "calendar"  && <CalendarTab isAdmin={isAdmin && !effectiveOwnerId} invoices={filteredData.invoices} gcalAuthed={gcalAuthed} gcalMissing={gcalMissing} onAuthChange={setGcalAuthed} defaultJobMinutes={defaultJobMins} onOpenInvoice={openInvoiceById} focusDate={calendarFocus} onFocusConsumed={() => setCalendarFocus(null)} onEventsFetched={reconcileFromEvents} />}
         {tab === "calls" && isAdmin && <CallsTab isAdmin={isAdmin} setSubHeader={setSubHeader} onOpenInvoice={openInvoiceById} onOpenClient={(clientId) => { setView("list"); setTab("clients"); setOpenClientId(clientId); }} />}
         {tab === "location" && isAdmin && <LocationLog isAdmin={isAdmin} users={allUsers} onOpenInvoice={openInvoiceById} />}
+        {tab === "aichats" && isAdmin && <AIChatLog isAdmin={isAdmin} users={allUsers} onOpenInvoice={openInvoiceById} />}
         {tab === "timeclock" && <TimeClockTab invoices={filteredData.invoices || []} isAdmin={isAdmin} myId={session?.user?.id} users={allUsers} onOpenInvoice={openInvoiceById} onShiftChange={setOpenShift} activitySeg={activitySeg} />}
         {tab === "settings"  && <SettingsTab onAfterRestore={() => window.location.reload()} profile={profile} isAdmin={isAdmin} allUsers={allUsers} viewAsUserId={viewAsUserId} setViewAsUserId={setViewAsUserId} refreshUsers={refreshUsers} onSetTier={handleSetTier} />}
         {tab === "recently-deleted" && (
