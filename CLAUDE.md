@@ -550,12 +550,12 @@ below are the source of truth, and `ANTHROPIC_API_KEY` is the only AI key set).
 |---|---|---|
 | Per-invoice chat (`AIChatPanel`; on an invoice it also writes and sends change orders, see `src/ChangeOrders.jsx`) | `api/ai.js` with `quality: 'pricing'` (`pricingTurn`, keep-alive stream) | `claude-opus-5-5`, adaptive thinking, effort low, server-side fallback (v1.87.0; was Haiku 4.5). Other `callAI` uses (title rewrite) stay on `claude-haiku-4-5-20251001` |
 | Global chat agent (`GlobalAIModal`) | `api/ai.js` agent mode, `api/_lib/agent-tools.js`, `src/aiAgent.js` | `claude-opus-5-5` (v1.87.0; was Sonnet 5.5), effort medium, server-side fallback |
-| AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-sonnet-4-5-20250929` |
+| AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-opus-5-5`, effort low (v1.87.1; was Sonnet 4.5) |
 | Screenshot-to-client extractor (vision) | `api/_lib/extract-client.js`, via `api/ai-estimator.js` with `task: 'extract_client'` | `claude-sonnet-4-5-20250929` |
 | Receipt OCR to expense | `api/extract-receipt.js` | `claude-sonnet-4-6` |
 
 ### Pricing brain (v1.87.0)
-`api/_lib/pricing-brain.js` is the one pricing rulebook for the AI button (`buildGlobalSystemPrompt` + `AIChatPanel` in App.jsx) and the chat agent (`AGENT_SYSTEM` in agent-tools.js): Jake's master estimating prompt (2026-11-18). A pricing rule goes there, never into one prompt. `priceBookLine()` shows each saved item with its hours and parts at cost, so the model rebuilds a price instead of copying it (the old "use the exact saved price" rule quoted $1,180 for a ~$710 job). `pastJobLines()` ranks his past line items by word match, paid invoices first. `api/_lib/estimator.js` (`/api/ai-estimator`, lead ballparks) still has its own older rules.
+`api/_lib/pricing-brain.js` is the one pricing rulebook for the AI button (`buildGlobalSystemPrompt` + `AIChatPanel` in App.jsx) and the chat agent (`AGENT_SYSTEM` in agent-tools.js): Jake's master estimating prompt (2026-11-18). A pricing rule goes there, never into one prompt. `priceBookLine()` shows each saved item with its hours and parts at cost, so the model rebuilds a price instead of copying it (the old "use the exact saved price" rule quoted $1,180 for a ~$710 job). `pastJobLines()` ranks his past line items by word match, paid invoices first. Since v1.87.1 it also drives `api/_lib/estimator.js` (`/api/ai-estimator`, lead ballparks; Opus 5.5, `fetchPastJobs()`) and Lisa's `api/_lib/estimate-agent.js` (website ranges kept only as the market check; keep them in step with higrade-site).
 
 ### Global chat agent (v1.14.0)
 The header's AI button runs a tool-use agent, the same shape as the HI Grade

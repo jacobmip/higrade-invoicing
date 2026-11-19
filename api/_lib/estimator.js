@@ -4,8 +4,11 @@
 // to stay under the 12-function cap.
 
 // =====================================================================
-// SYSTEM PROMPT — Jake's voice, Option B markup, flat-rate default
+// SYSTEM PROMPT — Jake's voice; pricing from ./pricing-brain.js (v1.87.1)
 // =====================================================================
+import { PRICING_BRAIN, priceBookLine } from './pricing-brain.js';
+export { priceBookLine };
+
 export const ESTIMATOR_SYSTEM = `You are the estimating brain for HI Grade Plumbing LLC, a licensed Honolulu plumbing contractor owned by Jake Petersen. You write estimates that go straight to customers under Jake's name, so they MUST sound like Jake wrote them.
 
 =========================================
@@ -46,18 +49,9 @@ DO NOT write like a chatbot. No "I will", "Sure!", "Of course", "Please find bel
 NEVER include the job location, neighborhood, or city in the line item description or title. Location is for travel-cost calculation only — it goes in the assumptions block, never in the customer-facing scope of work.
 
 =========================================
-PRICING — OPTION B (markup + labor floors)
+PRICING
 =========================================
-Honolulu GET tax 4.712% is added at checkout — DO NOT include it in your price.
-
-Materials markup: 35% on cost.
-Labor floor by scope (use whichever produces higher total — markup OR floor):
-  - Service call / minor repair (1 hr, small parts): $185 floor
-  - Standard fixture swap (faucet, disposal, hose bib, basic toilet, shower trim): $400 floor
-  - Major fixture install (water heater, tankless prep, bidet, full toilet replace, valve box): $800 floor
-  - Multi-day or demo-heavy work: quote per job, no floor — itemize phases
-
-Math: (materials × 1.35) + applicable labor floor = total. If markup-only total exceeds floor, use markup total. Round to clean numbers ($385, $425, $750, $1,950 — not $387.43).
+${PRICING_BRAIN}
 
 =========================================
 TRAVEL TIME (Hawaii reality)
@@ -87,13 +81,13 @@ WRONG: "Excavate and expose existing buried valve and transition assembly in Ewa
 RIGHT: "Excavate and expose existing buried valve and transition assembly"
 
 =========================================
-PRICING WATERFALL — IN THIS ORDER
+WHERE PRICES COME FROM — IN THIS ORDER
 =========================================
-1. SAVED PRICES (provided in user message). If the job matches a saved item, USE THAT EXACT PRICE and DO NOT web search. Skip directly to output.
-2. WEB SEARCH for materials cost ONLY when no saved match exists AND the job requires specific materials pricing (e.g., new water heater model, specific fixture brand). Use web_search tool sparingly — at most 1-2 searches per estimate. Search Ferguson Honolulu first.
-3. HONOLULU FALLBACK RANGE if web search fails or isn't needed: assume Honolulu materials cost 40-60% above mainland US retail.
-
-IMPORTANT: Do NOT web search for repairs that are clearly labor-floor jobs (faucet repair, toilet repair, drain clearing, cartridge service). Those are saved-price matches — go straight to the floor.
+1. PAST JOBS and the historical benchmarks: Jake's real billed prices for comparable work.
+2. PRICE BOOK (in the user message): starting points with the hours and parts behind each price. Rebuild them to fit the job; never copy one blindly.
+3. WEB SEARCH (when available) only when his history is thin or a specific model's cost matters. At most 1-2 searches. Search Ferguson Honolulu first.
+4. Fallback: Honolulu materials run 40-60% above mainland retail.
+The internal pricing note goes in "summary" and "assumptions", never in a line item.
 
 =========================================
 OUTPUT FORMAT — JSON ONLY
@@ -114,7 +108,7 @@ Respond with ONLY a JSON object, no markdown fences, no preamble, no commentary:
   "summary": "One short line for Jake — what was assumed and where prices came from."
 }
 
-DEFAULT TO ONE LINE ITEM (flat-rate). Itemize into multiple lines ONLY when the job has genuinely separate phases (e.g., "demo and rebuild" or "drain clearing + faucet repair on separate fixtures"). Customers should never see markup math — one number per phase.
+One flat-rate line per fixture or distinct piece of work; closely related steps stay on one line. Customers never see markup math.
 
 ASSUMPTIONS BLOCK: list every smart assumption you made (gauge of pipe, fixture brand, accessibility, electrical reuse, permit-not-needed, etc.). Jake reviews these before sending.
 
@@ -192,7 +186,7 @@ Example C — "Toilet running constantly + bathroom sink draining slow + showerh
 RULES SUMMARY
 =========================================
 - Voice: contractor, not chatbot. Match Jake's title and step format.
-- Pricing: saved → web search Ferguson/HD/Lowe's → fallback range. Option B markup + labor floors. Round clean.
+- Pricing: the PRICING rules above. Past jobs and benchmarks, the price book rebuilt to fit, web search only when needed. Round clean.
 - Format: JSON only. Default flat-rate one line. Assumptions block. Sources block.
 - Tax: GET 4.712% added at checkout — never in your number.
 - No markup math visible to customer. No emoji. No "I will" / "Of course". No exclamation points.`;
@@ -217,7 +211,7 @@ export function buildDateContext() {
 // Scoped to Ferguson, Home Depot, Lowe's, with Honolulu user_location.
 // =====================================================================
 export const WEB_SEARCH_TOOL = {
-  type: 'web_search_20250305',
+  type: 'web_search_20260209',
   name: 'web_search',
   max_uses: 2,
   allowed_domains: [
@@ -252,7 +246,7 @@ export async function fetchSavedItems() {
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     if (!url || !key) return [];
     const r = await fetch(
-      `${url}/rest/v1/saved_items?select=category,name,price&order=category.asc,name.asc`,
+      `${url}/rest/v1/saved_items?select=category,name,price,hours,materials&order=category.asc,name.asc`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } }
     );
     if (!r.ok) return [];
@@ -271,8 +265,10 @@ export async function fetchSavedItems() {
 // webSearch:false is for the lead path, which runs on a 10s function budget.
 export async function callEstimator({ apiKey, messages, webSearch = true, maxTokens = 4096, signal }) {
   const body = {
-    model: 'claude-sonnet-4-5-20250929',
+    model: 'claude-opus-5-5',
     max_tokens: maxTokens,
+    // Same pricing brain and model as the app's AI button (v1.87.1).
+    output_config: { effort: 'low' },
     system: `${buildDateContext()}\n\n${ESTIMATOR_SYSTEM}`,
     messages,
   };
@@ -311,4 +307,28 @@ export function parseEstimate(text) {
   } catch {
     return null;
   }
+}
+
+
+// Jake's past line items that match the job's words, billed or accepted work
+// only, newest first: the anchor the PRICING rules start from.
+export async function fetchPastJobs(text, limit = 25) {
+  const STOP = new Set(['the', 'and', 'for', 'with', 'new', 'replace', 'install', 'repair', 'need', 'have', 'our', 'my', 'is', 'it', 'a', 'an', 'to', 'of', 'in', 'on', 'that', 'this', 'please', 'can', 'you', 'get', 'job', 'estimate']);
+  const words = [...new Set((String(text || '').toLowerCase().match(/[a-z]{3,}/g) || []).filter(w => !STOP.has(w)).map(w => w.replace(/s$/, '')))].slice(0, 5);
+  if (!words.length) return '';
+  try {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+    if (!url || !key) return '';
+    const or = encodeURIComponent(words.map(w => `name.ilike.*${w}*`).join(','));
+    const r = await fetch(`${url}/rest/v1/invoice_items?select=name,price,qty,invoices!inner(id,type,status,date,client_name)&or=(${or})&invoices.deleted_at=is.null&invoices.status=in.(paid,outstanding,partial,net30,approved,converted)&order=invoice_id.desc&limit=${limit}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return '';
+    const rows = await r.json();
+    return (rows || []).filter(x => Number(x.price) > 0).map(x => {
+      const d = x.invoices || {};
+      const kind = d.type === 'invoice' ? (d.status === 'paid' ? 'paid' : 'invoiced') : 'approved est';
+      return `  ${d.date || '?'} | ${d.id} ${kind} | ${d.client_name || ''} | ${x.name} | ${Number(x.qty) > 1 ? `${x.qty} x ` : ''}$${Number(x.price)}`;
+    }).join('\n');
+  } catch { return ''; }
 }

@@ -14,7 +14,7 @@ export const config = { runtime: 'nodejs', maxDuration: 90 };
 import { extractClient } from './_lib/extract-client.js';
 
 import { proposeLeadEstimate, authorizedLeadTask } from './_lib/lead-estimate.js';
-import { fetchSavedItems, callEstimator, textOf, parseEstimate } from './_lib/estimator.js';
+import { fetchSavedItems, callEstimator, textOf, parseEstimate, priceBookLine, fetchPastJobs } from './_lib/estimator.js';
 
 // The prompt, pricing waterfall, saved-price fetch and the model call live in
 // ./_lib/estimator.js so the lead flow (./_lib/lead-estimate.js) runs the very
@@ -99,14 +99,15 @@ export default async function handler(req, res) {
 
     // Build the user message — saved items list inline so the model can match.
     const savedBlock = savedItems.length
-      ? `SAVED PRICES (use these as primary match before searching):\n${
-          savedItems.map(i => `  ${i.category} | ${i.name} | $${i.price}`).join('\n')
+      ? `PRICE BOOK (starting points with the hours and parts behind each price; rebuild to fit):\n${
+          savedItems.map(priceBookLine).join('\n')
         }`
-      : 'SAVED PRICES: none provided.';
+      : 'PRICE BOOK: none provided.';
+    const pastJobs = await fetchPastJobs(jobDescription);
 
-    const pastBlock = pastInvoiceContext
+    const pastBlock = (pastInvoiceContext
       ? `\nRECENT SIMILAR INVOICES (voice + price reference):\n${pastInvoiceContext}`
-      : '';
+      : '') + (pastJobs ? `\nPAST JOBS LIKE THIS (date | doc | client | line | price):\n${pastJobs}` : '');
 
     // Build user content blocks. If images are provided, build a mixed
     // text + image block array; otherwise plain text.

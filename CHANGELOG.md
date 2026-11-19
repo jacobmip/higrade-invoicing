@@ -1,5 +1,10 @@
 # HI Grade Invoicing — Changelog
 
+## v1.87.1 — 2026-11-18
+
+- Every pricing AI now uses the one pricing brain (`api/_lib/pricing-brain.js`). Lisa's estimate agent (text, Yelp) anchors on Jake's past jobs and benchmarks first, with the website's ranges kept as the market check; it no longer marks parts a flat 1.35x. The AI estimator behind `/api/ai-estimator` and the lead ballparks drop "use the saved price exactly" and the 35% markup rule, see each price book item's hours and parts, get the 25 closest past line items, and run on Opus 5.5 (was Sonnet 4.5). Lead ballpark budget 8s to 25s.
+- Tested: Lisa's estimator 8 to 12s on three jobs (inside its 15s limit), each anchored on real invoices; lead ballpark for a disposal $495 against a paid $470.
+
 ## v1.87.0 — 2026-11-18
 
 - **AI pricing rebuilt from Jake's master estimating prompt.** The line-item AI button priced a faucet plus angle stops at $1,180 (fair price about $710): it copied two price book lines whole, a $239 Delta faucet baked into one and a second full 1.25 hr labor charge for the same sink. Now one shared pricing brain (`api/_lib/pricing-brain.js`) drives the AI button and the chat agent: Jake's past invoices first (paid invoices weigh most), his historical benchmarks, the price book as a starting point it rebuilds (it now sees each item's hours and parts), same-visit add-ons priced as extra time only, customer types (condo, commercial, property manager $150 dispatch, contractor, Sand & Sawdust), and an internal pricing note to Jake that never goes on the document.

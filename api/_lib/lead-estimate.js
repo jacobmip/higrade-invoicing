@@ -17,16 +17,17 @@
 
 import crypto from 'node:crypto';
 import { getSetting, secretMatches, webhookSecret, supabaseUrl } from './sms.js';
-import { fetchSavedItems, callEstimator, textOf, parseEstimate } from './estimator.js';
+import { fetchSavedItems, callEstimator, textOf, parseEstimate, priceBookLine, fetchPastJobs } from './estimator.js';
 
 // lead_channel values that get a ballpark. 'phone' and 'lisa' never do.
 const ELIGIBLE_CHANNELS = new Set(['web', 'sms', 'yelp']);
 // A line that is only the generic placeholder Lisa files does not count as pricing.
 const GENERIC_ITEM = /service call|diagnostic/i;
 const TELEGRAM_CHAT = process.env.TELEGRAM_CHAT_ID || '6234704324';
-// Hobby caps a function at 10s. Past this the model call is abandoned and the
+// Runs under waitUntil in its own invocation (ai-estimator.js). 25s, the same
+// budget as Lisa's estimate agent, which runs on the same model. Past this the
 // lead is simply left without a ballpark.
-const MODEL_BUDGET_MS = 8000;
+const MODEL_BUDGET_MS = 25000;
 
 function key() {
   return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -167,9 +168,10 @@ export async function proposeLeadEstimate({ invoiceId, problem }) {
   // covers the flat-rate jobs a text lead usually describes.
   const savedItems = await fetchSavedItems();
   const savedBlock = savedItems.length
-    ? `SAVED PRICES (use these as primary match before searching):\n${savedItems.map(i => `  ${i.category} | ${i.name} | $${i.price}`).join('\n')}`
-    : 'SAVED PRICES: none provided.';
-  const userText = `${savedBlock}\n\nJOB (from a customer text, no site visit yet):\n${job.slice(0, 1500)}\n\n` +
+    ? `PRICE BOOK (starting points with the hours and parts behind each price; rebuild to fit):\n${savedItems.map(priceBookLine).join('\n')}`
+    : 'PRICE BOOK: none provided.';
+  const pastJobs = await fetchPastJobs(job);
+  const userText = `${savedBlock}${pastJobs ? `\n\nPAST JOBS LIKE THIS (date | doc | client | line | price):\n${pastJobs}` : ''}\n\nJOB (from a customer text, no site visit yet):\n${job.slice(0, 1500)}\n\n` +
     `Service address, for the travel zone only, never in the line items: ${address}\n` +
     'Give a ballpark. Make smart assumptions rather than asking a question.';
 
