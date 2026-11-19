@@ -129,6 +129,7 @@ export default async function handler(req) {
   }
 
   if (body?.mode === 'agent') return agentTurn(apiKey, body.messages);
+  if (body?.quality === 'pricing') return pricingTurn(apiKey, body);
 
   try {
     const { messages, systemPrompt, maxTokens } = body;
@@ -175,6 +176,66 @@ export default async function handler(req) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+// ─── Pricing mode ────────────────────────────────────────────────────────────
+// The line-item AI button (src/App.jsx AIChatPanel). It prices jobs, so it
+// runs on Opus with adaptive thinking (Jake, 2026-11-18: "at least Opus, fast
+// and reliable"). Low effort: ~18s vs ~25s at medium, same prices in testing. Same heartbeat as
+// agent mode: thinking can outlast the edge function's first-byte limit.
+// Thinking tokens count against max_tokens, so the cap is high.
+export const PRICING_MODEL = 'claude-opus-5-5';
+
+function pricingTurn(apiKey, body) {
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const beat = setInterval(() => {
+        try { controller.enqueue(enc.encode(' ')); } catch {}
+      }, 4000);
+      let out;
+      try {
+        out = await callPricingModel(apiKey, body);
+      } catch (err) {
+        out = { error: { message: err?.message || String(err) } };
+      }
+      clearInterval(beat);
+      controller.enqueue(enc.encode(JSON.stringify(out)));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' },
+  });
+}
+
+async function callPricingModel(apiKey, { messages, systemPrompt }, withFallbacks = true) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      ...(withFallbacks ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
+    },
+    body: JSON.stringify({
+      model: PRICING_MODEL,
+      max_tokens: 16000,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'low' },
+      system: [
+        { type: 'text', text: buildDateContext() },
+        { type: 'text', text: systemPrompt || AI_SYSTEM, cache_control: { type: 'ephemeral' } },
+      ],
+      messages,
+      ...(withFallbacks ? { fallbacks: 'default' } : {}),
+    }),
+  });
+  const data = await res.json();
+  if (withFallbacks && res.status === 400 && /fallback/i.test(data?.error?.message || '')) {
+    return callPricingModel(apiKey, { messages, systemPrompt }, false);
+  }
+  return data;
 }
 
 // ─── Agent mode ──────────────────────────────────────────────────────────────

@@ -220,6 +220,10 @@ function toSavedItem(row) {
     taxable: row.taxable !== false,
     unit: row.unit || '',
     ownerId: row.owner_id || null,
+    // Flat-rate build (migration 129): the AI prices from these, not just the total.
+    hours: row.hours != null ? Number(row.hours) : null,
+    materialCost: row.material_cost != null ? Number(row.material_cost) : null,
+    materials: Array.isArray(row.materials) ? row.materials : [],
   }
 }
 
@@ -1932,5 +1936,34 @@ export async function loadOnMyWayPings(limit = 300) {
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) { console.warn('loadOnMyWayPings failed:', error.message); return [] }
+  return data || []
+}
+
+
+// AI chat log (migration 132). One row per exchange, written under the user's
+// own session; only an admin can read the table. Never throws: a failed log
+// must not break the chat.
+export async function logAiChat({ surface, invoiceId, prompt, reply, actions, photos = 0, model = null }) {
+  try {
+    const { data: u } = await supabase.auth.getSession()
+    const uid = u?.session?.user?.id
+    if (!uid) return
+    const { error } = await supabase.from('ai_chat_logs').insert({
+      user_id: uid, surface, invoice_id: invoiceId || null,
+      prompt: String(prompt || '').slice(0, 20000), reply: String(reply || '').slice(0, 40000),
+      actions: actions && actions.length ? actions : null, photos, model,
+    })
+    if (error) console.warn('logAiChat failed:', error.message)
+  } catch (e) { console.warn('logAiChat failed:', e?.message || e) }
+}
+
+// Admin: newest first.
+export async function loadAiChatLogs(limit = 500) {
+  const { data, error } = await supabase
+    .from('ai_chat_logs')
+    .select('id, user_id, surface, invoice_id, prompt, reply, actions, photos, model, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) { console.warn('loadAiChatLogs failed:', error.message); return [] }
   return data || []
 }

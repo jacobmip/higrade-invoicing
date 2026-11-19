@@ -22,6 +22,7 @@
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase.js';
 import { api } from './apiBase.js';
 import { canonicalMethod } from './paymentMethods.js';
+import { logAiChat } from './db.js';
 import { sendLisaText, queueLisaCall, approveLisaCall, checkinCall } from './lisaActions.js';
 import { runChangeOrderAction, jobInvoiceId } from './ChangeOrders.jsx';
 
@@ -215,7 +216,11 @@ function searchPriceBook(input, ctx) {
     .sort((a, b) => b.score - a.score);
   return {
     matched: scored.length,
-    items: scored.slice(0, q ? 40 : 200).map(({ i }) => ({ name: i.name, category: i.category, price: i.price })),
+    items: scored.slice(0, q ? 40 : 200).map(({ i }) => ({
+      name: i.name, category: i.category, price: i.price,
+      ...(i.hours ? { labor_hours: i.hours } : {}),
+      ...(i.materials?.length ? { parts_at_cost: i.materials.map(m => ({ name: m.name, qty: m.qty || 1, cost: m.cost, ...(m.est ? { estimated: true } : {}) })) } : {}),
+    })),
   };
 }
 
@@ -1074,5 +1079,7 @@ export async function runAgentMessage({ priorMsgs, text, photos, userLabel, ctx,
     }
   }
 
+  // Admin-only AI chat history (migration 132). Fire and forget.
+  logAiChat({ surface: 'agent', prompt: text, reply, actions: trace.length ? trace : null, photos: (photos || []).length, model: 'claude-opus-5-5' });
   return { reply, cards, trace: trace.join('; '), agentCtx };
 }

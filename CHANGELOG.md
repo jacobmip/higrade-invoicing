@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.87.0 — 2026-11-18
+
+- **AI pricing rebuilt from Jake's master estimating prompt.** The line-item AI button priced a faucet plus angle stops at $1,180 (fair price about $710): it copied two price book lines whole, a $239 Delta faucet baked into one and a second full 1.25 hr labor charge for the same sink. Now one shared pricing brain (`api/_lib/pricing-brain.js`) drives the AI button and the chat agent: Jake's past invoices first (paid invoices weigh most), his historical benchmarks, the price book as a starting point it rebuilds (it now sees each item's hours and parts), same-visit add-ons priced as extra time only, customer types (condo, commercial, property manager $150 dispatch, contractor, Sand & Sawdust), and an internal pricing note to Jake that never goes on the document.
+- The AI button now runs on Opus 5.5 with thinking (was Haiku 4.5), with a keep-alive so a long think never times out and a server-side fallback model. The chat agent moves from Sonnet 5.5 to Opus 5.5.
+- The AI button gets the 30 past line items closest to the job (from the open document and what was typed), with date, doc, client, status and price.
+- **New admin-only "AI Chats" tab** (More sheet): every AI chat exchange by every user, with who asked, which document, what they typed, the line items and prices the AI proposed, and its reply. New table `ai_chat_logs` (migration 132); anyone writes their own rows, only an admin can read them.
+
 ## v1.86.2 — 2026-11-18
 
 - Lisa (all channels, via lisa-soul.js) says back a deadline, address or date the customer already gave ("we have your Nov 19 deadline") instead of asking for it again. Phone Lisa kept asking Valente for a bid deadline he had put in his Yelp message.
