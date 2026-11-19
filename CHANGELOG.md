@@ -1,5 +1,15 @@
 # HI Grade Invoicing — Changelog
 
+## v1.88.0 — 2026-11-18
+
+- **New estimate assistant** behind the AI button in an estimate or invoice, replacing the old chat (which wrote commands into its reply text and often said "Done" for edits it never made). It works only on the open document, never asks which one, and edits it with real tools that run against the open form, so every change shows on screen and the chat lists exactly what changed ("Added line 3: Master Bath — Replace Sink Angle Stops, $250"). A change shows only if the tool did it.
+- **Walk-through mode** for voice-to-text on a job site: every message is the next thing to add, no questions mid-walk (assumptions are recorded instead), room names prefix the line ("Master Bath — ..."), corrections like "make that two" and "scratch the last one" apply to the last line, and "show me everything from this walk-through" lists every line, price, total and assumption.
+- Commands: add, change, remove, duplicate and move lines; discount (% or $), tax, notes, client and dates; record a payment; open the email send screen or the text preview (nothing goes out until Jake taps Send); convert to an invoice (Jake confirms); change orders. Prices follow the shared pricing brain with Jake's price book and past jobs.
+- **Undo** on the latest assistant message puts the document back as it was before that message.
+- One model call per message when every edit succeeds: simple edits in 1.3 to 3 seconds, pricing a new line 6 to 10 seconds (Opus 5.5, effort low, `/api/ai` mode `doc`). Full access for apprentices too. Logged to AI Chats.
+- New test `tests/doc-agent/run.sh`: a 20-command walk-through against a fake open document with the real prompt, tools and price book. 20/20.
+- **Role on this job** picker for apprentice-tier techs ("Kaulana on this job": Not on job / Apprentice / Service Tech). Service Tech makes him the assigned tech with commission on; Apprentice puts him on as the apprentice, hourly only, with Jake as the assigned tech. One profile, the role is per job. Apprentice-tier techs can now be picked as the Assigned Tech, and one with solo jobs shows on the Tech Scorecard.
+
 ## v1.87.2 — 2026-11-18
 
 - The line-item AI chat can duplicate a line ("duplicate_item", exact copy with its description, also in change-order mode). Jake asked it to duplicate EST1222's water heater line; it said "Done" and nothing happened.

@@ -1,6 +1,7 @@
 export const config = { runtime: 'edge' };
 
 import { AGENT_MODEL, AGENT_SYSTEM, AGENT_TOOLS } from './_lib/agent-tools.js';
+import { DOC_MODEL, DOC_SYSTEM, DOC_TOOLS } from './_lib/doc-agent.js';
 
 const AI_SYSTEM = `You are the AI assistant built into HI Grade Plumbing LLC's invoicing app (Honolulu, Hawaii). You help Jake generate estimates, create invoice line items, and answer questions about jobs.
 
@@ -129,6 +130,8 @@ export default async function handler(req) {
   }
 
   if (body?.mode === 'agent') return agentTurn(apiKey, body.messages);
+  // The estimate assistant (v1.88.0): same engine, its own prompt and tools.
+  if (body?.mode === 'doc') return agentTurn(apiKey, body.messages, { model: DOC_MODEL, system: DOC_SYSTEM, tools: DOC_TOOLS, effort: 'low' });
   if (body?.quality === 'pricing') return pricingTurn(apiKey, body);
 
   try {
@@ -248,7 +251,7 @@ async function callPricingModel(apiKey, { messages, systemPrompt }, withFallback
 // written every few seconds until the real JSON is ready. JSON.parse ignores
 // leading whitespace, so the client just calls res.json() as usual. The status
 // is therefore always 200; failures arrive as { error } in the body.
-function agentTurn(apiKey, messages) {
+function agentTurn(apiKey, messages, cfg = {}) {
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
@@ -257,7 +260,7 @@ function agentTurn(apiKey, messages) {
       }, 4000);
       let out;
       try {
-        out = await callAgentModel(apiKey, messages);
+        out = await callAgentModel(apiKey, messages, true, cfg);
       } catch (err) {
         out = { error: { message: err?.message || String(err) } };
       }
@@ -275,7 +278,7 @@ function agentTurn(apiKey, messages) {
   });
 }
 
-async function callAgentModel(apiKey, messages, withFallbacks = true) {
+async function callAgentModel(apiKey, messages, withFallbacks = true, cfg = {}) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -288,18 +291,18 @@ async function callAgentModel(apiKey, messages, withFallbacks = true) {
       ...(withFallbacks ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
     },
     body: JSON.stringify({
-      model: AGENT_MODEL,
+      model: cfg.model || AGENT_MODEL,
       max_tokens: 16000,
       thinking: { type: 'adaptive' },
       // Sonnet 5.5 defaults to high. Medium is the recommended start for
       // multi-step tool use and keeps replies quick on a phone.
-      output_config: { effort: 'medium' },
+      output_config: { effort: cfg.effort || 'medium' },
       // The system block's breakpoint caches tools + system. The top-level
       // one caches the conversation so far, which grows append-only within a
       // turn as tool results come back.
       cache_control: { type: 'ephemeral' },
-      system: [{ type: 'text', text: AGENT_SYSTEM, cache_control: { type: 'ephemeral' } }],
-      tools: AGENT_TOOLS,
+      system: [{ type: 'text', text: cfg.system || AGENT_SYSTEM, cache_control: { type: 'ephemeral' } }],
+      tools: cfg.tools || AGENT_TOOLS,
       messages,
       ...(withFallbacks ? { fallbacks: 'default' } : {}),
     }),
@@ -308,7 +311,7 @@ async function callAgentModel(apiKey, messages, withFallbacks = true) {
   // If the fallback beta is ever withdrawn, fail open to a plain request
   // rather than taking the chat down with it.
   if (withFallbacks && res.status === 400 && /fallback/i.test(data?.error?.message || '')) {
-    return callAgentModel(apiKey, messages, false);
+    return callAgentModel(apiKey, messages, false, cfg);
   }
   return data;
 }
