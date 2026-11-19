@@ -548,7 +548,7 @@ below are the source of truth, and `ANTHROPIC_API_KEY` is the only AI key set).
 
 | Feature | Where | Model |
 |---|---|---|
-| Per-invoice chat (`AIChatPanel`; on an invoice it also writes and sends change orders, see `src/ChangeOrders.jsx`) | `api/ai.js` with `quality: 'pricing'` (`pricingTurn`, keep-alive stream) | `claude-opus-5-5`, adaptive thinking, effort low, server-side fallback (v1.87.0; was Haiku 4.5). Other `callAI` uses (title rewrite) stay on `claude-haiku-4-5-20251001` |
+| Per-invoice chat (`AIChatPanel`; on an invoice it also writes and sends change orders, see `src/ChangeOrders.jsx`) | `api/ai.js` with `quality: 'pricing'` (`pricingTurn`, keep-alive stream) | `claude-opus-5-5`, adaptive thinking, effort low, server-side fallback (v1.87.0; was Haiku 4.5). Acts only through action JSON in its text (no tool calls); v1.87.2 documents update_item/remove_item/duplicate_item and widens the `claimsAction` guard. Other `callAI` uses (title rewrite) stay on `claude-haiku-4-5-20251001` |
 | Global chat agent (`GlobalAIModal`) | `api/ai.js` agent mode, `api/_lib/agent-tools.js`, `src/aiAgent.js` | `claude-opus-5-5` (v1.87.0; was Sonnet 5.5), effort medium, server-side fallback |
 | AI estimator — job description + photos to a structured estimate | `api/ai-estimator.js` | `claude-opus-5-5`, effort low (v1.87.1; was Sonnet 4.5) |
 | Screenshot-to-client extractor (vision) | `api/_lib/extract-client.js`, via `api/ai-estimator.js` with `task: 'extract_client'` | `claude-sonnet-4-5-20250929` |

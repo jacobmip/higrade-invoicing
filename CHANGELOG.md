@@ -1,5 +1,12 @@
 # HI Grade Invoicing — Changelog
 
+## v1.87.2 — 2026-11-18
+
+- The line-item AI chat can duplicate a line ("duplicate_item", exact copy with its description, also in change-order mode). Jake asked it to duplicate EST1222's water heater line; it said "Done" and nothing happened.
+- Its prompt now spells out the update_item and remove_item JSON (it never had, so the model guessed), and the open document's lines include their descriptions.
+- The "said it but did nothing" guard now catches "Done." and "duplicated/copied", not only "Done!", and its retry asks for whatever action fits instead of always update_item.
+- A plain "yes" only approves a Lisa call when the chat just queued one.
+
 ## v1.87.1 — 2026-11-18
 
 - Every pricing AI now uses the one pricing brain (`api/_lib/pricing-brain.js`). Lisa's estimate agent (text, Yelp) anchors on Jake's past jobs and benchmarks first, with the website's ranges kept as the market check; it no longer marks parts a flat 1.35x. The AI estimator behind `/api/ai-estimator` and the lead ballparks drop "use the saved price exactly" and the 35% markup rule, see each price book item's hours and parts, get the 25 closest past line items, and run on Opus 5.5 (was Sonnet 4.5). Lead ballpark budget 8s to 25s.

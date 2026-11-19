@@ -555,6 +555,15 @@ Create a new estimate (use this when user says estimate, quote, or bid):
 Add items to an existing invoice:
 {"action":"add_items","invoiceId":"INV0000","items":[{"name":"Short Title","desc":"step1\\nstep2","qty":1,"price":000}],"summary":"one sentence"}
 
+Change a line on the open document (itemIndex is the line number in "Line items", from 1; include only the fields to change):
+{"action":"update_item","invoiceId":"INV0000","itemIndex":1,"changes":{"name":"","desc":"","qty":1,"price":000,"taxable":true},"summary":"one sentence"}
+
+Remove a line:
+{"action":"remove_item","invoiceId":"INV0000","itemIndex":1,"summary":"one sentence"}
+
+Duplicate a line (an exact copy, added at the end; use copies above 1 for several):
+{"action":"duplicate_item","invoiceId":"INV0000","itemIndex":1,"copies":1,"summary":"one sentence"}
+
 Send invoice email (opens the app's send screen with the email for Jake to check and confirm; nothing is sent until he taps Send there):
 {"action":"send_email","invoiceId":"INV0000","summary":"one sentence"}
 
@@ -1118,9 +1127,9 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       let invoiceContext = "";
       if (currentInvoice) {
         const itemList = (currentInvoice.items || []).map((it, i) =>
-          `  ${i + 1}. ${it.name || it.desc || "(unnamed)"} — qty ${it.qty || 1} @ $${it.price || 0}`
+          `  ${i + 1}. ${it.name || it.desc || "(unnamed)"} — qty ${it.qty || 1} @ $${it.price || 0}${it.name && it.desc ? `\n     desc: ${String(it.desc).replace(/\n/g, " / ").slice(0, 300)}` : ""}`
         ).join("\n");
-        invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
+        invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item / duplicate_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
       }
       // Change orders on the open invoice (migration 111). Contact comes from
       // the client record, like the card's defaults.
@@ -1188,7 +1197,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
         const expectedCount = itemCountMatch ? itemCountMatch[1] : 'all';
         const retryPrompt = /change order/i.test(cleanText + " " + (userMsg?.text || ""))
           ? `You described a change order but emitted no JSON action. The app only acts on the JSON. Emit the create_change_order / update_change_order / send_change_order JSON now, no prose.`
-          : `You described updating ${expectedCount} item(s) but emitted 0 JSON action blocks. The app only changes when it sees the JSON. Emit ALL the update_item JSON blocks now — one per item, back to back, no prose between them. Start immediately.`;
+          : `You said it was done but emitted 0 JSON action blocks, so nothing changed. The app only acts on the JSON. Emit the action JSON for what Jake asked now (add_items, update_item, remove_item, duplicate_item or whichever fits; for several items, one block each, back to back), no prose. Start immediately.`;
         const retryReply = await callAI(
           [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: retryPrompt }],
           systemPrompt,
@@ -1211,7 +1220,11 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       if (!otherActions.length && !previewEstimate && userMsg) {
         const approval = String(userMsg.text || "").trim().toLowerCase();
         const approvalWords = ['approve', 'ok', 'yes', 'yep', 'approved', 'confirm', 'go', 'uh-huh', 'yup'];
-        if (approvalWords.includes(approval)) {
+        // Only when the chat just queued a call: a plain "yes" to anything
+        // else (Jake confirming a line edit) is not a call approval.
+        const lastBot = [...msgs].reverse().find(m => m.role === "assistant");
+        const callPending = /\b(call|dial)\b/i.test(lastBot?.text || "") && /approv/i.test(lastBot?.text || "");
+        if (approvalWords.includes(approval) && callPending) {
           // Emit approve_call action; the global handler will look up the pending call
           otherActions.push({ action: 'approve_call', callToken: 'pending', summary: 'Approved call.' });
         }
@@ -1225,7 +1238,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       // never silently no-ops on a draft invoice.
       const INVOICE_OPS = new Set([
         'add_items', 'update_invoice', 'add_payment',
-        'remove_item', 'update_item', 'send_email',
+        'remove_item', 'update_item', 'duplicate_item', 'send_email',
       ]);
       // Drafts the chat shows before anything goes to a customer (v1.56.0).
       const drafts = [];
@@ -4803,10 +4816,15 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     const a = action || {};
     const validStatus = (s) => ["outstanding", "paid", "partial", "net30"].includes(s);
     // In change-order mode the AI's line edits go to the change order.
-    if (coModeRef.current && (a.action === "remove_item" || a.action === "update_item")) {
+    if (coModeRef.current && (a.action === "remove_item" || a.action === "update_item" || a.action === "duplicate_item")) {
       const idx = (a.itemIndex || 0) - 1;
       if (idx < 0) return false;
       if (a.action === "remove_item") { coSetItems(xs => xs.filter((_, i) => i !== idx)); return true; }
+      if (a.action === "duplicate_item") {
+        const n = Math.min(20, Math.max(1, Math.floor(Number(a.copies) || 1)));
+        coSetItems(xs => xs[idx] ? [...xs, ...Array.from({ length: n }, () => ({ ...xs[idx] }))] : xs);
+        return true;
+      }
       const c = a.changes || {};
       coSetItems(xs => xs.map((it, i) => i === idx ? {
         ...it,
@@ -4878,6 +4896,17 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           const newStatus = netBalance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : f.status);
           return { ...f, payments, status: newStatus };
         });
+        return true;
+      }
+      case "duplicate_item": {
+        const idx = (a.itemIndex || 0) - 1;
+        const src = formRef.current.items[idx];
+        if (idx < 0 || !src) return false;
+        const n = Math.min(20, Math.max(1, Math.floor(Number(a.copies) || 1)));
+        const copies = Array.from({ length: n }, () => { const { id, ...rest } = src; return { ...rest }; });
+        const next = { ...formRef.current, items: [...formRef.current.items, ...copies] };
+        setForm(f => ({ ...f, items: [...f.items, ...copies] }));
+        snapshotEvent('line_item_added', "Line item duplicated", next);
         return true;
       }
       case "remove_item": {
