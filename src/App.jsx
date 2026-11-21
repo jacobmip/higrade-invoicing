@@ -14579,6 +14579,23 @@ export default function App() {
     return true;
   };
 
+  // v1.88.1: a conflict retry must never undo a conversion. EST1211 was
+  // converted on Jake's phone at 9:47 on 2026-11-21 while it was still open on
+  // Kaulana's; his phone's next save lost the lock, re-read only the token and
+  // wrote its stale copy back: link gone, status back, and the visit back on the
+  // estimate, so the job showed twice on the calendar. When the row we lost to
+  // is converted and our copy is not, keep the server's copy and drop ours.
+  const warnedConvertedRef = useRef(new Set());
+  const lostToConversion = (mine, server) => {
+    if (!server?.convertedToId || mine?.convertedToId || mine?.type !== "estimate") return false;
+    setData(d => ({ ...d, invoices: d.invoices.map(inv => inv.id === server.id ? server : inv) }));
+    if (!warnedConvertedRef.current.has(server.id)) {
+      warnedConvertedRef.current.add(server.id);
+      alert(`${server.id} was converted to ${server.convertedToId} on another device, so this screen's copy was not saved. Open ${server.convertedToId} to keep working.`);
+    }
+    return true;
+  };
+
   const partialSaveInvoice = async (updated) => {
     if (!selected?.id) return;
     // Same invariant the auto-save flush enforces: the payload's own id must
@@ -14609,6 +14626,7 @@ export default function App() {
         try {
           // Keep change-order lines the server gained meanwhile (see autoSaveInvoice).
           const server = await db.loadInvoiceWithItems(selected.id).catch(() => null);
+          if (lostToConversion(withMeta, server)) return;
           const freshUpdatedAt = server?.updatedAt ?? await db.fetchInvoiceUpdatedAt(selected.id);
           const retried = { ...withMeta, items: server && Array.isArray(withMeta.items) ? mergeChangeOrderLines(withMeta.items, server.items) : withMeta.items, updatedAt: freshUpdatedAt };
           const res2 = await db.upsertInvoice(retried, false);
@@ -14700,6 +14718,7 @@ export default function App() {
             // screen was open added lines on the server; replaying our copy
             // as-is would delete them, so keep them (marked lines only).
             const server = await db.loadInvoiceWithItems(id).catch(() => null);
+            if (lostToConversion(updated, server)) return server;
             const freshUpdatedAt = server?.updatedAt ?? await db.fetchInvoiceUpdatedAt(id);
             const mergedItems = server && Array.isArray(updated.items) ? mergeChangeOrderLines(updated.items, server.items) : updated.items;
             const coMerged = mergedItems !== updated.items;

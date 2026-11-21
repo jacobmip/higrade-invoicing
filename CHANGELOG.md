@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.88.1 — 2026-11-21
+
+- **A stale screen can no longer undo a conversion.** EST1211 was converted to INV1211 while the estimate was still open on another phone. That phone's next save lost the lock, re-read only the token, and wrote its old copy back: the link was gone, and the visit was back on the estimate, so the job showed twice on the calendar. Both conflict retries (`autoSaveInvoice`, `partialSaveInvoice`) now check the row they lost to: when it is converted and the local copy is not, the server copy wins, the local copy is dropped, and the screen says once that it was converted on another device. EST1211 repaired by hand (converted, linked, schedule cleared).
+
 ## v1.88.0 — 2026-11-18
 
 - **New estimate assistant** behind the AI button in an estimate or invoice, replacing the old chat (which wrote commands into its reply text and often said "Done" for edits it never made). It works only on the open document, never asks which one, and edits it with real tools that run against the open form, so every change shows on screen and the chat lists exactly what changed ("Added line 3: Master Bath — Replace Sink Angle Stops, $250"). A change shows only if the tool did it.
