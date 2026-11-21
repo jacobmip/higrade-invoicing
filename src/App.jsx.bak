@@ -30,6 +30,7 @@ import { resolveBillTo, isJobSiteEcho } from './billTo.js';
 import WelcomePage, { PendingSetupScreen } from './WelcomePage.jsx';
 import ApproveCallPage from './ApproveCallPage.jsx';
 import { runAgentMessage, describeFailure, claimsAction } from './aiAgent.js';
+import { runDocMessage } from './docAgent.js';
 import { APP_VERSION, APP_BUILD_DATE } from './version.js';
 import { weekStartOf, weekEndOf, tierFor } from './commissionTiers.js';
 import { GE_LICENSE, GE_HALF_RATE, isGeHalfTax, defaultTaxFor } from './geTax.js';
@@ -952,9 +953,14 @@ function resizeImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
   });
 }
 
-function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef, readOnly, topInset }) {
+function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvoice, onLocalAction, onGlobalAction, inputRef, readOnly, topInset, userLabel }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  // The assistant's tools read the document between steps of one message, so
+  // they need the latest render's copy, not the one from when send() began.
+  const docRef = useRef(currentInvoice);
+  docRef.current = currentInvoice;
   const [listening, setListening] = useState(false);
   // Pending photos waiting to be sent with the next message.
   // Each entry: { dataUrl, name }.
@@ -1120,187 +1126,60 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
       text: text || (hasPhotos ? `[${photosForSend.length} photo${photosForSend.length === 1 ? "" : "s"} attached]` : ""),
       photos: photosForSend.length ? photosForSend.map(p => p.dataUrl) : undefined,
     };
-    setMsgs(p => [...p, userMsg]); setLoading(true);
+    setMsgs(p => [...p, userMsg]); setLoading(true); setProgress("Thinking");
     try {
-      // Context-aware system prompt: global knowledge + the open invoice.
-      const systemBase = data ? buildGlobalSystemPrompt(data) : null;
-      let invoiceContext = "";
-      if (currentInvoice) {
-        const itemList = (currentInvoice.items || []).map((it, i) =>
-          `  ${i + 1}. ${it.name || it.desc || "(unnamed)"} — qty ${it.qty || 1} @ $${it.price || 0}${it.name && it.desc ? `\n     desc: ${String(it.desc).replace(/\n/g, " / ").slice(0, 300)}` : ""}`
-        ).join("\n");
-        invoiceContext = `\n\nCURRENT OPEN ${(currentInvoice.type || 'invoice').toUpperCase()} (Jake is editing this one right now):\n  ID: ${currentInvoice.id || '(unsaved)'}\n  Client: ${currentInvoice.client || '(none)'}\n  Date: ${currentInvoice.date}\n  Due: ${currentInvoice.dueDate}\n  Status: ${currentInvoice.status}\n  Notes: ${currentInvoice.notes || '(none)'}\n  Line items:\n${itemList || '  (none)'}\n\nIMPORTANT: When Jake says "this invoice", "the invoice", "this estimate", "change the client", "add an item", "add a line", "add a service call", etc. without specifying an ID — he means THIS one. ALWAYS set invoiceId to "${currentInvoice.id || 'unsaved'}" on add_items / update_invoice / add_payment / remove_item / update_item / duplicate_item actions when he refers to the current document. NEVER tell Jake how to do something manually — always emit the JSON action that does it for him. NEVER claim you added or changed something without emitting the action JSON — the app only changes when it sees the JSON.`;
-      }
-      // Change orders on the open invoice (migration 111). Contact comes from
-      // the client record, like the card's defaults.
-      // An estimate shares its invoice's change orders (v1.58.0): the form passes coInvoiceId.
+      // The estimate assistant (v1.88.0, src/docAgent.js): real tools against
+      // the open document. The chat shows what the tools did, never a claim.
       const coInvoiceId = currentInvoice?.coInvoiceId !== undefined ? currentInvoice.coInvoiceId : (currentInvoice?.type !== "estimate" ? currentInvoice?.id : null);
       const coClient = currentInvoice ? (data?.clients || []).find(c => c.name === currentInvoice.client) : null;
       const coContact = {
         email: coClient?.email || currentInvoice?.clientInfo?.email || "",
         phone: coClient?.mobile || coClient?.phone || currentInvoice?.clientInfo?.phone || "",
       };
-      if (coInvoiceId && !readOnly) {
+      let changeOrderBlock = "";
+      if (coInvoiceId) {
         let coList = null;
         try { coList = await listChangeOrders(coInvoiceId); } catch { coList = null; }
-        if (coList) invoiceContext += changeOrdersPromptBlock(coInvoiceId, coList, currentInvoice.tax, coContact);
-        if (currentInvoice?.lockedFromEstimate) invoiceContext += `\n\nThis invoice came from the signed estimate ${currentInvoice.lockedFromEstimate}. Jake may add, edit and remove lines on it freely (a verbal OK from the customer is enough). Only make a change order when he asks for one or wants the customer to approve in writing.`;
-        if (currentInvoice?.type === "estimate") invoiceContext += `\n\nThis is the ESTIMATE for job ${coInvoiceId}. Its own line items are frozen: they are what the customer signed. Extra work goes in a change order (the actions above), never add_items on this estimate. Approved change orders show on both this estimate and invoice ${coInvoiceId}, and their lines are added to the invoice.`;
-      } else if (currentInvoice?.type === "estimate" && !readOnly) {
-        invoiceContext += "\n\nThis is an ESTIMATE the customer has not approved yet. Change orders start once it is approved and converted: if Jake asks for one, tell him that, or edit the estimate's own lines instead (do not emit a change order action).";
+        if (coList) changeOrderBlock = changeOrdersPromptBlock(coInvoiceId, coList, currentInvoice.tax, coContact);
       }
-      if (currentInvoice?.coModeSeq && !readOnly) {
-        invoiceContext += `\n\nCHANGE ORDER MODE IS ON: Jake is building change order ${currentInvoice.coModeSeq} on this invoice. The "Line items" listed above are THAT CHANGE ORDER's lines, not the invoice's. Use add_items / update_item / remove_item to build it (they change the change order, never the invoice). Do NOT use create_change_order now. When Jake says to send it, use send_change_order with seq ${currentInvoice.coModeSeq}.`;
-      }
-      if (readOnly) invoiceContext += "\n\nREAD-ONLY MODE: the person asking is an apprentice who cannot change anything. Answer questions about this job and how to do the work. Do NOT emit action JSON and do not offer to edit, create or schedule anything.";
-      // Jake's real billed prices for work like this, so the model anchors on
-      // his history instead of a list price (pricing-brain.js).
-      const pastQuery = [text, ...(currentInvoice?.items || []).map(it => it.name || "")].join(" ");
-      const pastLines = data ? pastJobLines(data.invoices || [], pastQuery, 30) : "";
-      if (pastLines) invoiceContext += `\n\nPAST JOBS LIKE THIS (date | doc | client | line | price; paid invoices are the strongest evidence):\n${pastLines}`;
-      const systemPrompt = systemBase ? systemBase + invoiceContext : null;
-      // Build history. Past user messages with photos get converted to
-      // text-only references ("[photo from earlier]") so we don't blow
-      // the token budget by re-sending every prior image. Only the
-      // CURRENT send includes raw image blocks.
-      const history = [...msgs, userMsg]
-        .filter(m => m.text?.trim() || m.photos?.length)
-        .map((m, i, arr) => {
-          const isLatest = i === arr.length - 1;
-          if (m.role === "user" && isLatest && m.photos?.length) {
-            // Multimodal content: image blocks + text block.
-            const blocks = m.photos.map(dataUrl => {
-              const match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
-              if (!match) return null;
-              return {
-                type: "image",
-                source: { type: "base64", media_type: match[1], data: match[2] },
-              };
-            }).filter(Boolean);
-            blocks.push({ type: "text", text: m.text || "(see attached photo)" });
-            return { role: "user", content: blocks };
-          }
-          return { role: m.role === "user" ? "user" : "assistant", content: m.text || "" };
-        });
-      const first = history.findIndex(m => m.role === "user");
-      const reply = await callAI(first >= 0 ? history.slice(first) : history, systemPrompt, { smart: true });
-      const actions = readOnly ? [] : extractActionsJSON(reply);
-      db.logAiChat({ surface: "line_items", invoiceId: currentInvoice?.id || null, prompt: userMsg.text, reply, actions, photos: photosForSend.length, model: "claude-opus-5-5" });
-      const cleanText = stripActionBlocks(reply);
+      const snapDoc = () => { const d = docRef.current || {}; return { items: (d.items || []).map(it => ({ ...it })), notes: d.notes, discount: d.discount, discountType: d.discountType, tax: d.tax, payments: d.payments, client: d.client, clientInfo: d.clientInfo }; };
+      const before = snapDoc();
+      const ctx = {
+        getDoc: () => ({ doc: docRef.current || {}, coMode: docRef.current?.coModeSeq || null }),
+        act: (a) => onLocalAction ? onLocalAction(a) : false,
+        calcTotals,
+        savedItems: data?.savedItems || [],
+        invoices: data?.invoices || [],
+        userLabel,
+        changeOrderBlock,
+        runChangeOrder: coInvoiceId ? (order) => runChangeOrderAction({ ...order, taxPct: currentInvoice?.tax }, {
+          invoiceId: coInvoiceId, isInvoice: true, phone: coContact.phone, email: coContact.email, photos: userMsg.photos || [],
+        }) : null,
+        sessionLog: () => ({
+          changes: msgs.flatMap(m => (m.changes || []).filter(c => !m.undone)),
+          assumptions: msgs.flatMap(m => (m.undone ? [] : (m.assumptions || []))),
+        }),
+      };
+      const out = await runDocMessage({ priorMsgs: msgs, text: userMsg.text, photos: photosForSend.map(p => p.dataUrl), ctx, onProgress: setProgress });
+      const changed = out.changes.length > 0;
+      setMsgs(p => [...p, {
+        role: "assistant",
+        text: out.reply || (changed ? "" : "I didn't change anything. Say it another way?"),
+        ...(changed ? { changes: out.changes, undo: before } : {}),
+        ...(out.assumptions.length ? { assumptions: out.assumptions } : {}),
+        ...(out.drafts.length ? { drafts: out.drafts } : {}),
+      }]);
+      db.logAiChat({ surface: "line_items", invoiceId: currentInvoice?.id || null, prompt: userMsg.text, reply: [out.reply, ...out.changes.map(c => "• " + c.text), ...(out.assumptions.length ? ["Assumed: " + out.assumptions.join("; ")] : [])].filter(Boolean).join("\n"), actions: out.changes.filter(c => c.kind === "add" || c.kind === "update").map(c => ({ name: c.name, price: c.price, qty: c.qty || 1 })), photos: photosForSend.length, model: "claude-opus-5-5" });
+    } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Something went wrong: " + e.message + ". Nothing was changed by this message." }]); }
+    setLoading(false); setProgress("");
+  };
 
-      // Ghost-action guard: the model sometimes says it did something ("Done!
-      // I've added...") without emitting the action JSON, so nothing happened.
-      // Any completion phrase or action name with no JSON gets one forced retry.
-      if (actions.length === 0 && claimsAction(cleanText) && !readOnly) {
-        // Count how many items the model mentioned updating so the retry can be specific.
-        const itemCountMatch = cleanText.match(/\b(\d+)\s+(item|line)/i);
-        const expectedCount = itemCountMatch ? itemCountMatch[1] : 'all';
-        const retryPrompt = /change order/i.test(cleanText + " " + (userMsg?.text || ""))
-          ? `You described a change order but emitted no JSON action. The app only acts on the JSON. Emit the create_change_order / update_change_order / send_change_order JSON now, no prose.`
-          : `You said it was done but emitted 0 JSON action blocks, so nothing changed. The app only acts on the JSON. Emit the action JSON for what Jake asked now (add_items, update_item, remove_item, duplicate_item or whichever fits; for several items, one block each, back to back), no prose. Start immediately.`;
-        const retryReply = await callAI(
-          [...(first >= 0 ? history.slice(first) : history), { role: "assistant", content: reply }, { role: "user", content: retryPrompt }],
-          systemPrompt,
-          { maxTokens: 8192, smart: true }
-        );
-        const retryActions = extractActionsJSON(retryReply);
-        if (retryActions.length) {
-          actions.push(...retryActions);
-        } else {
-          setMsgs(p => [...p, { role: "assistant", text: "⚠️ The AI described a change but couldn't complete it. Please try again or be more specific." }]);
-          setLoading(false); return;
-        }
-      }
-
-      // The legacy 'estimate' action stays as a preview-then-confirm card.
-      const previewEstimate = actions.find(a => a.action === "estimate" && a.items?.length);
-      const otherActions = actions.filter(a => a !== previewEstimate);
-
-      // Auto-detect one-word approval of a pending call
-      if (!otherActions.length && !previewEstimate && userMsg) {
-        const approval = String(userMsg.text || "").trim().toLowerCase();
-        const approvalWords = ['approve', 'ok', 'yes', 'yep', 'approved', 'confirm', 'go', 'uh-huh', 'yup'];
-        // Only when the chat just queued a call: a plain "yes" to anything
-        // else (Jake confirming a line edit) is not a call approval.
-        const lastBot = [...msgs].reverse().find(m => m.role === "assistant");
-        const callPending = /\b(call|dial)\b/i.test(lastBot?.text || "") && /approv/i.test(lastBot?.text || "");
-        if (approvalWords.includes(approval) && callPending) {
-          // Emit approve_call action; the global handler will look up the pending call
-          otherActions.push({ action: 'approve_call', callToken: 'pending', summary: 'Approved call.' });
-        }
-      }
-
-      // Actions that operate on a single invoice. When the chat is open
-      // inside an invoice, Jake almost always means "this invoice" — even
-      // if the model forgot to echo invoiceId, sent "unsaved", or sent the
-      // wrong id. We force-route those to the local handler (which mutates
-      // the open form for instant feedback) so "add a service call line"
-      // never silently no-ops on a draft invoice.
-      const INVOICE_OPS = new Set([
-        'add_items', 'update_invoice', 'add_payment',
-        'remove_item', 'update_item', 'duplicate_item', 'send_email',
-      ]);
-      // Drafts the chat shows before anything goes to a customer (v1.56.0).
-      const drafts = [];
-      const lisaLines = [];
-      if (otherActions.length && onGlobalAction) {
-        for (const a of otherActions) {
-          const isInvoiceOp = INVOICE_OPS.has(a.action);
-          const idMatches = currentInvoice && a.invoiceId && a.invoiceId === currentInvoice.id;
-          // Treat "no id", "unsaved", or any id when the open invoice has no
-          // id yet, as referring to the current invoice. This is the fix for
-          // the bug where adding a line to an unsaved/open invoice claimed
-          // success but never actually persisted.
-          const looksLikeCurrent = currentInvoice && isInvoiceOp && (
-            idMatches
-            || !a.invoiceId
-            || a.invoiceId === 'unsaved'
-            || a.invoiceId === '(unsaved)'
-            || !currentInvoice.id
-          );
-          // Change orders run here, against the open invoice, and report what
-          // really happened (saved, emailed, texted, or why not).
-          if (/^(create|update|send)_change_order$/.test(a.action)) {
-            const r = await runChangeOrderAction({ ...a, taxPct: currentInvoice?.tax }, {
-              invoiceId: coInvoiceId || null,
-              isInvoice: !!coInvoiceId,
-              phone: coContact.phone, email: coContact.email,
-              photos: userMsg.photos || [],
-            });
-            lisaLines.push(r.text);
-            if (r.draft) drafts.push(r.draft);
-            continue;
-          }
-          // A text is never sent straight from the model: it becomes a draft
-          // Jake can edit, sent only when he taps Send.
-          if (a.action === "send_sms") {
-            drafts.push({ kind: "sms", phone: String(a.phone || coContact.phone || ""), message: String(a.message || ""), invoiceId: a.invoiceId || currentInvoice?.id || null, status: "draft" });
-            lisaLines.push("Here is the text. Check it, edit it if you like, and tap Send.");
-            continue;
-          }
-          let handledLocally = false;
-          if (looksLikeCurrent && onLocalAction) {
-            handledLocally = !!(await onLocalAction(a));
-          }
-          if (!handledLocally) {
-            // Lisa's text/call report what actually happened, so the chat shows
-            // that line instead of the model's own claim.
-            if ((a.action === "send_sms" || a.action === "place_call") && currentInvoice?.id && !a.invoiceId) a.invoiceId = currentInvoice.id;
-            const r = await onGlobalAction(a);
-            if ((a.action === "send_sms" || a.action === "place_call") && r?.text) lisaLines.push(r.text);
-          }
-        }
-      }
-
-      const summaryFromActions = otherActions.map(a => a.action === "send_sms" || a.action === "place_call" || /_change_order$/.test(a.action) ? null : a.summary).filter(Boolean).join("\n");
-      const replyText = lisaLines.length ? [summaryFromActions, ...lisaLines].filter(Boolean).join("\n")
-        : previewEstimate
-        ? (previewEstimate.summary || "Here's your estimate:")
-        : (cleanText || summaryFromActions || (otherActions.length ? "✓ Done" : reply));
-
-      setMsgs(p => [...p, { role: "assistant", text: replyText, estimate: previewEstimate || undefined, ...(drafts.length ? { drafts } : {}) }]);
-    } catch (e) { setMsgs(p => [...p, { role: "assistant", text: "Error: " + e.message }]); }
-    setLoading(false);
+  // Undo one assistant message: back to the document as it was before it.
+  const undoMsg = async (i) => {
+    const m = msgs[i];
+    if (!m?.undo || m.undone || !onLocalAction) return;
+    const ok = await onLocalAction({ action: "restore_doc", snapshot: m.undo });
+    if (ok) setMsgs(p => p.map((x, k) => k === i ? { ...x, undone: true } : x));
   };
 
   // Keep the chat panel in normal page flow at a stable height. iOS handles
@@ -1332,6 +1211,23 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
                 </div>
               )}
               {m.text}
+              {(m.changes || []).length > 0 && (
+                <div style={{ marginTop: m.text ? 8 : 0, display: "flex", flexDirection: "column", gap: 3, opacity: m.undone ? 0.45 : 1, textDecoration: m.undone ? "line-through" : "none" }}>
+                  {m.changes.map((c, k) => (
+                    <div key={k} style={{ fontSize: 13, color: "#1a1a1a", display: "flex", gap: 6 }}><span style={{ color: "#1e8e3e", fontWeight: 700 }}>✓</span><span>{c.text}</span></div>
+                  ))}
+                </div>
+              )}
+              {(m.assumptions || []).length > 0 && !m.undone && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#777" }}>Assumed: {m.assumptions.join("; ")}</div>
+              )}
+              {m.undo && (
+                m.undone
+                  ? <div style={{ marginTop: 6, fontSize: 12, color: "#777" }}>Undone.</div>
+                  : i === msgs.map(x => !!(x.undo && !x.undone)).lastIndexOf(true) && (
+                    <button type="button" onClick={() => undoMsg(i)} style={{ marginTop: 8, background: "#f0f2f8", border: "1px solid #dde2ee", borderRadius: 14, padding: "4px 12px", fontSize: 12, fontWeight: 700, color: NAVY, cursor: "pointer" }}>Undo</button>
+                  )
+              )}
               {(m.drafts || []).map((d, k) => (
                 <SendDraftCard key={k} draft={d}
                   onUpdate={(patch) => setMsgs(p => p.map((x, j) => j === i ? { ...x, drafts: (x.drafts || []).map((y, n) => n === k ? { ...y, ...patch } : y) } : x))}
@@ -1354,7 +1250,7 @@ function AIChatPanel({ msgs, setMsgs, onResetChat, onAddItems, data, currentInvo
             </div>
           </div>
         ))}
-        {loading && <div style={{ display: "flex", marginBottom: 10 }}><div style={{ background: "#fff", borderRadius: "14px 14px 14px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>{[0,1,2].map(i => <span key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${i*0.18}s infinite` }}/>)}</div></div>}
+        {loading && <div style={{ display: "flex", marginBottom: 10 }}><div style={{ background: "#fff", borderRadius: "14px 14px 14px 4px", padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", display: "flex", gap: 5 }}>{[0,1,2].map(i => <span key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: ORANGE, display: "inline-block", animation: `bounce 1s ${i*0.18}s infinite` }}/>)}{progress && <span style={{ fontSize: 12, color: "#777", marginLeft: 6, alignSelf: "center" }}>{progress}…</span>}</div></div>}
         <div ref={endRef} />
       </div>
       {/* Pending-photos thumbnail strip, shown above the input bar when
@@ -4816,6 +4712,19 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
     const a = action || {};
     const validStatus = (s) => ["outstanding", "paid", "partial", "net30"].includes(s);
     // In change-order mode the AI's line edits go to the change order.
+    if (coModeRef.current && a.action === "append_items") {
+      const add = (a.items || []).map(it => ({ ...blankItem, name: it.name || "", desc: it.desc || "", qty: it.qty ?? 1, price: it.price ?? 0, ...(typeof it.taxable === "boolean" ? { taxable: it.taxable } : {}) }));
+      coSetItems(xs => [...xs.filter(coMeaningful), ...add]);
+      return true;
+    }
+    if (coModeRef.current && a.action === "move_item") {
+      coSetItems(xs => { const n = [...xs]; const [m] = n.splice(a.from, 1); if (m) n.splice(a.to, 0, m); return n; });
+      return true;
+    }
+    if (coModeRef.current && a.action === "restore_doc") {
+      coSetItems(() => (a.snapshot?.items || []).map(it => ({ ...it })));
+      return true;
+    }
     if (coModeRef.current && (a.action === "remove_item" || a.action === "update_item" || a.action === "duplicate_item")) {
       const idx = (a.itemIndex || 0) - 1;
       if (idx < 0) return false;
@@ -4879,6 +4788,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           if (typeof c.status === "string" && validStatus(c.status)) next.status = c.status;
           if (typeof c.notes === "string") next.notes = c.notes;
           if (typeof c.discount === "number") next.discount = c.discount;
+          if (c.discountType === "%" || c.discountType === "$") next.discountType = c.discountType;
           if (typeof c.tax === "number") next.tax = c.tax;
           return next;
         });
@@ -4896,6 +4806,39 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
           const newStatus = netBalance <= 0.005 ? "paid" : (totals.paid > 0 ? "partial" : f.status);
           return { ...f, payments, status: newStatus };
         });
+        return true;
+      }
+      // The estimate assistant (docAgent.js). Unlike add_items it keeps the
+      // chat open, so a walk-through can keep going.
+      case "append_items": {
+        const add = (a.items || []).map(it => ({ ...blankItem, name: it.name || "", desc: it.desc || "", qty: it.qty ?? 1, price: it.price ?? 0, ...(typeof it.taxable === "boolean" ? { taxable: it.taxable } : {}) }));
+        if (!add.length) return false;
+        const build = (f) => ({ ...f, items: [...f.items.filter(it => it.name || it.desc || it.price), ...add] });
+        setForm(build);
+        snapshotEvent('line_item_added', "Line item added", build(formRef.current));
+        return true;
+      }
+      case "move_item": {
+        const n = formRef.current.items.length;
+        if (!(a.from >= 0 && a.from < n)) return false;
+        setForm(f => { const items = [...f.items]; const [m] = items.splice(a.from, 1); items.splice(Math.max(0, Math.min(items.length, a.to)), 0, m); return { ...f, items }; });
+        return true;
+      }
+      // Undo for one assistant message: put the lines and totals back.
+      case "restore_doc": {
+        const snap = a.snapshot;
+        if (!snap) return false;
+        setForm(f => ({ ...f, items: (snap.items || []).map(it => ({ ...it })), notes: snap.notes, discount: snap.discount, discountType: snap.discountType, tax: snap.tax, payments: snap.payments || f.payments, client: snap.client ?? f.client, clientInfo: snap.clientInfo ?? f.clientInfo }));
+        return true;
+      }
+      case "send_text": {
+        if (!form.id && !autoSavedId) return false;
+        sendViaText(isEstimate ? "estimate" : "invoice");
+        return true;
+      }
+      case "convert_to_invoice": {
+        if (!isEstimate) return false;
+        handleConvert();
         return true;
       }
       case "duplicate_item": {
@@ -6010,6 +5953,58 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
             {!isEstimate && jobDateErr && <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "#c0392b" }}>{jobDateErr}</div>}
           </div>
 
+          {/* Role on this job (v1.88.0), one picker per apprentice-tier tech.
+              Jake, 2026-11-18: Kaulana is in between, "sometimes he does jobs
+              solo and sometimes I'm there with him or I sell the job without
+              him first." One profile, the role is per job. It only sets the
+              three pickers below (assigned tech, apprentice, commission), which
+              stay for anything unusual. */}
+          {isAdmin && (invoice?.id || form.id || autoSavedId) && (users || []).filter(u => u.tier === "apprentice").map(u => {
+            const docId = autoSavedId || invoice?.id || form.id;
+            const role = form.commissionTechId === u.id && form.assignedTechId === u.id ? "service"
+              : form.apprenticeId === u.id ? "apprentice"
+              : (form.assignedTechId === u.id || form.commissionTechId === u.id) ? "custom" : "none";
+            const first = (u.displayName || "Tech").split(" ")[0];
+            const setRole = async (next) => {
+              const prev = { assignedTechId: form.assignedTechId, apprenticeId: form.apprenticeId, commissionTechId: form.commissionTechId };
+              try {
+                if (next === "service") {
+                  setField("assignedTechId", u.id);
+                  if (form.commissionTechId !== u.id) { setField("commissionTechId", u.id); await db.setInvoiceCommissionTech(docId, u.id); }
+                  if (form.apprenticeId === u.id) { setField("apprenticeId", null); await db.setInvoiceApprentice(docId, null); }
+                } else if (next === "apprentice") {
+                  if (!form.assignedTechId || form.assignedTechId === u.id) setField("assignedTechId", myId || null);
+                  if (form.commissionTechId === u.id) { setField("commissionTechId", null); await db.setInvoiceCommissionTech(docId, null); }
+                  if (form.apprenticeId !== u.id) { setField("apprenticeId", u.id); await db.setInvoiceApprentice(docId, u.id); }
+                } else {
+                  if (form.assignedTechId === u.id) setField("assignedTechId", null);
+                  if (form.commissionTechId === u.id) { setField("commissionTechId", null); await db.setInvoiceCommissionTech(docId, null); }
+                  if (form.apprenticeId === u.id) { setField("apprenticeId", null); await db.setInvoiceApprentice(docId, null); }
+                }
+              } catch (err) {
+                console.warn("role change failed:", err);
+                setField("assignedTechId", prev.assignedTechId); setField("apprenticeId", prev.apprenticeId); setField("commissionTechId", prev.commissionTechId);
+                alert(`Could not change ${first}'s role on this job. Nothing was changed.`);
+              }
+            };
+            return (
+              <div key={u.id} style={{ padding: "12px 16px 0" }}>
+                <label style={S.label}>{first} on this job</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[["none", "Not on job"], ["apprentice", "Apprentice"], ["service", "Service Tech"]].map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => role !== k && setRole(k)}
+                      style={{ ...S.btn(role === k ? "primary" : "ghost"), flex: 1, fontSize: 12, padding: "8px 6px" }}>{label}</button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 10, color: "#aaa", marginTop: 4 }}>
+                  {role === "service" ? `${first} ran it solo: assigned to him, commission on, counts on his tech scorecard.`
+                    : role === "apprentice" ? `With you, or you sold it: hourly only, counts toward ${first}'s learning.`
+                    : role === "custom" ? "Set by hand below. Tap a role to reset it."
+                    : `${first} is not on this job.`}
+                </div>
+              </div>
+            );
+          })}
           {/* Assigned tech (migration 053). Admin-only: a plumber does not get
               to reassign their own jobs, which is the whole integrity of the
               scorecard. Empty string is the sentinel for "clear it" — db.js
@@ -6024,7 +6019,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
                 onChange={e => setField("assignedTechId", e.target.value || null)}
               >
                 <option value="">Unassigned</option>
-                {(users || []).filter(u => u.id === form.assignedTechId || ["service_tech", "journeyman", "admin"].includes(u.tier)).map(u => (
+                {(users || []).filter(u => u.id === form.assignedTechId || ["service_tech", "journeyman", "admin", "apprentice"].includes(u.tier)).map(u => (
                   <option key={u.id} value={u.id}>
                     {(u.displayName || "Unnamed") + (u.id === myId ? " (me)" : "")}
                   </option>
@@ -6189,7 +6184,7 @@ function InvoiceForm({ invoice, defaultType, newDocSeq, clients, savedItems, gca
               document.body
             )}
 
-            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq, coInvoiceId } : { ...form, coInvoiceId, lockedFromEstimate: lockedEst?.id || null }} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} topInset={() => formHeaderRef.current?.getBoundingClientRect().bottom ?? 0} /></div>}
+            {showAI && <div style={{ marginBottom: 12 }}><AIChatPanel msgs={aiMsgs} setMsgs={setAiMsgs} onResetChat={resetAiChat} onAddItems={handleAddFromAI} data={data} currentInvoice={coMode ? { ...form, items: coMode.items, coModeSeq: coMode.seq, coInvoiceId } : { ...form, coInvoiceId, lockedFromEstimate: lockedEst?.id || null }} onLocalAction={handleLocalAIAction} onGlobalAction={onAIAction} inputRef={aiInputRef} userLabel={`${viewerName || "unknown"} (${viewerTier || (viewerIsAdmin ? "admin" : "tech")})`} topInset={() => formHeaderRef.current?.getBoundingClientRect().bottom ?? 0} /></div>}
 
             {coMode && coMode.items.length === 0 && (
               <div style={{ fontSize: 13, color: "#999", padding: "8px 2px 12px" }}>No change order lines yet. Tap +, Price Book or AI.</div>
@@ -10823,8 +10818,10 @@ function TechScorecard({ invoices, users, isAdmin, myId, myName, selYear }) {
       }))
       // An apprentice generates no attributable revenue, so listing them here
       // would score them at zero against the owner. They have their own card.
-      .filter(u => u.tier !== "apprentice");
-  }, [users, isAdmin, myId, myName]);
+      // Except one who runs jobs solo (v1.88.0, "Service Tech" on the job):
+      // those jobs are his, so he is scored on them.
+      .filter(u => u.tier !== "apprentice" || (invoices || []).some(inv => inv.assignedTechId === u.id && !inv.deletedAt));
+  }, [users, isAdmin, myId, myName, invoices]);
 
   const statsFor = (techId) => {
     const mine = (invoices || []).filter(i => {
