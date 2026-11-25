@@ -133,7 +133,7 @@ Read this file first. It captures everything an AI agent needs to safely continu
 src/
   App.jsx            — routing, all modals, AI chat, invoice form, client list (~10,300 lines); `ClientEditFields` has optional First name / Last name / Company fields (v1.48.0)
   App.jsx.bak        — restore point, see hard rule 11
-  db.js              — all Supabase reads/writes (~990 lines)
+  db.js              — all Supabase reads/writes (~990 lines); v1.89.0: loadAll() filters invoices to last 365 days + open/unpaid, cuts startup from ~950 to ~400 rows
   printablePdf.js    — jsPDF invoice/estimate generator
   JobPhotos.jsx      — per-job photo gallery
   OnMyWay.jsx        — "on my way" customer notification; also logs a GPS ping (migration 131, `db.logOnMyWayPing()`) under the tech's own session whenever a fix is captured

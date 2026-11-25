@@ -485,7 +485,26 @@ export async function loadAll() {
     // Paginate so we don't lose anything once the table passes 1,000 rows.
     // Soft-deleted invoices/estimates (deleted_at IS NOT NULL) live in the
     // Recently Deleted tab for 30 days, so exclude them from the main list.
-    fetchAllRows(() => supabase.from('invoices').select('*').is('deleted_at', null).order('date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })),
+    //
+    // v1.89.0 — load recent (last 365 days) + all unpaid/active documents only.
+    // Old paid invoices are rarely needed at startup; they can be fetched on
+    // demand via loadInvoiceWithItems(). This keeps the initial payload under
+    // ~400 rows regardless of how large the archive grows.
+    // Active statuses that must always load regardless of age:
+    //   invoices  — outstanding, net30, partial (money still owed)
+    //   estimates — sent, approved (waiting on client)
+    fetchAllRows(() => {
+      const cutoff = new Date()
+      cutoff.setFullYear(cutoff.getFullYear() - 1)
+      const cutoffStr = cutoff.toISOString().slice(0, 10)
+      return supabase
+        .from('invoices')
+        .select('*')
+        .is('deleted_at', null)
+        .or(`date.gte.${cutoffStr},status.in.(outstanding,net30,partial,sent,approved)`)
+        .order('date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+    }),
     fetchAllRows(() => supabase.from('invoice_items').select('*').order('invoice_id').order('sort_order')),
     fetchAllRows(() => supabase.from('payments').select('*').order('invoice_id')),
     supabase.from('saved_items').select('*').order('category').order('name'),

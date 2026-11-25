@@ -1,5 +1,9 @@
 # HI Grade Invoicing — Changelog
 
+## v1.89.0 — 2026-11-25
+
+- **Faster startup — invoice load now filters by recency and status.** The app was loading all 949 invoices at startup; with 2,264 invoice items and 593 payments also loading in parallel, initial load time had grown to 5–10 seconds on mobile as the archive grew. The invoice query now loads only documents from the last 365 days plus any that are still open/unpaid regardless of age (outstanding, net30, partial, sent, approved). This cuts the initial invoice payload from ~949 rows to ~400, with no loss of active data. Old paid invoices are still accessible via direct navigation and search; they just no longer delay app startup.
+
 ## v1.88.1 — 2026-11-21
 
 - **A stale screen can no longer undo a conversion.** EST1211 was converted to INV1211 while the estimate was still open on another phone. That phone's next save lost the lock, re-read only the token, and wrote its old copy back: the link was gone, and the visit was back on the estimate, so the job showed twice on the calendar. Both conflict retries (`autoSaveInvoice`, `partialSaveInvoice`) now check the row they lost to: when it is converted and the local copy is not, the server copy wins, the local copy is dropped, and the screen says once that it was converted on another device. EST1211 repaired by hand (converted, linked, schedule cleared).
